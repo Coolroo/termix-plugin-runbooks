@@ -267,6 +267,10 @@
           "length": 255,
           "notNull": true
         },
+        "hosts": {
+          "type": "text",
+          "notNull": true
+        },
         "createdAt": {
           "type": "timestamp",
           "notNull": true

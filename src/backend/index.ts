@@ -10,7 +10,7 @@ const PUBLIC_RATE_LIMIT = 600;
 
 export async function activate(ctx: PluginContext) {
   const store = await createStore(ctx.db);
-  const ops = createAgentOps(ctx, store);
+  const ops = createAgentOps(store);
 
   const router = ctx.http.router<Router>({
     // Agents call these with a Runbooks token instead of a Termix login; the

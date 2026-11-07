@@ -21,6 +21,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 ## Features
 
 - Agents propose runbooks through a REST API or an MCP endpoint, with their own revocable tokens
+- Each token is limited to the hosts you tick for it
 - A person runs each step after a confirm that shows the host and the exact command
 - Run over SSH with the host's stored login, or send to an open terminal and paste the output back
 - Every run is kept with who ran it, when, the exit code and the output

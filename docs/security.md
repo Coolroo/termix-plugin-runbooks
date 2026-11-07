@@ -19,7 +19,8 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 - A token is 32 random bytes. Only its SHA-256 is stored. A check compares the hash against every live token in constant time.
 - Revoked tokens are refused. A token stops working when its creator loses the Use Runbooks permission.
 - Each token may make 120 requests a minute; Termix also limits each address on the public routes.
-- A token lists only its creator's hosts, may only name those hosts in steps, and sees only runbooks made with its creator's tokens. Listing hosts runs as the creator (`ctx.asUser`), which Termix records in its audit log.
+- A token may name only the hosts ticked for it. The person making or editing the token picks them from the hosts they see, and each one is checked for their connect access. The token keeps a copy of each host's id, name, address and folder, nothing else. The token sees only runbooks made with its creator's tokens.
+- The host list limits what an agent may propose. Running is separate: the person who runs a step needs connect access to its host at that moment.
 
 ## What runs is what you saw
 
@@ -42,16 +43,15 @@ Text from agents renders as Markdown without raw HTML and without images. Links 
 
 ## Audit
 
-Runbooks writes an audit line for each run, each send to a terminal, each completion, each skip, and each token made or revoked. Termix also records each SSH command, each host lookup and each run-as-user.
+Runbooks writes an audit line for each run, each send to a terminal, each completion, each skip, and each token made, changed or revoked. Termix also records each SSH command and each host lookup.
 
 ## Capabilities
 
-| Capability          | Why                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `db:own`            | The runbooks, steps, runs and tokens tables                                                                               |
-| `network:serve`     | The routes under `/plugin-api/runbooks/`                                                                                  |
-| `ui:surface`        | The Runbooks tab                                                                                                          |
-| `hosts:read`        | Host names, and access checks before a run                                                                                |
-| `ssh:connect`       | Run a step over SSH, and read whether a host key is stored                                                                |
-| `credentials:use`   | Use the host's stored login for that run                                                                                  |
-| `users:impersonate` | Answer an agent with the hosts its token's creator can use (`ctx.asUser`); there is no signed-in user on an agent request |
+| Capability        | Why                                                          |
+| ----------------- | ------------------------------------------------------------ |
+| `db:own`          | The runbooks, steps, runs and tokens tables                  |
+| `network:serve`   | The routes under `/plugin-api/runbooks/`                     |
+| `ui:surface`      | The Runbooks tab                                             |
+| `hosts:read`      | Host names, the hosts offered for a token, and access checks |
+| `ssh:connect`     | Run a step over SSH, and read whether a host key is stored   |
+| `credentials:use` | Use the host's stored login for that run                     |

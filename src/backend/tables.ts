@@ -118,6 +118,9 @@ export const tokens = defineTable(
     tokenHash: varchar(64).notNull().unique(),
     prefix: varchar(16).notNull(),
     createdBy: varchar(255).notNull(),
+    // JSON array of { id, name, address, folder }: the hosts this token may
+    // name in steps, chosen by the person who made it.
+    hosts: text().notNull(),
     createdAt: timestamp().notNull(),
     lastUsedAt: timestamp(),
     revokedAt: timestamp(),

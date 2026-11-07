@@ -9,7 +9,7 @@ The agent can never run anything. It only proposes and reads.
 1. Install the plugin and grant its capabilities. Termix lists them on install; [Security](security.md) says why each one is needed.
 2. Give the people who run runbooks the **Use Runbooks** permission. Admins have it by default.
 3. Give the people who make agent tokens the **Manage Runbooks tokens** permission. Admins have it by default.
-4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. It is shown once: copy it into your agent's secret store.
+4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. The token is shown once: copy it into your agent's secret store.
 5. Point the agent at the API or the MCP endpoint. See [Agent API and MCP](agent-api.md).
 
 ## Run a runbook

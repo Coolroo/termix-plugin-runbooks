@@ -117,7 +117,7 @@
   },
   "tokens": {
     "title": "Agent tokens",
-    "intro": "An agent uses a token to propose runbooks and read their results. A token can never run a command. It acts for you: it sees your hosts and the runbooks made with your tokens.",
+    "intro": "An agent uses a token to propose runbooks and read their results. A token can never run a command. It may name only the hosts you tick for it, and it sees the runbooks made with your tokens.",
     "endpoints": "Agent endpoints",
     "namePlaceholder": "Token name, like the agent's name",
     "create": "Make token",
@@ -131,7 +131,12 @@
     "revoke": "Revoke",
     "revoked": "Revoked",
     "revokeTitle": "Revoke {{name}}?",
-    "revokeHint": "Agents using it are refused from now on."
+    "revokeHint": "Agents using it are refused from now on.",
+    "hosts": "Hosts",
+    "pickHosts": "Tick at least one host the token may use.",
+    "noHosts": "You have no hosts to give a token.",
+    "editHosts": "Hosts",
+    "saveHosts": "Save hosts"
   },
   "common": {
     "cancel": "Cancel"

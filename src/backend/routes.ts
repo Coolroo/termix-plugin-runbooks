@@ -20,13 +20,14 @@ import {
   valuesObject,
   type RunbookBundle,
 } from "./service.js";
-import type { RunRow, StepRow, Store } from "./store.js";
+import type { RunRow, StepRow, Store, TokenHost } from "./store.js";
 import { now } from "./store.js";
 import { newToken } from "./tokens.js";
 import { applyCaptures } from "./values.js";
 
 export const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_OUTPUT_BYTES = 262_144;
+export const MAX_TOKEN_HOSTS = 500;
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
@@ -93,8 +94,29 @@ export function registerPersonRoutes(
     notApiKey,
   ];
 
-  /** Steps currently running, so a double click does not run twice. */
+  /**
+   * Steps a run or a send is working on. Claimed before the step and its runs
+   * are read, so a second click waits for nothing and cannot pass the repeat
+   * guard while the first run is still being written.
+   */
   const inFlight = new Set<number>();
+
+  async function claimed<T>(
+    stepId: number,
+    fn: (stepId: number) => Promise<T>,
+  ): Promise<T> {
+    if (inFlight.has(stepId)) {
+      throw new InputError("this step is already running", 409, {
+        code: "running",
+      });
+    }
+    inFlight.add(stepId);
+    try {
+      return await fn(stepId);
+    } finally {
+      inFlight.delete(stepId);
+    }
+  }
 
   async function hostNamer() {
     const names = new Map<number, string>();
@@ -102,6 +124,44 @@ export function registerPersonRoutes(
       names.set(host.id, host.name || host.ip);
     }
     return (hostId: number) => names.get(hostId) ?? null;
+  }
+
+  /**
+   * The hosts a token may use, as chosen by the person making or editing it:
+   * each one must be a host they see and can connect to. Stored as a
+   * snapshot, without anything secret.
+   */
+  async function chooseHosts(input: unknown): Promise<TokenHost[]> {
+    if (
+      !Array.isArray(input) ||
+      input.length === 0 ||
+      input.length > MAX_TOKEN_HOSTS ||
+      !input.every((id) => Number.isInteger(id) && id > 0)
+    ) {
+      throw new InputError(
+        `hostIds must list 1 to ${MAX_TOKEN_HOSTS} hosts the token may use`,
+      );
+    }
+    const visible = new Map(
+      (await ctx.hosts.list()).map((host) => [host.id, host]),
+    );
+    const chosen: TokenHost[] = [];
+    for (const id of [...new Set(input as number[])]) {
+      const host = visible.get(id);
+      const access = host
+        ? await ctx.hosts.checkAccess(id, "connect")
+        : { hasAccess: false };
+      if (!host || !access.hasAccess) {
+        throw new InputError(`you cannot connect to host ${id}`, 403);
+      }
+      chosen.push({
+        id: host.id,
+        name: host.name,
+        address: host.ip,
+        folder: host.folder,
+      });
+    }
+    return chosen;
   }
 
   async function bundleFor(runbookId: number): Promise<RunbookBundle> {
@@ -331,23 +391,17 @@ export function registerPersonRoutes(
   router.post(
     "/steps/:id/run",
     ...act,
-    wrap(async (req) => {
-      const { step, bundle } = await stepContext(idParam(req));
-      const target = await checkRunnable(step, bundle, body(req));
-      const host = await ctx.ssh.resolveHost(target.hostId);
-      if (!host) throw new InputError("you cannot connect to this host", 403);
-      // Without a stored key, a connection with no person to ask accepts
-      // whatever key the server shows. Refuse rather than trust it.
-      if (!host.hostKeyFingerprint) {
-        throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
-      }
-      if (inFlight.has(step.id)) {
-        throw new InputError("this step is already running", 409, {
-          code: "running",
-        });
-      }
-      inFlight.add(step.id);
-      try {
+    wrap(async (req) =>
+      claimed(idParam(req), async (stepId) => {
+        const { step, bundle } = await stepContext(stepId);
+        const target = await checkRunnable(step, bundle, body(req));
+        const host = await ctx.ssh.resolveHost(target.hostId);
+        if (!host) throw new InputError("you cannot connect to this host", 403);
+        // Without a stored key, a connection with no person to ask accepts
+        // whatever key the server shows. Refuse rather than trust it.
+        if (!host.hostKeyFingerprint) {
+          throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
+        }
         const runId = await store.insertRun({
           stepId: step.id,
           runbookId: step.runbookId,
@@ -404,10 +458,8 @@ export function registerPersonRoutes(
           );
         }
         return store.getRun(runId);
-      } finally {
-        inFlight.delete(step.id);
-      }
-    }),
+      }),
+    ),
   );
 
   /**
@@ -425,39 +477,41 @@ export function registerPersonRoutes(
   router.post(
     "/steps/:id/terminal",
     ...act,
-    wrap(async (req) => {
-      const { step, bundle } = await stepContext(idParam(req));
-      const target = await checkRunnable(step, bundle, body(req));
-      const runId = await store.insertRun({
-        stepId: step.id,
-        runbookId: step.runbookId,
-        mode: "terminal",
-        status: "awaiting-output",
-        hostId: target.hostId,
-        command: target.command,
-        commandHash: target.hash,
-        userId: actor(),
-        startedAt: now(),
-        finishedAt: null,
-        exitCode: null,
-        stdout: null,
-        stderr: null,
-        truncated: false,
-        timedOut: false,
-        pastedOutput: null,
-        error: null,
-      });
-      await store.touchRunbook(step.runbookId);
-      await store.persist();
-      await audit(
-        req,
-        "runbooks_step_terminal",
-        step,
-        `runbook ${step.runbookId} step ${step.position} sent to a terminal on host ${target.hostId}`,
-        true,
-      );
-      return store.getRun(runId);
-    }),
+    wrap(async (req) =>
+      claimed(idParam(req), async (stepId) => {
+        const { step, bundle } = await stepContext(stepId);
+        const target = await checkRunnable(step, bundle, body(req));
+        const runId = await store.insertRun({
+          stepId: step.id,
+          runbookId: step.runbookId,
+          mode: "terminal",
+          status: "awaiting-output",
+          hostId: target.hostId,
+          command: target.command,
+          commandHash: target.hash,
+          userId: actor(),
+          startedAt: now(),
+          finishedAt: null,
+          exitCode: null,
+          stdout: null,
+          stderr: null,
+          truncated: false,
+          timedOut: false,
+          pastedOutput: null,
+          error: null,
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
+        await audit(
+          req,
+          "runbooks_step_terminal",
+          step,
+          `runbook ${step.runbookId} step ${step.position} sent to a terminal on host ${target.hostId}`,
+          true,
+        );
+        return store.getRun(runId);
+      }),
+    ),
   );
 
   /**
@@ -642,12 +696,14 @@ export function registerPersonRoutes(
       if (typeof name !== "string" || !name.trim() || name.length > 100) {
         throw new InputError("name is required (at most 100 characters)");
       }
+      const hosts = await chooseHosts(body(req).hostIds);
       const made = newToken();
       const id = await store.createToken({
         name: name.trim(),
         tokenHash: made.hash,
         prefix: made.prefix,
         createdBy: actor(),
+        hosts,
       });
       await store.persist();
       await ctx.audit.record({
@@ -659,7 +715,50 @@ export function registerPersonRoutes(
         request: req,
       });
       res.status(201);
-      return { id, name: name.trim(), prefix: made.prefix, token: made.token };
+      return {
+        id,
+        name: name.trim(),
+        prefix: made.prefix,
+        hosts,
+        token: made.token,
+      };
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/tokens/{id}/hosts:
+   *   post:
+   *     summary: Replace the hosts a token may name in steps
+   *     description: Body { hostIds }. Each host must be one you can connect to.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The token }
+   */
+  router.post(
+    "/tokens/:id/hosts",
+    ...tokensRole,
+    wrap(async (req) => {
+      const id = idParam(req);
+      const token = await store.getToken(id);
+      if (!token) throw new InputError("token not found", 404);
+      if (token.revokedAt) {
+        throw new InputError("this token was revoked", 409);
+      }
+      const hosts = await chooseHosts(body(req).hostIds);
+      await store.setTokenHosts(id, hosts);
+      await store.persist();
+      await ctx.audit.record({
+        action: "runbooks_token_hosts",
+        resourceType: "runbooks_token",
+        resourceId: String(id),
+        resourceName: token.name,
+        details: `hosts: ${hosts.map((host) => host.id).join(", ")}`,
+        success: true,
+        request: req,
+      });
+      const { tokenHash: _hash, ...rest } = (await store.getToken(id))!;
+      return rest;
     }),
   );
 

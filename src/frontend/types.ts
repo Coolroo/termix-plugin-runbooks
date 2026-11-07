@@ -84,6 +84,12 @@ export interface TokenInfo {
   name: string;
   prefix: string;
   createdBy: string;
+  hosts: Array<{
+    id: number;
+    name: string | null;
+    address: string;
+    folder: string | null;
+  }>;
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;

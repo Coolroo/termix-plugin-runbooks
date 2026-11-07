@@ -69,7 +69,7 @@ export const TOOLS = [
   {
     name: "list_hosts",
     description:
-      "List the Termix hosts this token's owner can use: id, name, address and folder. Use the id as a step's hostId.",
+      "List the Termix hosts this token may use, as chosen by the person who made it: id, name, address and folder. A step's hostId must be one of these ids.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -79,7 +79,7 @@ export const TOOLS = [
   {
     name: "list_runbooks",
     description:
-      "List the runbooks this token's owner has, newest change first, with progress (finished and total steps).",
+      "List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps).",
     inputSchema: {
       type: "object",
       additionalProperties: false,

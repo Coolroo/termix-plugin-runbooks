@@ -201,4 +201,79 @@ describe(`${manifest.id} frontend`, () => {
       }),
     );
   });
+
+  it("makes a token for the hosts the person ticks", async () => {
+    const client = {
+      ...api(),
+      get: vi.fn(async (url: string) => ({
+        data:
+          url === "/tokens"
+            ? [
+                {
+                  id: 5,
+                  name: "old",
+                  prefix: "rbk_abcd",
+                  createdBy: "alice",
+                  hosts: [
+                    { id: 2, name: "db-1", address: "10.0.0.2", folder: null },
+                  ],
+                  createdAt: "2026-11-07T10:00:00.000Z",
+                  lastUsedAt: null,
+                  revokedAt: null,
+                },
+              ]
+            : [summary],
+      })),
+      post: vi.fn(async () => ({
+        data: { id: 6, name: "lead", prefix: "rbk_wxyz", token: "rbk_secret" },
+      })),
+    };
+    rendered = await renderWithApp(plugin, {
+      manifest,
+      locales,
+      permissions: ["runbooks.use", "runbooks.manage-tokens"],
+      hosts: [
+        { id: 1, name: "web-1", ip: "10.0.0.1", folder: "web" },
+        { id: 2, name: "db-1", ip: "10.0.0.2", folder: null },
+      ],
+      api: client as never,
+    });
+    rendered.renderTab("runbooks", { isVisible: true });
+    fireEvent.click(await screen.findByText(locales.tokens.title));
+
+    // The existing token shows its hosts.
+    const row = (await screen.findByText("old")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("db-1")).toBeTruthy();
+
+    fireEvent.change(
+      screen.getByPlaceholderText(locales.tokens.namePlaceholder),
+      {
+        target: { value: "lead" },
+      },
+    );
+    const make = screen.getByText(locales.tokens.create).closest("button")!;
+    // No host ticked yet.
+    expect(make.disabled).toBe(true);
+    const form = make.closest("form") as HTMLElement;
+    fireEvent.click(within(form).getByText("web-1"));
+    expect(make.disabled).toBe(false);
+    fireEvent.click(make);
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/tokens", {
+        name: "lead",
+        hostIds: [1],
+      }),
+    );
+    expect(await screen.findByText("rbk_secret")).toBeTruthy();
+
+    // Change the old token's hosts.
+    fireEvent.click(within(row).getByText(locales.tokens.editHosts));
+    fireEvent.click(within(row).getByText("web-1"));
+    fireEvent.click(within(row).getByText(locales.tokens.saveHosts));
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/tokens/5/hosts", {
+        hostIds: [2, 1],
+      }),
+    );
+  });
 });

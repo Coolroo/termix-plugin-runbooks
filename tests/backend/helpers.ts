@@ -87,8 +87,12 @@ export interface TestServer {
     headers: Record<string, string>,
     body?: unknown,
   ) => Promise<Reply>;
-  /** Makes a Runbooks token as alice and returns the secret. */
-  makeToken: (name?: string, user?: string) => Promise<string>;
+  /** Makes a Runbooks token (default: alice, hosts 1-3) and returns the secret. */
+  makeToken: (
+    name?: string,
+    user?: string,
+    hostIds?: number[],
+  ) => Promise<string>;
   close: () => Promise<void>;
 }
 
@@ -210,8 +214,13 @@ export async function startServer(
         body,
       ),
     raw: (method, path, headers, body) => call(method, path, headers, body),
-    makeToken: async (name = "lead", user = "alice") => {
-      const made = await server.person("POST", "/tokens", { name }, { user });
+    makeToken: async (name = "lead", user = "alice", hostIds = [1, 2, 3]) => {
+      const made = await server.person(
+        "POST",
+        "/tokens",
+        { name, hostIds },
+        { user },
+      );
       if (made.status !== 201) throw new Error(JSON.stringify(made.body));
       return made.body.token as string;
     },

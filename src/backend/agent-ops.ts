@@ -6,8 +6,14 @@
  * owner's notes; those routes do not exist on this side at all.
  */
 
-import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
-import type { NewStep, RunbookRow, StepRow, Store, TokenRow } from "./store.js";
+import type {
+  NewStep,
+  RunbookRow,
+  StepRow,
+  Store,
+  TokenHost,
+  TokenRow,
+} from "./store.js";
 import {
   agentValues,
   agentView,
@@ -28,26 +34,23 @@ export interface AgentCaller {
   token: TokenRow;
 }
 
-export interface AgentHost {
-  id: number;
-  name: string | null;
-  address: string;
-  folder: string | null;
-}
+export type AgentHost = TokenHost;
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
-export function createAgentOps(ctx: PluginContext, store: Store) {
+export function createAgentOps(store: Store) {
   const owner = (caller: AgentCaller) => caller.token.createdBy;
 
-  /** The hosts the token's creator may use, without anything secret. */
+  /**
+   * The hosts this token may name in steps: the list a person chose when they
+   * made or last edited the token. Nothing secret is in it.
+   */
   async function listHosts(caller: AgentCaller): Promise<AgentHost[]> {
-    const hosts = await ctx.asUser(owner(caller), () => ctx.hosts.list());
-    return hosts.map((host) => ({
-      id: host.id,
-      name: host.name,
-      address: host.ip,
-      folder: host.folder,
+    return caller.token.hosts.map(({ id, name, address, folder }) => ({
+      id,
+      name,
+      address,
+      folder,
     }));
   }
 
@@ -75,7 +78,7 @@ export function createAgentOps(ctx: PluginContext, store: Store) {
     for (const hostId of wanted) {
       if (!known.has(hostId)) {
         throw new InputError(
-          `host ${hostId} is not a host this token's owner can use; call list_hosts`,
+          `host ${hostId} is not a host this token may use; call list_hosts`,
         );
       }
     }

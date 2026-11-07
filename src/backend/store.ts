@@ -88,12 +88,21 @@ export interface RunRow {
   captured: Values;
 }
 
+/** A host a token may name, as the person saw it when they chose it. */
+export interface TokenHost {
+  id: number;
+  name: string | null;
+  address: string;
+  folder: string | null;
+}
+
 export interface TokenRow {
   id: number;
   name: string;
   tokenHash: string;
   prefix: string;
   createdBy: string;
+  hosts: TokenHost[];
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
@@ -148,7 +157,11 @@ function toRun(row: Record<string, unknown>): RunRow {
 }
 
 function toToken(row: Record<string, unknown>): TokenRow {
-  return { ...(row as unknown as TokenRow), id: Number(row.id) };
+  return {
+    ...(row as unknown as TokenRow),
+    id: Number(row.id),
+    hosts: parseJson<TokenHost[]>(row.hosts, []),
+  };
 }
 
 export interface NewStep {
@@ -459,9 +472,11 @@ export async function createStore(db: PluginDatabase) {
     tokenHash: string;
     prefix: string;
     createdBy: string;
+    hosts: TokenHost[];
   }): Promise<number> {
     return insertId(tokens, {
       ...input,
+      hosts: JSON.stringify(input.hosts),
       createdAt: now(),
       lastUsedAt: null,
       revokedAt: null,
@@ -474,6 +489,27 @@ export async function createStore(db: PluginDatabase) {
     )
       .update(tokens)
       .set({ lastUsedAt: now() })
+      .where(eq(tokens.id, id));
+  }
+
+  async function getToken(id: number): Promise<TokenRow | null> {
+    if (!Number.isInteger(id)) return null;
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(tokens)
+      .where(eq(tokens.id, id))
+      .limit(1);
+    return rows[0] ? toToken(rows[0]) : null;
+  }
+
+  async function setTokenHosts(id: number, hosts: TokenHost[]): Promise<void> {
+    await (
+      await client()
+    )
+      .update(tokens)
+      .set({ hosts: JSON.stringify(hosts) })
       .where(eq(tokens.id, id));
   }
 
@@ -518,6 +554,8 @@ export async function createStore(db: PluginDatabase) {
     activeTokens,
     findTokenByHash,
     createToken,
+    getToken,
+    setTokenHosts,
     markTokenUsed,
     revokeToken,
   };

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS `p_runbooks_tokens` (
   `token_hash` varchar(64) NOT NULL UNIQUE,
   `prefix` varchar(16) NOT NULL,
   `created_by` varchar(255) NOT NULL,
+  `hosts` longtext NOT NULL,
   `created_at` text NOT NULL,
   `last_used_at` text,
   `revoked_at` text

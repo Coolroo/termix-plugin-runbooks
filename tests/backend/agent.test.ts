@@ -110,9 +110,10 @@ describe("token auth", () => {
     // A person without manage-tokens cannot either.
     await server.close();
     server = await startServer({ permissions: ["runbooks.use"] });
-    expect((await server.person("POST", "/tokens", { name: "x" })).status).toBe(
-      403,
-    );
+    expect(
+      (await server.person("POST", "/tokens", { name: "x", hostIds: [1] }))
+        .status,
+    ).toBe(403);
   });
 });
 
@@ -159,15 +160,119 @@ describe("agent API", () => {
     expect(listed.body).toHaveLength(1);
   });
 
-  it("refuses a host the token's owner cannot use", async () => {
+  it("refuses a host outside the token's list", async () => {
     server = await startServer();
-    const token = await server.makeToken();
+    const token = await server.makeToken("lead", "alice", [1]);
+    const hosts = await server.agent("GET", "/hosts", token);
+    expect(hosts.body.map((h: { id: number }) => h.id)).toEqual([1]);
+
+    // Host 3 exists and alice can use it, but this token may not.
     const refused = await server.agent("POST", "/runbooks", token, {
       title: "x",
-      steps: [{ title: "a", hostId: 99, command: "uptime" }],
+      steps: [{ title: "a", hostId: 3, command: "uptime" }],
     });
     expect(refused.status).toBe(400);
-    expect(refused.body.error).toMatch(/host 99/);
+    expect(refused.body.error).toMatch(
+      /host 3 is not a host this token may use; call list_hosts/,
+    );
+
+    const created = await agentRunbook(server, token, {
+      title: "y",
+      steps: [{ title: "a", hostId: 1, command: "uptime" }],
+    });
+    const moved = await server.agent(
+      "PATCH",
+      `/steps/${created.steps[0].id}`,
+      token,
+      { hostId: 3 },
+    );
+    expect(moved.status).toBe(400);
+  });
+
+  it("needs at least one host the person can connect to for a token", async () => {
+    server = await startServer();
+    for (const hostIds of [undefined, [], [99], [1, "2"]]) {
+      const made = await server.person("POST", "/tokens", {
+        name: "x",
+        hostIds,
+      });
+      expect([400, 403]).toContain(made.status);
+    }
+    const unknown = await server.person("POST", "/tokens", {
+      name: "x",
+      hostIds: [1, 99],
+    });
+    expect(unknown.status).toBe(403);
+    expect(unknown.body.error).toMatch(/host 99/);
+    expect((await server.person("GET", "/tokens")).body).toEqual([]);
+
+    const made = await server.person("POST", "/tokens", {
+      name: "x",
+      hostIds: [2, 1, 2],
+    });
+    expect(made.status).toBe(201);
+    expect(made.body.hosts).toEqual([
+      { id: 2, name: "host-2", address: "10.0.0.2", folder: "lab" },
+      { id: 1, name: "host-1", address: "10.0.0.1", folder: "lab" },
+    ]);
+    // Nothing else about the host is kept.
+    const stored = server.db.sqlite
+      .prepare("SELECT hosts FROM p_runbooks_tokens")
+      .get() as { hosts: string };
+    expect(stored.hosts).not.toContain("secret-tag");
+    expect(stored.hosts).not.toContain("root");
+  });
+
+  it("changes a token's host list", async () => {
+    server = await startServer();
+    const token = await server.makeToken("lead", "alice", [1]);
+    const id = (await server.person("GET", "/tokens")).body[0].id;
+
+    const changed = await server.person("POST", `/tokens/${id}/hosts`, {
+      hostIds: [3],
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.body.hosts.map((h: { id: number }) => h.id)).toEqual([3]);
+    expect(changed.body).not.toHaveProperty("tokenHash");
+    const hosts = await server.agent("GET", "/hosts", token);
+    expect(hosts.body.map((h: { id: number }) => h.id)).toEqual([3]);
+    expect(
+      (
+        await server.agent("POST", "/runbooks", token, {
+          title: "x",
+          steps: [{ title: "a", hostId: 1, command: "uptime" }],
+        })
+      ).status,
+    ).toBe(400);
+
+    expect(
+      (await server.person("POST", `/tokens/${id}/hosts`, { hostIds: [] }))
+        .status,
+    ).toBe(400);
+    // Not with an API key, and not for an agent.
+    expect(
+      (
+        await server.person(
+          "POST",
+          `/tokens/${id}/hosts`,
+          { hostIds: [1] },
+          { apiKey: true },
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await server.agent("POST", `/tokens/${id}/hosts`, token, {
+          hostIds: [1, 2, 3],
+        })
+      ).status,
+    ).toBe(404);
+    // A revoked token cannot be changed.
+    await server.person("POST", `/tokens/${id}/revoke`);
+    expect(
+      (await server.person("POST", `/tokens/${id}/hosts`, { hostIds: [1] }))
+        .status,
+    ).toBe(409);
   });
 
   it("refuses bad steps and bad captures", async () => {

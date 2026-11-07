@@ -4,7 +4,8 @@
  * These routes are declared public to core, so core does no login check and
  * sets no acting user. Every request must instead carry
  * "Authorization: Bearer rbk_..." for a live Runbooks token whose creator
- * still holds runbooks.use. The agent then acts within that creator's hosts.
+ * still holds runbooks.use. The agent may name only the hosts chosen for the
+ * token.
  */
 
 import express, {
@@ -96,7 +97,7 @@ export function createAgentRouter(
    * @openapi
    * /plugin-api/runbooks/agent/hosts:
    *   get:
-   *     summary: Hosts the token's creator can use (id, name, address, folder)
+   *     summary: Hosts this token may use (id, name, address, folder)
    *     tags: [Runbooks agent]
    *     security: [{ runbooksToken: [] }]
    *     responses:

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentRunbook,
   runStep,
@@ -315,6 +315,62 @@ describe("running a step", () => {
     });
     const refused = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(refused.status).toBe(409);
+  });
+
+  it("runs once when the same step is run twice at the same time", async () => {
+    const { s, runbook } = await setup([
+      { title: "A", hostId: 1, command: "deploy" },
+    ]);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    s.setExec(async () => {
+      await gate;
+      return {
+        stdout: "ok",
+        stderr: "",
+        code: 0,
+        truncated: false,
+        timedOut: false,
+      };
+    });
+    const shown = await view(s, runbook.id);
+    const stepId = runbook.steps[0].id;
+    const body = {
+      revision: shown.steps[0].revision,
+      commandHash: shown.steps[0].commandHash,
+    };
+    const first = s.person("POST", `/steps/${stepId}/run`, body);
+    const second = s.person("POST", `/steps/${stepId}/run`, body);
+    // Let the first reach SSH before releasing it.
+    await vi.waitFor(() => expect(s.execCalls.length).toBeGreaterThan(0));
+    release();
+    const replies = await Promise.all([first, second]);
+    const statuses = replies.map((reply) => reply.status).sort();
+    expect(statuses).toEqual([200, 409]);
+    // The second was turned away while the first was still running.
+    expect(replies.find((reply) => reply.status === 409)!.body.code).toBe(
+      "running",
+    );
+    expect(s.execCalls).toHaveLength(1);
+    expect((await view(s, runbook.id)).steps[0].runs).toHaveLength(1);
+  });
+
+  it("records one send when the same step is sent twice at the same time", async () => {
+    const { s, runbook } = await setup([
+      { title: "A", hostId: 1, command: "deploy" },
+    ]);
+    const shown = await view(s, runbook.id);
+    const stepId = runbook.steps[0].id;
+    const body = {
+      revision: shown.steps[0].revision,
+      commandHash: shown.steps[0].commandHash,
+    };
+    const replies = await Promise.all([
+      s.person("POST", `/steps/${stepId}/terminal`, body),
+      s.person("POST", `/steps/${stepId}/terminal`, body),
+    ]);
+    expect(replies.map((reply) => reply.status).sort()).toEqual([200, 409]);
+    expect((await view(s, runbook.id)).steps[0].runs).toHaveLength(1);
   });
 });
 

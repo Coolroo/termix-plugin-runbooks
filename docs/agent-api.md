@@ -9,17 +9,19 @@ An agent talks to Runbooks with a **Runbooks token**, over plain REST or over MC
 
 ## Tokens
 
-Make a token in Runbooks, **Agent tokens** (needs the Manage Runbooks tokens permission). It starts with `rbk_` and is shown once. Send it on every request:
+Make a token in Runbooks, **Agent tokens** (needs the Manage Runbooks tokens permission). Name it, tick the hosts it may use (at least one; only hosts you can connect to), and press **Make token**. It starts with `rbk_` and is shown once. Send it on every request:
 
 ```
 Authorization: Bearer rbk_...
 ```
 
-A token acts for the person who made it:
+What a token can reach:
 
-- it lists only the hosts that person can use, and steps may only name those hosts
-- it sees only the runbooks made with that person's tokens
+- `list_hosts` returns only the hosts ticked for it, and steps may only name those hosts. Change the list later with **Hosts** on the token's row.
+- it sees only the runbooks made with tokens of the person who made it
 - it stops working when it is revoked, or when that person loses the Use Runbooks permission
+
+The host list says where an agent may propose commands. Whoever runs a step still needs connect access to its host.
 
 Each token may make 120 requests a minute.
 
@@ -35,7 +37,7 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 
 | Method and path               | What it does                                                      |
 | ----------------------------- | ----------------------------------------------------------------- |
-| `GET /hosts`                  | Hosts the token can use: `id`, `name`, `address`, `folder`        |
+| `GET /hosts`                  | Hosts ticked for the token: `id`, `name`, `address`, `folder`     |
 | `GET /runbooks?status=open`   | Runbooks with progress; `status` is `open`, `done` or `abandoned` |
 | `POST /runbooks`              | Propose a runbook with steps (201)                                |
 | `GET /runbooks/{id}`          | One runbook: steps, notes, every run and its output, newest first |

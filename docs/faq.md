@@ -13,6 +13,14 @@ No. Every route that runs or approves something refuses Termix API keys. Only a 
 
 Everyone with the Use Runbooks permission sees every runbook and its output. An agent token sees only runbooks made with tokens of the person who made it.
 
+## Which hosts can an agent use?
+
+Only the hosts ticked for its token. Change them with **Hosts** on the token's row in Agent tokens. A host that is removed from Termix stays in a token's list until you change it, but a step on it cannot run.
+
+## Why does the agent get "not a host this token may use"?
+
+The step names a host that is not ticked for the token. Tick it on the token, or ask the agent to call `list_hosts` and pick one from the list.
+
 ## Why is Run refused with "open a Terminal to this host once"?
 
 Termix has no stored host key for that host, and a connection with nobody to ask would accept any key. Open a terminal to the host, check and accept its key, then run the step again.

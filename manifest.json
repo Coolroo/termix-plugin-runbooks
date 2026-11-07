@@ -13,6 +13,7 @@
   "icon": "ListChecks",
   "features": [
     "Agents propose runbooks through a token API or MCP; they can never run anything",
+    "Each agent token is limited to the hosts you choose for it",
     "A person runs each step after seeing the exact command and host",
     "Run over SSH or send the command to an open terminal and paste the output back",
     "Every run is kept, and a repeat of the same command asks first",
@@ -30,8 +31,7 @@
     "ui:surface",
     "hosts:read",
     "ssh:connect",
-    "credentials:use",
-    "users:impersonate"
+    "credentials:use"
   ],
   "contributes": {
     "tabs": [
