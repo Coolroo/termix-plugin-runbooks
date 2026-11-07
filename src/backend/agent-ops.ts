@@ -22,6 +22,7 @@ import {
   InputError,
   LIMITS,
   loadBundle,
+  openPath,
   parseStatus,
   parseStepInput,
   parseSummary,
@@ -43,20 +44,23 @@ export function createAgentOps(store: Store) {
 
   /**
    * The hosts this token may name in steps: the list a person chose when they
-   * made or last edited the token. Nothing secret is in it.
+   * made or last edited the token, without the hosts found not to take SSH.
+   * Nothing secret is in it.
    */
   async function listHosts(caller: AgentCaller): Promise<AgentHost[]> {
-    return caller.token.hosts.map(({ id, name, address, folder }) => ({
-      id,
-      name,
-      address,
-      folder,
-    }));
+    return caller.token.hosts
+      .filter((host) => host.ssh !== false)
+      .map(({ id, name, address, folder }) => ({
+        id,
+        name,
+        address,
+        folder,
+      }));
   }
 
   async function hostNamer(caller: AgentCaller) {
     const names = new Map<number, string>();
-    for (const host of await listHosts(caller)) {
+    for (const host of caller.token.hosts) {
       names.set(host.id, host.name || host.address);
     }
     return (hostId: number) => names.get(hostId) ?? null;
@@ -75,7 +79,17 @@ export function createAgentOps(store: Store) {
     ];
     if (wanted.length === 0) return;
     const known = new Set((await listHosts(caller)).map((host) => host.id));
+    const notSsh = new Set(
+      caller.token.hosts
+        .filter((host) => host.ssh === false)
+        .map((host) => host.id),
+    );
     for (const hostId of wanted) {
+      if (notSsh.has(hostId)) {
+        throw new InputError(
+          `host ${hostId} is not an SSH host; Runbooks runs commands over SSH only`,
+        );
+      }
       if (!known.has(hostId)) {
         throw new InputError(
           `host ${hostId} is not a host this token may use; call list_hosts`,
@@ -164,9 +178,13 @@ export function createAgentOps(store: Store) {
       ownerUserId: owner(caller),
       status,
     });
-    const out: ReturnType<typeof runbookSummary>[] = [];
+    const out: Array<ReturnType<typeof runbookSummary> & { openPath: string }> =
+      [];
     for (const runbook of rows) {
-      out.push(runbookSummary(runbook, await store.listSteps(runbook.id)));
+      out.push({
+        ...runbookSummary(runbook, await store.listSteps(runbook.id)),
+        openPath: openPath(runbook.id),
+      });
     }
     return out;
   }

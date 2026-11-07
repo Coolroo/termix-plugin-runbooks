@@ -1,4 +1,9 @@
 import type { TermixApp } from "@termix-ssh/plugin-sdk/frontend";
+import {
+  createRunbookLink,
+  RUNBOOK_VIEW,
+  takePendingRunbook,
+} from "./deep-link";
 import { createRunbooksTab, RunbooksIcon } from "./RunbooksTab";
 
 export const TAB_ID = "runbooks";
@@ -16,5 +21,17 @@ export function activate(app: TermixApp): void {
     titleKey: "tab.title",
     singleton: true,
     hostless: true,
+    // `?view=runbook&id=<id>` links, which agents hand to people.
+    standalone: createRunbookLink(app),
+    standaloneViews: [RUNBOOK_VIEW],
+  });
+  // A runbook link went through the full-screen view to the app: open the
+  // Runbooks tab on it once the shell has its tabs back.
+  app.tabs.onReady(() => {
+    const runbookId = takePendingRunbook();
+    if (runbookId === null) return;
+    app.tabs.openTab(null, TAB_ID, {
+      data: { runbookId, requestedAt: Date.now() },
+    });
   });
 }

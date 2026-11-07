@@ -94,6 +94,12 @@ export interface TokenHost {
   name: string | null;
   address: string;
   folder: string | null;
+  /**
+   * Whether the host took SSH when it was last checked. Snapshots from
+   * before 1.0.1 have no flag and count as SSH until checked; a host marked
+   * false is never offered to agents.
+   */
+  ssh?: boolean;
 }
 
 export interface TokenRow {

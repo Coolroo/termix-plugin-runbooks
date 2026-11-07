@@ -317,6 +317,15 @@ export function progress(steps: StepRow[]) {
   };
 }
 
+/**
+ * The link that opens a runbook in the Runbooks tab, relative to the Termix
+ * address: the plugin does not know the address people use. Termix keeps a
+ * `?view=` link across a sign-in, so it works signed out too.
+ */
+export function openPath(runbookId: number): string {
+  return `/?view=runbook&id=${runbookId}`;
+}
+
 export function runbookSummary(runbook: RunbookRow, steps: StepRow[]) {
   return {
     id: runbook.id,
@@ -378,6 +387,7 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
   const next = steps.find((step) => step.status === "pending");
   return {
     ...runbookSummary(runbook, steps),
+    openPath: openPath(runbook.id),
     summary: runbook.summary,
     values: runbook.values,
     effectiveValues: values,

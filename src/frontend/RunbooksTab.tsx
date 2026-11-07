@@ -9,6 +9,7 @@ import {
   useDocsUrl,
   usePermission,
   usePluginApi,
+  useShell,
   useTranslation,
   type TabProps,
   type TermixApp,
@@ -24,8 +25,17 @@ import {
   useConfirm,
 } from "@termix-ssh/plugin-sdk/ui";
 import { toast } from "sonner";
+import { isSshHost } from "../shared/hosts";
+import { parseRunbookId } from "./deep-link";
 import { Markdown } from "./Markdown";
 import { formatTime, StepCard, type StepActions } from "./StepCard";
+import {
+  pickSession,
+  PROMPT_SETTLE_MS,
+  sameHost,
+  sleep,
+  waitForNewSession,
+} from "./terminal";
 import { TokensView } from "./TokensView";
 import {
   errorBody,
@@ -144,10 +154,13 @@ function RunbookDetail({
   app,
   id,
   isVisible,
+  onMissing,
 }: {
   app: TermixApp;
   id: number;
   isVisible: boolean;
+  /** The runbook does not exist or this person may not see it. */
+  onMissing: () => void;
 }) {
   const { t } = useTranslation();
   const api = usePluginApi();
@@ -156,13 +169,20 @@ function RunbookDetail({
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const onMissingRef = useRef(onMissing);
+  onMissingRef.current = onMissing;
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get<Runbook>(`/runbooks/${id}`);
       setRunbook(data);
       setFailed(false);
-    } catch {
+    } catch (error) {
+      const { status } = errorBody(error);
+      if (status === 404 || status === 403) {
+        onMissingRef.current();
+        return;
+      }
       setFailed(true);
     }
   }, [api, id]);
@@ -197,6 +217,33 @@ function RunbookDetail({
 
   const hostLabel = (step: Step) =>
     step.hostName ?? t("step.unknownHost", { id: step.hostId });
+
+  // The shell, kept in a ref: a send outlives the render that started it.
+  const shell = useShell();
+  const shellRef = useRef(shell);
+  shellRef.current = shell;
+
+  /** The terminal sessions, or null when no terminal plugin answers. */
+  const listSessions = async (): Promise<TerminalSession[] | null> => {
+    try {
+      const sessions = await app.invokeAction("terminal.listSessions");
+      return Array.isArray(sessions) ? (sessions as TerminalSession[]) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Brings a terminal tab to the front, or its split when it sits in one. */
+  const showTab = (tabId: string) => {
+    const tabs = shellRef.current?.tabs;
+    const tab = tabs?.list.find((entry) => entry.id === tabId);
+    if (!tabs || !tab) return;
+    try {
+      tabs.setActive(tab.parentSplitTabId ?? tab.id);
+    } catch {
+      // The command is typed already; the tab just stays where it is.
+    }
+  };
 
   /**
    * Posts a run or a send, and walks the person through what the server
@@ -297,63 +344,53 @@ function RunbookDetail({
         await load();
       }),
 
+    // One click: find or open a terminal to the step's host, then type the
+    // command there without pressing Enter. The run is recorded only once a
+    // terminal is ready, so a terminal that never connects leaves no run
+    // waiting for output.
     send: (step) =>
       void withBusy(async () => {
-        let sessions: TerminalSession[] = [];
-        try {
-          sessions =
-            ((await app.invokeAction(
-              "terminal.listSessions",
-            )) as TerminalSession[]) ?? [];
-        } catch {
-          sessions = [];
+        const host = hostLabel(step);
+        const sessions = await listSessions();
+        if (!sessions) {
+          toast.error(t("terminal.missing"));
+          return;
         }
-        const session =
-          sessions.find(
-            (s) => s.hostId === step.hostId && s.connected !== false,
-          ) ?? null;
+        let session = pickSession(sessions, step.hostId);
         if (!session) {
-          const open = await confirm({
-            title: t("terminal.noneTitle", { host: hostLabel(step) }),
-            description: t("terminal.noneHint"),
-            confirmLabel: t("terminal.open"),
-            destructive: false,
-          });
-          if (!open) return;
-          const host =
+          const record =
             app.getHost(step.hostId!) ??
-            (await app.listHosts().catch(() => [])).find(
-              (h) => String(h.id) === String(step.hostId),
+            (await app.listHosts().catch(() => [])).find((h) =>
+              sameHost(h.id, step.hostId),
             );
-          if (!host) {
+          if (!record) {
             toast.error(t("terminal.noHost"));
             return;
           }
-          try {
-            await app.invokeAction("terminal.open", host);
-            toast.info(t("terminal.opened"));
-          } catch {
-            toast.error(t("terminal.openFailed"));
+          if (!isSshHost(record)) {
+            toast.error(t("terminal.notSsh", { host }));
+            return;
           }
-          return;
+          const before = new Set(sessions.map((s) => s.id));
+          const waiting = toast.loading(t("terminal.opening", { host }));
+          try {
+            await app.invokeAction("terminal.open", record);
+          } catch {
+            toast.error(t("terminal.openFailed"), { id: waiting });
+            return;
+          }
+          session = await waitForNewSession(
+            async () => (await listSessions()) ?? [],
+            before,
+            step.hostId,
+          );
+          if (!session) {
+            toast.error(t("terminal.timeout", { host }), { id: waiting });
+            return;
+          }
+          await sleep(PROMPT_SETTLE_MS);
+          toast.dismiss(waiting);
         }
-        const ok = await confirm({
-          title: t("terminal.confirmTitle", {
-            session: session.label ?? session.hostName ?? hostLabel(step),
-          }),
-          description: (
-            <div className="flex flex-col gap-2 text-xs">
-              <span>{t("terminal.confirmHint")}</span>
-              <CommandPreview
-                host={hostLabel(step)}
-                command={step.resolvedCommand ?? ""}
-              />
-            </div>
-          ),
-          confirmLabel: t("terminal.send"),
-          destructive: false,
-        });
-        if (!ok) return;
         const run = await attempt("terminal", step);
         if (!run) return;
         let sent = false;
@@ -368,8 +405,12 @@ function RunbookDetail({
         } catch {
           sent = false;
         }
-        if (sent) toast.success(t("terminal.sent"));
-        else toast.error(t("terminal.sendFailed"));
+        if (sent) {
+          showTab(session.id);
+          toast.success(t("terminal.sent", { host }));
+        } else {
+          toast.error(t("terminal.sendFailed"));
+        }
         await load();
       }),
 
@@ -544,17 +585,45 @@ function RunbookDetail({
   );
 }
 
+/** Runbook links the tab has acted on, as "<id>:<requestedAt>". */
+const openedLinks = new Set<string>();
+
 export function createRunbooksTab(app: TermixApp) {
-  return function RunbooksTab({ isVisible }: TabProps) {
+  return function RunbooksTab({ isVisible, tab }: TabProps) {
     const { t } = useTranslation();
     const canManageTokens = usePermission("manage-tokens");
     const docs = useDocsUrl();
     const [view, setView] = useState<View>({ kind: "list" });
 
+    // A runbook link opens the tab with { runbookId, requestedAt } as its
+    // data; requestedAt tells a second link to the same runbook apart.
+    const linked = parseRunbookId(tab?.data?.runbookId);
+    const requestedAt = tab?.data?.requestedAt;
+    useEffect(() => {
+      if (linked === null) return;
+      // Once per link, so a tab that mounts again stays where the person is.
+      const request = `${linked}:${String(requestedAt)}`;
+      if (openedLinks.has(request)) return;
+      openedLinks.add(request);
+      setView({ kind: "runbook", id: linked });
+    }, [linked, requestedAt]);
+
     let body: ReactNode;
     let leading: ReactNode = null;
     if (view.kind === "runbook") {
-      body = <RunbookDetail app={app} id={view.id} isVisible={isVisible} />;
+      const id = view.id;
+      body = (
+        <RunbookDetail
+          key={id}
+          app={app}
+          id={id}
+          isVisible={isVisible}
+          onMissing={() => {
+            toast.error(t("link.notFound", { id }));
+            setView({ kind: "list" });
+          }}
+        />
+      );
       leading = <BackButton onClick={() => setView({ kind: "list" })} />;
     } else if (view.kind === "tokens") {
       body = (

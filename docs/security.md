@@ -19,13 +19,15 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 - A token is 32 random bytes. Only its SHA-256 is stored. A check compares the hash against every live token in constant time.
 - Revoked tokens are refused. A token stops working when its creator loses the Use Runbooks permission.
 - Each token may make 120 requests a minute; Termix also limits each address on the public routes.
-- A token may name only the hosts ticked for it. The person making or editing the token picks them from the hosts they see, and each one is checked for their connect access. The token keeps a copy of each host's id, name, address and folder, nothing else. The token sees only runbooks made with its creator's tokens.
+- A token may name only the hosts ticked for it. The person making or editing the token picks them from the SSH hosts they see, and each one is checked for their connect access and for SSH being switched on. The token keeps a copy of each host's id, name, address and folder and that it takes SSH, nothing else. The token sees only runbooks made with its creator's tokens.
 - The host list limits what an agent may propose. Running is separate: the person who runs a step needs connect access to its host at that moment.
 
 ## What runs is what you saw
 
 - The page shows each step's resolved command and a hash of the host id and that command. Running sends back the step's revision and that hash. If the agent changed the step, or a value changed, the hashes differ and the run is refused.
-- A step runs only after a confirm that shows the host and the exact command.
+- **Run** runs a step only after a confirm that shows the host and the exact command.
+- **Send to terminal** asks no such question: it types the command into a terminal to the step's host without pressing Enter, so nothing runs until the person reads it there and presses Enter. The run is recorded only once that terminal is connected.
+- Run and Send to terminal refuse a host that does not take SSH.
 - A repeat (the step ran before, or the same command ran on the same host in the last 24 hours) and a run out of order each need their own confirm.
 - A step that has run cannot be changed or removed by the agent, and nothing can be inserted before it. Runs are never deleted.
 
@@ -47,11 +49,11 @@ Runbooks writes an audit line for each run, each send to a terminal, each comple
 
 ## Capabilities
 
-| Capability        | Why                                                          |
-| ----------------- | ------------------------------------------------------------ |
-| `db:own`          | The runbooks, steps, runs and tokens tables                  |
-| `network:serve`   | The routes under `/plugin-api/runbooks/`                     |
-| `ui:surface`      | The Runbooks tab                                             |
-| `hosts:read`      | Host names, the hosts offered for a token, and access checks |
-| `ssh:connect`     | Run a step over SSH, and read whether a host key is stored   |
-| `credentials:use` | Use the host's stored login for that run                     |
+| Capability        | Why                                                                         |
+| ----------------- | --------------------------------------------------------------------------- |
+| `db:own`          | The runbooks, steps, runs and tokens tables                                 |
+| `network:serve`   | The routes under `/plugin-api/runbooks/`                                    |
+| `ui:surface`      | The Runbooks tab                                                            |
+| `hosts:read`      | Host names, the hosts offered for a token, and access checks                |
+| `ssh:connect`     | Run a step over SSH, and read whether a host takes SSH and has a stored key |
+| `credentials:use` | Use the host's stored login for that run                                    |

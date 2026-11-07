@@ -216,6 +216,13 @@ describe(`${manifest.id} frontend`, () => {
                   createdBy: "alice",
                   hosts: [
                     { id: 2, name: "db-1", address: "10.0.0.2", folder: null },
+                    {
+                      id: 3,
+                      name: "desk-1",
+                      address: "10.0.0.3",
+                      folder: null,
+                      ssh: false,
+                    },
                   ],
                   createdAt: "2026-11-07T10:00:00.000Z",
                   lastUsedAt: null,
@@ -235,15 +242,28 @@ describe(`${manifest.id} frontend`, () => {
       hosts: [
         { id: 1, name: "web-1", ip: "10.0.0.1", folder: "web" },
         { id: 2, name: "db-1", ip: "10.0.0.2", folder: null },
+        {
+          id: 3,
+          name: "desk-1",
+          ip: "10.0.0.3",
+          connectionType: "rdp",
+          enableSsh: false,
+        },
+        { id: 4, name: "vnc-1", ip: "10.0.0.4", connectionType: "vnc" },
       ],
       api: client as never,
     });
     rendered.renderTab("runbooks", { isVisible: true });
     fireEvent.click(await screen.findByText(locales.tokens.title));
 
-    // The existing token shows its hosts.
+    // The existing token shows its hosts, a remote desktop one marked.
     const row = (await screen.findByText("old")).closest("tr") as HTMLElement;
-    expect(within(row).getByText("db-1")).toBeTruthy();
+    expect(
+      within(row).getByText("db-1, desk-1 (not SSH, not offered to agents)"),
+    ).toBeTruthy();
+    // Only SSH hosts can be ticked.
+    expect(screen.queryByText("desk-1")).toBeNull();
+    expect(screen.queryByText("vnc-1")).toBeNull();
 
     fireEvent.change(
       screen.getByPlaceholderText(locales.tokens.namePlaceholder),

@@ -89,18 +89,25 @@ export interface TokenInfo {
     name: string | null;
     address: string;
     folder: string | null;
+    /** False for a host found not to take SSH; agents do not get it. */
+    ssh?: boolean;
   }>;
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
 }
 
+/** A session as the SSH Terminal plugin's terminal.listSessions lists it. */
 export interface TerminalSession {
+  /** The terminal tab's id. */
   id: string;
-  hostId: number | null;
+  hostId: number | string | null;
   hostName?: string;
   label?: string;
+  /** The socket is open. */
   connected?: boolean;
+  /** Shown on screen rather than behind another tab. */
+  visible?: boolean;
 }
 
 /** The body of a refused request, from an axios-style error. */

@@ -17,6 +17,10 @@ Everyone with the Use Runbooks permission sees every runbook and its output. An 
 
 Only the hosts ticked for its token. Change them with **Hosts** on the token's row in Agent tokens. A host that is removed from Termix stays in a token's list until you change it, but a step on it cannot run.
 
+## Why is my remote desktop host not in the list?
+
+Runbooks runs and types commands over SSH, so only hosts with SSH switched on can be ticked for a token. A remote desktop host (RDP, VNC, a console) is left out, and a step on one is refused. A host that has both SSH and remote desktop switched on is an SSH host. A token made with 1.0.0 that lists a remote desktop host shows it as "not SSH" in Agent tokens, and agents no longer get it.
+
 ## Why does the agent get "not a host this token may use"?
 
 The step names a host that is not ticked for the token. Tick it on the token, or ask the agent to call `list_hosts` and pick one from the list.
@@ -29,9 +33,13 @@ Termix has no stored host key for that host, and a connection with nobody to ask
 
 The run is refused and the page reloads with the new command. Read it again before you run it.
 
+## Does Send to terminal run the command?
+
+No. One click finds a connected terminal to the step's host, or opens one and waits for it to connect, then types the command without pressing Enter. You read it there and press Enter yourself. That is why it asks no "are you sure" question; it still asks before a repeat or a step out of order.
+
 ## Send to terminal says it could not send
 
-Send to terminal uses the SSH Terminal plugin. Make sure it is on and a terminal to that host is open and connected. You can always copy the command instead.
+Send to terminal uses the SSH Terminal plugin. Make sure it is on. If a new terminal does not connect within 30 seconds, Runbooks stops waiting and records nothing. You can always copy the command instead.
 
 ## Limits
 

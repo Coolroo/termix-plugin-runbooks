@@ -20,10 +20,11 @@ import {
   valuesObject,
   type RunbookBundle,
 } from "./service.js";
-import type { RunRow, StepRow, Store, TokenHost } from "./store.js";
+import type { RunRow, StepRow, Store, TokenHost, TokenRow } from "./store.js";
 import { now } from "./store.js";
 import { newToken } from "./tokens.js";
 import { applyCaptures } from "./values.js";
+import { isSshHost } from "../shared/hosts.js";
 
 export const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_OUTPUT_BYTES = 262_144;
@@ -127,8 +128,24 @@ export function registerPersonRoutes(
   }
 
   /**
+   * The host as the acting person may connect to it, refused unless it takes
+   * SSH. Runbooks runs and types commands over SSH only, so a remote desktop
+   * host (RDP, VNC, a console) is never a step's host.
+   */
+  async function sshHostFor(hostId: number, refused: string, why = "") {
+    const host = await ctx.ssh.resolveHost(hostId);
+    if (!host) throw new InputError(refused, 403);
+    if (!isSshHost(host)) {
+      throw new InputError(`host ${hostId} is not an SSH host${why}`, 400, {
+        code: "not-ssh",
+      });
+    }
+    return host;
+  }
+
+  /**
    * The hosts a token may use, as chosen by the person making or editing it:
-   * each one must be a host they see and can connect to. Stored as a
+   * each one must be an SSH host they see and can connect to. Stored as a
    * snapshot, without anything secret.
    */
   async function chooseHosts(input: unknown): Promise<TokenHost[]> {
@@ -154,14 +171,61 @@ export function registerPersonRoutes(
       if (!host || !access.hasAccess) {
         throw new InputError(`you cannot connect to host ${id}`, 403);
       }
+      await sshHostFor(id, `you cannot connect to host ${id}`);
       chosen.push({
         id: host.id,
         name: host.name,
         address: host.ip,
         folder: host.folder,
+        ssh: true,
       });
     }
     return chosen;
+  }
+
+  /**
+   * Marks the hosts of tokens made before 1.0.1, which carry no SSH flag,
+   * once the person reading the tokens can see them. A remote desktop host
+   * found this way is marked false, so agents no longer get it.
+   */
+  async function flagTokenHosts(tokens: TokenRow[]): Promise<TokenRow[]> {
+    const unflagged = tokens.filter(
+      (token) =>
+        !token.revokedAt &&
+        token.hosts.some((host) => typeof host.ssh !== "boolean"),
+    );
+    if (unflagged.length === 0) return tokens;
+    const visible = new Set((await ctx.hosts.list()).map((host) => host.id));
+    const known = new Map<number, boolean>();
+    let changed = false;
+    for (const token of unflagged) {
+      let tokenChanged = false;
+      const hosts: TokenHost[] = [];
+      for (const host of token.hosts) {
+        if (typeof host.ssh === "boolean" || !visible.has(host.id)) {
+          hosts.push(host);
+          continue;
+        }
+        if (!known.has(host.id)) {
+          const full = await ctx.ssh.resolveHost(host.id);
+          if (full) known.set(host.id, isSshHost(full));
+        }
+        const ssh = known.get(host.id);
+        if (ssh === undefined) {
+          hosts.push(host);
+        } else {
+          hosts.push({ ...host, ssh });
+          tokenChanged = true;
+        }
+      }
+      if (tokenChanged) {
+        await store.setTokenHosts(token.id, hosts);
+        token.hosts = hosts;
+        changed = true;
+      }
+    }
+    if (changed) await store.persist();
+    return tokens;
   }
 
   async function bundleFor(runbookId: number): Promise<RunbookBundle> {
@@ -222,6 +286,13 @@ export function registerPersonRoutes(
     if (input.commandHash !== resolved.hash) {
       throw new InputError("the step changed; reload", 409, { code: "stale" });
     }
+    // Before the questions about order and repeats: no answer to them makes
+    // a remote desktop host run a shell command.
+    const host = await sshHostFor(
+      step.hostId,
+      "you cannot connect to this host",
+      "; Runbooks runs commands over SSH only",
+    );
     if (input.outOfOrder !== true) {
       const blocking = bundle.steps.filter(
         (other) => other.position < step.position && other.status === "pending",
@@ -262,6 +333,7 @@ export function registerPersonRoutes(
     }
     return {
       hostId: step.hostId,
+      host,
       command: resolved.command!,
       hash: resolved.hash!,
     };
@@ -386,6 +458,7 @@ export function registerPersonRoutes(
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The run }
+   *       400: { description: The step's host is not an SSH host }
    *       409: { description: Stale, out of order, repeat or no stored host key }
    */
   router.post(
@@ -395,11 +468,9 @@ export function registerPersonRoutes(
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
         const target = await checkRunnable(step, bundle, body(req));
-        const host = await ctx.ssh.resolveHost(target.hostId);
-        if (!host) throw new InputError("you cannot connect to this host", 403);
         // Without a stored key, a connection with no person to ask accepts
         // whatever key the server shows. Refuse rather than trust it.
-        if (!host.hostKeyFingerprint) {
+        if (!target.host.hostKeyFingerprint) {
           throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
         }
         const runId = await store.insertRun({
@@ -685,7 +756,9 @@ export function registerPersonRoutes(
     "/tokens",
     ...tokensRole,
     wrap(async () =>
-      (await store.listTokens()).map(({ tokenHash: _hash, ...rest }) => rest),
+      (await flagTokenHosts(await store.listTokens())).map(
+        ({ tokenHash: _hash, ...rest }) => rest,
+      ),
     ),
   );
   router.post(
@@ -730,7 +803,9 @@ export function registerPersonRoutes(
    * /plugin-api/runbooks/tokens/{id}/hosts:
    *   post:
    *     summary: Replace the hosts a token may name in steps
-   *     description: Body { hostIds }. Each host must be one you can connect to.
+   *     description: >
+   *       Body { hostIds }. Each host must be an SSH host you can connect to;
+   *       a remote desktop host is refused with 400.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The token }

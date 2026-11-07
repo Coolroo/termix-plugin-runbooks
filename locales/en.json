@@ -103,17 +103,14 @@
     "anyway": "Run out of order"
   },
   "terminal": {
-    "noneTitle": "No open terminal to {{host}}",
-    "noneHint": "Open a terminal to this host. When it is connected, press Send to terminal again.",
-    "open": "Open terminal",
-    "opened": "Terminal opened. Press Send to terminal again once it is connected.",
-    "openFailed": "Could not open a terminal.",
+    "opening": "Opening a terminal to {{host}}…",
+    "openFailed": "Could not open a terminal. Copy the command instead.",
+    "timeout": "The terminal to {{host}} did not connect in time. Copy the command instead.",
+    "missing": "Send to terminal needs the SSH Terminal plugin. Copy the command instead.",
     "noHost": "This host is not available to you.",
-    "confirmTitle": "Send to {{session}}?",
-    "confirmHint": "The command is typed into the terminal but not run: you press Enter there. Then paste the output back here.",
-    "send": "Send",
-    "sent": "Sent. Press Enter in the terminal, then paste the output here.",
-    "sendFailed": "Could not send to the terminal. Copy the command instead."
+    "notSsh": "{{host}} is not an SSH host, so it has no terminal to send to.",
+    "sent": "Typed into {{host}}. Press Enter there, then paste the output here.",
+    "sendFailed": "Could not type into the terminal. Copy the command instead."
   },
   "tokens": {
     "title": "Agent tokens",
@@ -134,12 +131,17 @@
     "revokeHint": "Agents using it are refused from now on.",
     "hosts": "Hosts",
     "pickHosts": "Tick at least one host the token may use.",
-    "noHosts": "You have no hosts to give a token.",
+    "noHosts": "You have no SSH hosts to give a token.",
+    "notSsh": "{{host}} (not SSH, not offered to agents)",
     "editHosts": "Hosts",
     "saveHosts": "Save hosts"
   },
   "common": {
     "cancel": "Cancel"
+  },
+  "link": {
+    "opening": "Opening the runbook…",
+    "notFound": "Runbook {{id}} does not exist or is not available to you."
   },
   "error": {
     "load": "Could not load runbooks.",

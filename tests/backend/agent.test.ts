@@ -158,6 +158,16 @@ describe("agent API", () => {
 
     const listed = await server.agent("GET", "/runbooks?status=open", token);
     expect(listed.body).toHaveLength(1);
+
+    // Every runbook carries the link that opens it, relative to Termix.
+    const link = `/?view=runbook&id=${created.id}`;
+    expect(created.openPath).toBe(link);
+    expect(updated.body.openPath).toBe(link);
+    expect(listed.body[0].openPath).toBe(link);
+    const read = await server.agent("GET", `/runbooks/${created.id}`, token);
+    expect(read.body.openPath).toBe(link);
+    // The person side has no use for it.
+    expect(shown).not.toHaveProperty("openPath");
   });
 
   it("refuses a host outside the token's list", async () => {
@@ -212,8 +222,8 @@ describe("agent API", () => {
     });
     expect(made.status).toBe(201);
     expect(made.body.hosts).toEqual([
-      { id: 2, name: "host-2", address: "10.0.0.2", folder: "lab" },
-      { id: 1, name: "host-1", address: "10.0.0.1", folder: "lab" },
+      { id: 2, name: "host-2", address: "10.0.0.2", folder: "lab", ssh: true },
+      { id: 1, name: "host-1", address: "10.0.0.1", folder: "lab", ssh: true },
     ]);
     // Nothing else about the host is kept.
     const stored = server.db.sqlite
@@ -583,6 +593,18 @@ describe("MCP", () => {
       arguments: { runbookId: runbook.id },
     });
     const body = read.body.result.structuredContent;
+    expect(runbook.openPath).toBe(`/?view=runbook&id=${runbook.id}`);
+    expect(body.openPath).toBe(runbook.openPath);
+    const listed = await rpc(server, token, "tools/call", {
+      name: "list_runbooks",
+      arguments: {},
+    });
+    expect(listed.body.result.content[0].text).toContain(runbook.openPath);
+    const tools = await rpc(server, token, "tools/list");
+    const createTool = tools.body.result.tools.find(
+      (tool: { name: string }) => tool.name === "create_runbook",
+    );
+    expect(createTool.description).toContain("openPath");
     expect(body.steps[0].status).toBe("done");
     expect(body.steps[0].runs[0]).toMatchObject({
       command: "systemctl status nginx",

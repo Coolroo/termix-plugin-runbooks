@@ -9,12 +9,14 @@ The agent can never run anything. It only proposes and reads.
 1. Install the plugin and grant its capabilities. Termix lists them on install; [Security](security.md) says why each one is needed.
 2. Give the people who run runbooks the **Use Runbooks** permission. Admins have it by default.
 3. Give the people who make agent tokens the **Manage Runbooks tokens** permission. Admins have it by default.
-4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. The token is shown once: copy it into your agent's secret store.
+4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. Only SSH hosts are listed: a remote desktop host (RDP, VNC, a console) cannot run a command. The token is shown once: copy it into your agent's secret store.
 5. Point the agent at the API or the MCP endpoint. See [Agent API and MCP](agent-api.md).
 
 ## Run a runbook
 
 Open **Runbooks** from the sidebar. Open runbooks come first, with their progress and author.
+
+An agent can also give you a link to a runbook, like `https://<your Termix address>/?view=runbook&id=12`. It opens Termix with the Runbooks tab on that runbook, after you sign in if you were signed out.
 
 A runbook shows its summary, its values and its steps in order. The next pending step has an orange border. Each step shows:
 
@@ -30,7 +32,9 @@ A runbook shows its summary, its values and its steps in order. The next pending
 
 ### Send to terminal
 
-**Send to terminal** types the command into an open terminal to that host, without pressing Enter. Press Enter yourself, then paste the output into the box under the step and press **Mark done** or **Mark failed**. With no terminal open to that host, Runbooks offers to open one; press Send to terminal again once it is connected.
+**Send to terminal** types the command into a terminal to that host in one click, without pressing Enter, and brings that terminal to the front. Press Enter yourself, then paste the output into the box under the step and press **Mark done** or **Mark failed**.
+
+It uses a connected terminal to the host when one is open, the one on screen first. With none open, it opens one, waits for it to connect (up to 30 seconds), and then types the command. If the terminal does not connect in time, nothing is recorded: copy the command instead. The only questions it asks are the repeat and order questions below.
 
 ### Skip, reopen and hide
 
@@ -46,6 +50,7 @@ A runbook shows its summary, its values and its steps in order. The next pending
 - **Changes.** If the agent changed the step or a value since you loaded the page, the run is refused and the page reloads, so you never run a command you did not see.
 - **Missing values.** A step whose `{{value}}` has no value yet cannot run. It names the missing values.
 - **Host keys.** **Run** refuses a host whose key Termix has not stored yet. Open a terminal to that host once, accept its key, and run the step again.
+- **SSH only.** Run and Send to terminal refuse a host that does not take SSH, such as a remote desktop host.
 
 ## Values
 

@@ -9,7 +9,7 @@ An agent talks to Runbooks with a **Runbooks token**, over plain REST or over MC
 
 ## Tokens
 
-Make a token in Runbooks, **Agent tokens** (needs the Manage Runbooks tokens permission). Name it, tick the hosts it may use (at least one; only hosts you can connect to), and press **Make token**. It starts with `rbk_` and is shown once. Send it on every request:
+Make a token in Runbooks, **Agent tokens** (needs the Manage Runbooks tokens permission). Name it, tick the hosts it may use (at least one; only SSH hosts you can connect to), and press **Make token**. It starts with `rbk_` and is shown once. Send it on every request:
 
 ```
 Authorization: Bearer rbk_...
@@ -17,7 +17,7 @@ Authorization: Bearer rbk_...
 
 What a token can reach:
 
-- `list_hosts` returns only the hosts ticked for it, and steps may only name those hosts. Change the list later with **Hosts** on the token's row.
+- `list_hosts` returns only the hosts ticked for it, and steps may only name those hosts. Change the list later with **Hosts** on the token's row. A host that does not take SSH (a remote desktop host) is never listed, and a step that names one is refused with `host N is not an SSH host`.
 - it sees only the runbooks made with tokens of the person who made it
 - it stops working when it is revoked, or when that person loses the Use Runbooks permission
 
@@ -48,6 +48,10 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 | `PATCH /steps/{id}`           | Change a step that has not run; only the given fields change      |
 | `DELETE /steps/{id}`          | Remove a step that has not run                                    |
 | `POST /mcp`                   | MCP (below)                                                       |
+
+### A link for the person
+
+Every runbook in an answer (list, read, create, change) has `openPath`, such as `/?view=runbook&id=12`. It is relative because Runbooks does not know the address people use. The person opens your Termix address followed by `openPath`, for example `https://termix.example.com/?view=runbook&id=12`, and the Runbooks tab opens on that runbook. A person who is signed out signs in first and then lands on it. When Termix runs under a base path, put the base path before `openPath`. Have the agent give the person that link for each runbook it makes.
 
 Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Errors are `{ "error": "..." }` with status 400 (bad input), 401 (token), 403, 404, 409 (the step already ran, or the runbook is not open) or 429 (rate limit).
 
@@ -173,7 +177,7 @@ curl -sS -H "Authorization: Bearer $RUNBOOKS_TOKEN" \
 
 Connect the agent with the MCP config above, then ask for a runbook instead of asking it to run commands. For example:
 
-> Our web servers need the new TLS certificate. Use the termix-runbooks tools. List the hosts, then create a runbook that checks the current certificate's expiry on each web host, copies the new certificate in place, tests the nginx config, and reloads nginx. Put the certificate path in a value. Capture the new expiry date from `openssl x509 -enddate -noout`. Mark the step that prints the key as hidden from agents. Give each step a short body that says why, and an expect line. Then wait: I will run the steps. When I say so, read the runbook and tell me what failed and what to do next.
+> Our web servers need the new TLS certificate. Use the termix-runbooks tools. List the hosts, then create a runbook that checks the current certificate's expiry on each web host, copies the new certificate in place, tests the nginx config, and reloads nginx. Put the certificate path in a value. Capture the new expiry date from `openssl x509 -enddate -noout`. Mark the step that prints the key as hidden from agents. Give each step a short body that says why, and an expect line. Give me the link to the runbook (our Termix address followed by its openPath). Then wait: I will run the steps. When I say so, read the runbook and tell me what failed and what to do next.
 
 Good habits for the prompt:
 

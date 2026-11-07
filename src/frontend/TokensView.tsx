@@ -12,12 +12,14 @@ import {
   useConfirm,
 } from "@termix-ssh/plugin-sdk/ui";
 import { toast } from "sonner";
+import { isSshHost } from "../shared/hosts";
 import { formatTime } from "./StepCard";
 import { errorBody, type TokenInfo } from "./types";
 
 /**
- * Ticks for the hosts a token may use, from the hosts the person can see.
- * The server checks each one again against their connect access.
+ * Ticks for the hosts a token may use, from the SSH hosts the person can
+ * see. A remote desktop host (RDP, VNC, a console) cannot run a step's
+ * command, so it is not offered. The server checks each one again.
  */
 function HostPicker({
   selected,
@@ -27,7 +29,8 @@ function HostPicker({
   onChange: (next: number[]) => void;
 }) {
   const { t } = useTranslation();
-  const { hosts, loaded } = useHosts();
+  const { hosts: all, loaded } = useHosts();
+  const hosts = all.filter((host) => isSshHost(host));
   if (loaded && hosts.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">{t("tokens.noHosts")}</p>
@@ -69,6 +72,7 @@ export function TokensView({ baseUrl }: { baseUrl: string }) {
   const { t } = useTranslation();
   const api = usePluginApi();
   const confirm = useConfirm();
+  const { hosts: allHosts } = useHosts();
   const [tokens, setTokens] = useState<TokenInfo[] | null>(null);
   const [name, setName] = useState("");
   const [hostIds, setHostIds] = useState<number[]>([]);
@@ -82,6 +86,16 @@ export function TokensView({ baseUrl }: { baseUrl: string }) {
 
   const fail = (error: unknown) =>
     toast.error(String(errorBody(error).data.error ?? t("error.generic")));
+
+  /**
+   * Whether a token's host stays ticked when its hosts are edited: not when
+   * it is known not to take SSH, which the server would refuse.
+   */
+  const keepOnEdit = (host: TokenInfo["hosts"][number]) =>
+    host.ssh !== false &&
+    !allHosts.some(
+      (other) => Number(other.id) === host.id && !isSshHost(other),
+    );
 
   const load = useCallback(async () => {
     try {
@@ -244,7 +258,13 @@ export function TokensView({ baseUrl }: { baseUrl: string }) {
                     </div>
                   ) : (
                     token.hosts
-                      .map((host) => host.name || host.address)
+                      .map((host) =>
+                        host.ssh === false
+                          ? t("tokens.notSsh", {
+                              host: host.name || host.address,
+                            })
+                          : host.name || host.address,
+                      )
                       .join(", ")
                   )}
                 </td>
@@ -263,7 +283,9 @@ export function TokensView({ baseUrl }: { baseUrl: string }) {
                         onClick={() =>
                           setEditing({
                             id: token.id,
-                            hostIds: token.hosts.map((host) => host.id),
+                            hostIds: token.hosts
+                              .filter((host) => keepOnEdit(host))
+                              .map((host) => host.id),
                           })
                         }
                       >

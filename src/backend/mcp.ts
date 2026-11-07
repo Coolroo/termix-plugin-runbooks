@@ -12,6 +12,9 @@ export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const VALUE_SYNTAX =
   "Commands may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook's value of that name: the author's values first, then values captured from earlier steps' output (a later capture wins). The person sees the resolved command before running it; a step whose placeholders have no value cannot run.";
 
+const OPEN_LINK =
+  "Each runbook has openPath, a link relative to the Termix address: give the person the Termix address followed by openPath (for example https://termix.example.com/?view=runbook&id=12). It opens that runbook in the Runbooks tab, after a sign-in if needed.";
+
 const STEP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -69,7 +72,7 @@ export const TOOLS = [
   {
     name: "list_hosts",
     description:
-      "List the Termix hosts this token may use, as chosen by the person who made it: id, name, address and folder. A step's hostId must be one of these ids.",
+      "List the Termix SSH hosts this token may use, as chosen by the person who made it: id, name, address and folder. A step's hostId must be one of these ids.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -78,8 +81,7 @@ export const TOOLS = [
   },
   {
     name: "list_runbooks",
-    description:
-      "List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps).",
+    description: `List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps). ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -94,8 +96,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description:
-      "Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output). Output of steps the owner hid reads '[hidden by owner]'. Use it to see what happened after the owner ran steps.",
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output). Output of steps the owner hid reads '[hidden by owner]'. Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -105,7 +106,7 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Returns the runbook as get_runbook does.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -127,8 +128,7 @@ export const TOOLS = [
   },
   {
     name: "update_runbook",
-    description:
-      "Change a runbook's title, summary, values or status (open, done, abandoned). Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running.",
+    description: `Change a runbook's title, summary, values or status (open, done, abandoned). Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -331,7 +331,7 @@ export async function handleMessage(
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "termix-runbooks", version: serverVersion },
         instructions:
-          "Runbooks in Termix. You propose runbooks and steps; a person runs each step after reading the exact command, and the output is stored. You can never run a step. Read get_runbook to see results.",
+          "Runbooks in Termix. You propose runbooks and steps; a person runs each step after reading the exact command, and the output is stored. You can never run a step. Read get_runbook to see results. Give the person a link to each runbook you make: the Termix address followed by the runbook's openPath.",
       });
     }
     case "ping":
