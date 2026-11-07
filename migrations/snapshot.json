@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "tables": {
+    "runbooks": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "type": "text",
+          "notNull": true
+        },
+        "summary": {
+          "type": "text",
+          "notNull": true
+        },
+        "status": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "values": {
+          "type": "text",
+          "notNull": true
+        },
+        "createdBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "createdByUserId": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "revision": {
+          "type": "integer",
+          "notNull": true
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_runbooks_status",
+          "columns": [
+            "status"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_runbooks_owner",
+          "columns": [
+            "createdByUserId"
+          ]
+        }
+      ]
+    },
+    "steps": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "runbookId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "position": {
+          "type": "integer",
+          "notNull": true
+        },
+        "title": {
+          "type": "text",
+          "notNull": true
+        },
+        "body": {
+          "type": "text",
+          "notNull": true
+        },
+        "hostId": {
+          "type": "integer"
+        },
+        "command": {
+          "type": "text"
+        },
+        "expect": {
+          "type": "text",
+          "notNull": true
+        },
+        "captures": {
+          "type": "text",
+          "notNull": true
+        },
+        "hideOutputFromAgents": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "status": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "skipReason": {
+          "type": "text"
+        },
+        "ownerNote": {
+          "type": "text",
+          "notNull": true
+        },
+        "timeoutMs": {
+          "type": "integer"
+        },
+        "revision": {
+          "type": "integer",
+          "notNull": true
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_steps_runbook",
+          "columns": [
+            "runbookId"
+          ]
+        }
+      ]
+    },
+    "runs": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "stepId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "runbookId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "mode": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "status": {
+          "type": "varchar",
+          "length": 24,
+          "notNull": true
+        },
+        "hostId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "command": {
+          "type": "text",
+          "notNull": true
+        },
+        "commandHash": {
+          "type": "varchar",
+          "length": 64,
+          "notNull": true
+        },
+        "userId": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "startedAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "finishedAt": {
+          "type": "timestamp"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "stdout": {
+          "type": "text"
+        },
+        "stderr": {
+          "type": "text"
+        },
+        "truncated": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "timedOut": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "pastedOutput": {
+          "type": "text"
+        },
+        "error": {
+          "type": "text"
+        },
+        "captured": {
+          "type": "text"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_runs_step",
+          "columns": [
+            "stepId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_runs_runbook",
+          "columns": [
+            "runbookId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_runs_hash",
+          "columns": [
+            "commandHash"
+          ]
+        }
+      ]
+    },
+    "tokens": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "tokenHash": {
+          "type": "varchar",
+          "length": 64,
+          "notNull": true,
+          "unique": true
+        },
+        "prefix": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "createdBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "lastUsedAt": {
+          "type": "timestamp"
+        },
+        "revokedAt": {
+          "type": "timestamp"
+        }
+      },
+      "indexes": []
+    }
+  }
+}

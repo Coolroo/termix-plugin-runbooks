@@ -1,0 +1,63 @@
+{
+  "id": "runbooks",
+  "name": "Runbooks",
+  "version": "1.0.0",
+  "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
+  "author": {
+    "name": "Coolroo"
+  },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/Coolroo/termix-plugin-runbooks",
+  "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
+  "category": "Productivity",
+  "icon": "ListChecks",
+  "features": [
+    "Agents propose runbooks through a token API or MCP; they can never run anything",
+    "A person runs each step after seeing the exact command and host",
+    "Run over SSH or send the command to an open terminal and paste the output back",
+    "Every run is kept, and a repeat of the same command asks first",
+    "Values with {{name}} placeholders, filled by the author or captured from output",
+    "Outputs can be hidden from agents step by step"
+  ],
+  "env": [],
+  "engine": {
+    "termix": ">=26.11.0",
+    "api": "^1.13"
+  },
+  "capabilities": [
+    "db:own",
+    "network:serve",
+    "ui:surface",
+    "hosts:read",
+    "ssh:connect",
+    "credentials:use",
+    "users:impersonate"
+  ],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "runbooks",
+        "titleKey": "tab.title",
+        "icon": "ListChecks",
+        "openFrom": ["rail"]
+      }
+    ],
+    "permissions": [
+      {
+        "name": "use",
+        "titleKey": "permissions.use.title",
+        "descriptionKey": "permissions.use.description",
+        "defaultRoles": ["admin"]
+      },
+      {
+        "name": "manage-tokens",
+        "titleKey": "permissions.manageTokens.title",
+        "descriptionKey": "permissions.manageTokens.description",
+        "defaultRoles": ["admin"]
+      }
+    ]
+  },
+  "locales": "locales",
+  "platforms": ["linux", "win32", "darwin"],
+  "desktop": "server"
+}

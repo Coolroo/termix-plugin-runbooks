@@ -1,0 +1,57 @@
+{
+  "name": "termix-plugin-runbooks",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "termix-plugin build",
+    "test": "termix-plugin test",
+    "typecheck": "tsc -p .",
+    "validate": "termix-plugin validate",
+    "migrations": "termix-plugin migrations",
+    "pack": "termix-plugin pack",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@termix-ssh/plugin-sdk": "1.0.22",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
+    "i18next": "^26.4.2",
+    "jsdom": "^30.0.1",
+    "light-my-request": "^6.8.0",
+    "prettier": "3.9.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-i18next": "^17.0.16",
+    "sonner": "^2.0.8",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "@termix-ssh/plugin-sdk": "1.0.22",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
+    "react": "^19.2.8"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Coolroo/termix-plugin-runbooks.git"
+  },
+  "license": "Apache-2.0"
+}

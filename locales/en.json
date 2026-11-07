@@ -1,0 +1,144 @@
+{
+  "plugin": {
+    "name": "Runbooks",
+    "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept."
+  },
+  "tab": {
+    "title": "Runbooks"
+  },
+  "permissions": {
+    "use": {
+      "title": "Use Runbooks",
+      "description": "Read runbooks and run their steps on hosts you can connect to."
+    },
+    "manageTokens": {
+      "title": "Manage Runbooks tokens",
+      "description": "Make and revoke the tokens agents use to propose runbooks."
+    }
+  },
+  "list": {
+    "empty": "No runbooks yet.",
+    "emptyHint": "An agent with a Runbooks token proposes them; they show up here.",
+    "meta": "{{done}}/{{total}} done · by {{author}} · {{time}}",
+    "failed": "{{count}} failed"
+  },
+  "runbook": {
+    "status": {
+      "open": "Open",
+      "done": "Done",
+      "abandoned": "Abandoned"
+    },
+    "markDone": "Mark done",
+    "abandon": "Abandon",
+    "reopen": "Reopen",
+    "noSteps": "This runbook has no steps yet."
+  },
+  "values": {
+    "title": "Values",
+    "author": "set by the author",
+    "captured": "captured in step {{position}}"
+  },
+  "step": {
+    "status": {
+      "pending": "Pending",
+      "done": "Done",
+      "failed": "Failed",
+      "skipped": "Skipped"
+    },
+    "next": "Next",
+    "hidden": "Hidden from agents",
+    "on": "On {{host}}",
+    "unknownHost": "host {{id}} (not available to you)",
+    "copy": "Copy",
+    "copied": "Copied",
+    "missing": "Values missing: {{names}}. This step cannot run until they are set.",
+    "expect": "You should see",
+    "run": "Run",
+    "send": "Send to terminal",
+    "skip": "Skip",
+    "markRead": "Mark read",
+    "reopen": "Reopen",
+    "skipReason": "Why skip it? (optional)",
+    "skippedBecause": "Skipped: {{reason}}",
+    "hideFromAgents": "Hide output from agents",
+    "showToAgents": "Show output to agents",
+    "notes": "Notes",
+    "notesPlaceholder": "Notes for this step. Saved when you leave the box; agents can read them."
+  },
+  "run": {
+    "confirmTitle": "Run step {{position}}?",
+    "confirm": "Run",
+    "ok": "The command finished with exit code 0.",
+    "notOk": "The command failed. See the output.",
+    "latest": "Latest run",
+    "earlier": "Earlier runs ({{count}})",
+    "byExec": "Run by {{user}} at {{time}}",
+    "byTerminal": "Sent to a terminal by {{user}} at {{time}}",
+    "exit": "exit {{code}}",
+    "truncated": "Output cut",
+    "timedOut": "Timed out",
+    "stdout": "Output",
+    "stderr": "Errors",
+    "pasted": "Pasted output",
+    "captured": "Captured:",
+    "pastePlaceholder": "Paste the terminal output here, then mark the step done or failed.",
+    "markDone": "Mark done",
+    "markFailed": "Mark failed",
+    "status": {
+      "running": "Running",
+      "awaiting-output": "Waiting for output",
+      "done": "Done",
+      "failed": "Failed"
+    }
+  },
+  "repeat": {
+    "titleStep": "This step already ran. Run it again?",
+    "titleHash": "This command ran on this host in the last 24 hours. Run it again?",
+    "last": "Last run by {{user}} at {{time}}, exit {{exit}}.",
+    "again": "Run again"
+  },
+  "order": {
+    "title": "Earlier steps are still pending",
+    "hint": "Not done yet: {{steps}}. Run this step anyway?",
+    "anyway": "Run out of order"
+  },
+  "terminal": {
+    "noneTitle": "No open terminal to {{host}}",
+    "noneHint": "Open a terminal to this host. When it is connected, press Send to terminal again.",
+    "open": "Open terminal",
+    "opened": "Terminal opened. Press Send to terminal again once it is connected.",
+    "openFailed": "Could not open a terminal.",
+    "noHost": "This host is not available to you.",
+    "confirmTitle": "Send to {{session}}?",
+    "confirmHint": "The command is typed into the terminal but not run: you press Enter there. Then paste the output back here.",
+    "send": "Send",
+    "sent": "Sent. Press Enter in the terminal, then paste the output here.",
+    "sendFailed": "Could not send to the terminal. Copy the command instead."
+  },
+  "tokens": {
+    "title": "Agent tokens",
+    "intro": "An agent uses a token to propose runbooks and read their results. A token can never run a command. It acts for you: it sees your hosts and the runbooks made with your tokens.",
+    "endpoints": "Agent endpoints",
+    "namePlaceholder": "Token name, like the agent's name",
+    "create": "Make token",
+    "once": "Token for {{name}}. Copy it now: it is not shown again.",
+    "hide": "Done",
+    "none": "No tokens yet.",
+    "name": "Name",
+    "prefix": "Starts with",
+    "created": "Made",
+    "lastUsed": "Last used",
+    "revoke": "Revoke",
+    "revoked": "Revoked",
+    "revokeTitle": "Revoke {{name}}?",
+    "revokeHint": "Agents using it are refused from now on."
+  },
+  "common": {
+    "cancel": "Cancel"
+  },
+  "error": {
+    "load": "Could not load runbooks.",
+    "generic": "Something went wrong.",
+    "stale": "The step changed since you saw it. Check the new command before you run it."
+  }
+}
