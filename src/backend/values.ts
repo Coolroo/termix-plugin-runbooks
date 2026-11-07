@@ -15,8 +15,8 @@ export const MAX_VALUE_LENGTH = 4096;
 export const MAX_CAPTURES = 20;
 export const MAX_CAPTURE_PATTERN = 300;
 /** Captures only look at this much output, and stop after this long. */
-const CAPTURE_INPUT_LIMIT = 256 * 1024;
-const CAPTURE_TIME_LIMIT_MS = 250;
+export const CAPTURE_INPUT_LIMIT = 256 * 1024;
+export const CAPTURE_TIME_LIMIT_MS = 250;
 
 export type Values = Record<string, string>;
 
@@ -154,6 +154,30 @@ export function applyCaptures(
     }
   }
   return { values, errors };
+}
+
+/**
+ * Whether a pattern (JavaScript, multiline) matches somewhere in the text.
+ * Null when it did not finish within the captures' time limit: it runs in a
+ * separate context, so a pattern that backtracks forever stops instead of
+ * holding the server.
+ */
+export function testPattern(
+  pattern: string,
+  input: string,
+  timeLimitMs = CAPTURE_TIME_LIMIT_MS,
+): boolean | null {
+  const sandbox = vm.createContext({
+    input: input.slice(0, CAPTURE_INPUT_LIMIT),
+    pattern,
+  });
+  try {
+    return vm.runInContext("new RegExp(pattern, 'm').test(input)", sandbox, {
+      timeout: timeLimitMs,
+    }) as boolean;
+  } catch {
+    return null;
+  }
 }
 
 /** JSON text to an object, or a fallback for anything malformed. */

@@ -119,6 +119,18 @@
         "timeoutMs": {
           "type": "integer"
         },
+        "checks": {
+          "type": "text"
+        },
+        "waitAfterPreviousSeconds": {
+          "type": "integer"
+        },
+        "waitReason": {
+          "type": "text"
+        },
+        "endedAt": {
+          "type": "timestamp"
+        },
         "revision": {
           "type": "integer",
           "notNull": true
@@ -215,6 +227,9 @@
           "type": "text"
         },
         "captured": {
+          "type": "text"
+        },
+        "checks": {
           "type": "text"
         }
       },

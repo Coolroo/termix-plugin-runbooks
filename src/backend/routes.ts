@@ -17,6 +17,7 @@ import {
   personView,
   resolveStep,
   runbookSummary,
+  waitState,
   valuesObject,
   type RunbookBundle,
 } from "./service.js";
@@ -25,10 +26,15 @@ import { now } from "./store.js";
 import { newToken } from "./tokens.js";
 import { applyCaptures } from "./values.js";
 import { isSshHost } from "../shared/hosts.js";
+import type { LiveRuns } from "./live.js";
+import { streamExec, type ExecClient } from "./stream-exec.js";
+import { evaluateChecks, type CheckedRun } from "./checks.js";
 
 export const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_OUTPUT_BYTES = 262_144;
 export const MAX_TOKEN_HOSTS = 500;
+/** How long Stop waits for the run to be written before it answers. */
+export const STOP_WAIT_MS = 5000;
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
@@ -65,6 +71,7 @@ export function registerPersonRoutes(
   router: Router,
   ctx: PluginContext,
   store: Store,
+  live: LiveRuns,
 ): void {
   const actor = () => ctx.currentActor() as string;
 
@@ -98,25 +105,43 @@ export function registerPersonRoutes(
   /**
    * Steps a run or a send is working on. Claimed before the step and its runs
    * are read, so a second click waits for nothing and cannot pass the repeat
-   * guard while the first run is still being written.
+   * guard while the first run is still being written. A Run keeps its claim
+   * until the command ends, after the route has answered.
    */
   const inFlight = new Set<number>();
 
-  async function claimed<T>(
-    stepId: number,
-    fn: (stepId: number) => Promise<T>,
-  ): Promise<T> {
+  /** Claims a step and returns the function that lets it go. */
+  function claim(stepId: number): () => void {
     if (inFlight.has(stepId)) {
       throw new InputError("this step is already running", 409, {
         code: "running",
       });
     }
     inFlight.add(stepId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inFlight.delete(stepId);
+    };
+  }
+
+  async function claimed<T>(
+    stepId: number,
+    fn: (stepId: number) => Promise<T>,
+  ): Promise<T> {
+    const release = claim(stepId);
     try {
       return await fn(stepId);
     } finally {
-      inFlight.delete(stepId);
+      release();
     }
+  }
+
+  /** One run as the person view shows it, live output included. */
+  async function shownRun(runId: number) {
+    const run = await store.getRun(runId);
+    return run ? live.show([run])[0] : null;
   }
 
   async function hostNamer() {
@@ -229,7 +254,7 @@ export function registerPersonRoutes(
   }
 
   async function bundleFor(runbookId: number): Promise<RunbookBundle> {
-    const bundle = await loadBundle(store, runbookId);
+    const bundle = await loadBundle(store, runbookId, live);
     if (!bundle) throw new InputError("runbook not found", 404);
     return bundle;
   }
@@ -312,6 +337,25 @@ export function registerPersonRoutes(
         );
       }
     }
+    // The author asked to wait after the previous step ended.
+    const wait = waitState(step, bundle.steps, bundle.runsByStep);
+    const waiting = wait && wait.remainingMs > 0 ? wait : null;
+    if (waiting && input.waitAnyway !== true) {
+      const remainingSeconds = Math.ceil(waiting.remainingMs / 1000);
+      throw new InputError(
+        `the runbook says to wait ${remainingSeconds} s more after step ${waiting.previous.position}${
+          waiting.reason ? ` (${waiting.reason})` : ""
+        }`,
+        409,
+        {
+          code: "wait",
+          remainingSeconds,
+          reason: waiting.reason,
+          waitUntil: waiting.until,
+          previous: waiting.previous,
+        },
+      );
+    }
     if (input.confirmRepeat !== true) {
       const sameStep = bundle.runsByStep.get(step.id)?.[0];
       const since = new Date(Date.now() - REPEAT_WINDOW_MS).toISOString();
@@ -336,32 +380,70 @@ export function registerPersonRoutes(
       host,
       command: resolved.command!,
       hash: resolved.hash!,
+      /** Seconds of the wait the person chose to skip, if any. */
+      skippedWait: waiting ? Math.ceil(waiting.remainingMs / 1000) : null,
     };
   }
 
-  /** Sets a step's status from a finished run and stores its captures. */
+  /** Audits a start before the runbook's wait was over. */
+  async function auditSkippedWait(
+    req: Request,
+    step: StepRow,
+    seconds: number | null,
+  ) {
+    if (seconds === null) return;
+    await audit(
+      req,
+      "runbooks_step_wait_skipped",
+      step,
+      `runbook ${step.runbookId} step ${step.position} started ${seconds} s before its wait was over`,
+      true,
+    );
+  }
+
+  /**
+   * Finishes a run: tests the step's checks against the full output when
+   * `checked` is given, sets the step's status and stores the captures. A
+   * failed check fails the run and the step even on exit code 0; captures
+   * are kept only from a run that ends done. Returns the outcome.
+   */
   async function finishRun(
-    run: RunRow,
+    runId: number,
     step: StepRow,
     outcome: "done" | "failed",
     output: string | null,
     patch: Partial<RunRow>,
-  ) {
-    const captures = applyCaptures(
-      step.captures,
-      outcome === "done" ? output : null,
-    );
-    const errors = [patch.error, ...captures.errors].filter(Boolean).join("; ");
-    await store.updateRun(run.id, {
+    checked?: CheckedRun,
+  ): Promise<"done" | "failed"> {
+    const captures = applyCaptures(step.captures, output);
+    const results =
+      checked && step.checks.length > 0
+        ? evaluateChecks(step.checks, checked, captures.values)
+        : null;
+    const final =
+      outcome === "done" && (results ?? []).every((check) => check.ok)
+        ? "done"
+        : "failed";
+    const errors = [patch.error, ...(final === "done" ? captures.errors : [])]
+      .filter(Boolean)
+      .join("; ");
+    const at = now();
+    await store.updateRun(runId, {
       ...patch,
-      status: outcome,
-      finishedAt: now(),
-      captured: captures.values,
+      status: final,
+      finishedAt: at,
+      captured: final === "done" ? captures.values : {},
+      checks: results,
       error: errors || null,
     });
-    await store.updateStep(step.id, { status: outcome, skipReason: null });
+    await store.updateStep(step.id, {
+      status: final,
+      skipReason: null,
+      endedAt: at,
+    });
     await store.touchRunbook(step.runbookId);
     await store.persist();
+    return final;
   }
 
   async function audit(
@@ -450,22 +532,28 @@ export function registerPersonRoutes(
    * @openapi
    * /plugin-api/runbooks/steps/{id}/run:
    *   post:
-   *     summary: Run a step's command over SSH, as the signed-in person
+   *     summary: Start a step's command over SSH, as the signed-in person
    *     description: >
-   *       Body { revision, commandHash, confirmRepeat?, outOfOrder? }. Refused
+   *       Body { revision, commandHash, confirmRepeat?, outOfOrder?,
+   *       waitAnyway? }. Answers
+   *       at once with the run in status running; read the runbook for its
+   *       output as it arrives. Refused
    *       with 409 when the step changed since it was shown, an earlier step is
    *       still pending, or the command already ran (until confirmed).
    *     tags: [Runbooks]
    *     responses:
-   *       200: { description: The run }
+   *       200: { description: The run, still running }
    *       400: { description: The step's host is not an SSH host }
-   *       409: { description: Stale, out of order, repeat or no stored host key }
+   *       409: { description: Stale, out of order, wait, repeat or no stored host key }
    */
   router.post(
     "/steps/:id/run",
     ...act,
-    wrap(async (req) =>
-      claimed(idParam(req), async (stepId) => {
+    wrap(async (req) => {
+      const stepId = idParam(req);
+      const release = claim(stepId);
+      let handedOff = false;
+      try {
         const { step, bundle } = await stepContext(stepId);
         const target = await checkRunnable(step, bundle, body(req));
         // Without a stored key, a connection with no person to ask accepts
@@ -473,6 +561,8 @@ export function registerPersonRoutes(
         if (!target.host.hostKeyFingerprint) {
           throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
         }
+        await auditSkippedWait(req, step, target.skippedWait);
+        const startedAt = now();
         const runId = await store.insertRun({
           stepId: step.id,
           runbookId: step.runbookId,
@@ -482,55 +572,194 @@ export function registerPersonRoutes(
           command: target.command,
           commandHash: target.hash,
           userId: actor(),
-          startedAt: now(),
+          startedAt,
           finishedAt: null,
           exitCode: null,
-          stdout: null,
-          stderr: null,
+          stdout: "",
+          stderr: "",
           truncated: false,
           timedOut: false,
           pastedOutput: null,
           error: null,
         });
+        await store.touchRunbook(step.runbookId);
         await store.persist();
-        const run = (await store.getRun(runId))!;
-        try {
-          const result = await ctx.ssh.exec(target.hostId, target.command, {
+        const record = live.start({
+          runId,
+          stepId: step.id,
+          runbookId: step.runbookId,
+          startedAt,
+        });
+        // Started inside the request, so it keeps acting as this person
+        // after the answer is sent.
+        record.done = execute(req, runId, step, target, release);
+        handedOff = true;
+        return shownRun(runId);
+      } finally {
+        if (!handedOff) release();
+      }
+    }),
+  );
+
+  /**
+   * Runs the command over a connection of its own, through core's connect
+   * pipeline (access check, stored login, host key check, audit), hands the
+   * output to the live buffer as it arrives, and finishes the run.
+   */
+  async function execute(
+    req: Request,
+    runId: number,
+    step: StepRow,
+    target: { hostId: number; command: string },
+    release: () => void,
+  ): Promise<void> {
+    const record = live.get(runId)!;
+    const where = `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}`;
+    let connection: { client: ExecClient; dispose: () => void } | null = null;
+    try {
+      let result: Awaited<ReturnType<typeof streamExec>["result"]>;
+      try {
+        connection = await ctx.ssh.connect<ExecClient>(target.hostId, {
+          purpose: "runbooks",
+        });
+        if (record.stoppedBy) {
+          result = {
+            stdout: "",
+            stderr: "",
+            code: null,
+            truncated: false,
+            timedOut: false,
+            stopped: true,
+          };
+        } else {
+          const handle = streamExec(connection.client, target.command, {
             timeoutMs: step.timeoutMs ?? LIMITS.timeoutDefault,
             maxOutputBytes: MAX_OUTPUT_BYTES,
-            purpose: "runbooks",
+            onOutput: (stream, text) => live.output(runId, stream, text),
+            onTruncate: () => live.truncated(runId),
           });
-          const ok = result.code === 0 && !result.timedOut;
-          await finishRun(run, step, ok ? "done" : "failed", result.stdout, {
-            exitCode: result.code,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            truncated: result.truncated,
-            timedOut: result.timedOut,
-          });
-          await audit(
-            req,
-            "runbooks_step_run",
-            step,
-            `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}: exit ${result.code ?? "none"}`,
-            ok,
-          );
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          await finishRun(run, step, "failed", null, { error: message });
-          await audit(
-            req,
-            "runbooks_step_run",
-            step,
-            `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}`,
-            false,
-            message,
-          );
+          record.stop = handle.stop;
+          result = await handle.result;
         }
-        return store.getRun(runId);
-      }),
-    ),
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await live.settle(runId);
+        const partial = live.get(runId)!;
+        await finishRun(runId, step, "failed", null, {
+          stdout: partial.stdout,
+          stderr: partial.stderr,
+          truncated: partial.truncated,
+          error: record.stoppedBy
+            ? `stopped by ${record.stoppedBy}`
+            : (record.interrupted ?? message),
+        });
+        await audit(req, "runbooks_step_run", step, where, false, message);
+        return;
+      }
+      await live.settle(runId);
+      const stopped = result.stopped || Boolean(record.stoppedBy);
+      const exited =
+        result.code === 0 &&
+        !result.timedOut &&
+        !stopped &&
+        !record.interrupted;
+      const outcome = await finishRun(
+        runId,
+        step,
+        exited ? "done" : "failed",
+        result.stdout,
+        {
+          exitCode: result.code,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          truncated: result.truncated,
+          timedOut: result.timedOut,
+          error: stopped
+            ? `stopped by ${record.stoppedBy ?? "a person"}`
+            : record.interrupted,
+        },
+        {
+          mode: "exec",
+          exitCode: result.code,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          pastedOutput: null,
+        },
+      );
+      const ok = outcome === "done";
+      await audit(
+        req,
+        "runbooks_step_run",
+        step,
+        `${where}: ${
+          stopped
+            ? "stopped"
+            : result.timedOut
+              ? "timed out"
+              : `exit ${result.code ?? "none"}${
+                  exited && !ok ? ", checks failed" : ""
+                }`
+        }`,
+        ok,
+      );
+    } catch (error) {
+      // Most likely the database went away because Termix is stopping; the
+      // sweep on the next start finishes the run.
+      ctx.log.error(
+        `run ${runId} could not be finished`,
+        error instanceof Error ? error : undefined,
+      );
+    } finally {
+      connection?.dispose();
+      live.remove(runId);
+      release();
+    }
+  }
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/stop:
+   *   post:
+   *     summary: Stop the step's running command
+   *     description: >
+   *       Sends TERM where the server takes signals, then closes the
+   *       command's channel. The run ends failed with "stopped by <user>".
+   *       A person only; refused for a Termix API key.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       409: { description: The step is not running }
+   */
+  router.post(
+    "/steps/:id/stop",
+    ...act,
+    wrap(async (req) => {
+      const { step } = await stepContext(idParam(req));
+      const record = live.byStep(step.id);
+      if (!record) {
+        throw new InputError("this step is not running", 409, {
+          code: "not-running",
+        });
+      }
+      if (!record.stoppedBy) {
+        record.stoppedBy = actor();
+        record.stop?.();
+        await audit(
+          req,
+          "runbooks_step_stop",
+          step,
+          `runbook ${step.runbookId} step ${step.position} run ${record.runId} stopped`,
+          true,
+        );
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        record.done,
+        new Promise((resolve) => (timer = setTimeout(resolve, STOP_WAIT_MS))),
+      ]);
+      clearTimeout(timer);
+      return shownRun(record.runId);
+    }),
   );
 
   /**
@@ -552,6 +781,7 @@ export function registerPersonRoutes(
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
         const target = await checkRunnable(step, bundle, body(req));
+        await auditSkippedWait(req, step, target.skippedWait);
         const runId = await store.insertRun({
           stepId: step.id,
           runbookId: step.runbookId,
@@ -621,15 +851,30 @@ export function registerPersonRoutes(
       }
       const step = await store.getStep(run.stepId);
       if (!step) throw new InputError("step not found", 404);
-      await finishRun(run, step, outcome, pasted, {
-        pastedOutput: pasted,
-        exitCode: exitCode as number | null,
-      });
+      const final = await finishRun(
+        run.id,
+        step,
+        outcome,
+        pasted,
+        { pastedOutput: pasted, exitCode: exitCode as number | null },
+        // Mark done tests the checks on what was pasted; Mark failed does not.
+        outcome === "done"
+          ? {
+              mode: "terminal",
+              exitCode: exitCode as number | null,
+              stdout: null,
+              stderr: null,
+              pastedOutput: pasted,
+            }
+          : undefined,
+      );
       await audit(
         req,
         "runbooks_step_complete",
         step,
-        `runbook ${step.runbookId} step ${step.position} marked ${outcome}`,
+        `runbook ${step.runbookId} step ${step.position} marked ${outcome}${
+          final !== outcome ? ", checks failed" : ""
+        }`,
         true,
       );
       return store.getRun(run.id);
@@ -657,6 +902,7 @@ export function registerPersonRoutes(
       await store.updateStep(step.id, {
         status: "skipped",
         skipReason: reason,
+        endedAt: now(),
       });
       await store.touchRunbook(step.runbookId);
       await store.persist();
@@ -679,7 +925,11 @@ export function registerPersonRoutes(
     ...act,
     wrap(async (req) => {
       const { step } = await stepContext(idParam(req));
-      await store.updateStep(step.id, { status: "pending", skipReason: null });
+      await store.updateStep(step.id, {
+        status: "pending",
+        skipReason: null,
+        endedAt: null,
+      });
       await store.touchRunbook(step.runbookId);
       await store.persist();
       return personView(await bundleFor(step.runbookId), await hostNamer());

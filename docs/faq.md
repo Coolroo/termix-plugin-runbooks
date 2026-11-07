@@ -37,6 +37,14 @@ The run is refused and the page reloads with the new command. Read it again befo
 
 No. One click finds a connected terminal to the step's host, or opens one and waits for it to connect, then types the command without pressing Enter. You read it there and press Enter yourself. That is why it asks no "are you sure" question; it still asks before a repeat or a step out of order.
 
+## How do I see if a command stalled?
+
+Watch the running step. Its output shows as it arrives, with **Running for m:ss** and **No output for Ns**. After 30 seconds without output the silence turns to a warning. Some commands are quiet while they work (a large download, a database dump to a file), so a warning is a hint, not proof. If it is stuck, press **Stop**. A command that waits for input, such as a password or a yes/no question, never gets an answer from Run: stop it and use Send to terminal, or change the command so it does not ask (for example `apt-get -y`).
+
+## What does Stop do?
+
+It sends the command a TERM signal, where the SSH server accepts signals, and closes the command's session. Many servers ignore signals for a command without a terminal, and some programs keep running after their session closes. Check the host if it matters. The run is kept as Failed with "stopped by" and your user, and the output so far. Agents and Termix API keys cannot stop a run.
+
 ## Send to terminal says it could not send
 
 Send to terminal uses the SSH Terminal plugin. Make sure it is on. If a new terminal does not connect within 30 seconds, Runbooks stops waiting and records nothing. You can always copy the command instead.
@@ -45,6 +53,7 @@ Send to terminal uses the SSH Terminal plugin. Make sure it is on. If a new term
 
 - Output: at most 256 KB of standard output and of standard error is kept per run; a run that went over is marked "Output cut".
 - Time: 120 seconds per command by default, 600 seconds at most.
+- Live output: the page reads it every second while a command runs; Termix saves it to the database every 2 seconds, so a restart can lose the last 2 seconds of it.
 - Captures read the first 256 KB of output and stop after 250 ms each.
 - Jump hosts: the host key check covers the target host. Termix stores a jump host's key on first use without asking.
 - The hash that binds a run to what you saw covers the host id and the command, not the host's address or login. A host edited in Termix between loading the page and running still runs the shown command on the edited host.

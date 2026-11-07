@@ -21,6 +21,7 @@ import {
   tokens as tokensDef,
 } from "./tables.js";
 import { parseJson, type Capture, type Values } from "./values.js";
+import type { Check, CheckResult } from "./checks.js";
 
 // Drizzle's table and client types are per dialect; the store treats them
 // loosely and returns its own row types.
@@ -57,6 +58,11 @@ export interface StepRow {
   expect: string;
   captures: Capture[];
   hideOutputFromAgents: boolean;
+  checks: Check[];
+  waitAfterPreviousSeconds: number | null;
+  waitReason: string | null;
+  /** When the step last ended (run finished or skipped); null while pending. */
+  endedAt: string | null;
   status: StepStatus;
   skipReason: string | null;
   ownerNote: string;
@@ -86,6 +92,8 @@ export interface RunRow {
   pastedOutput: string | null;
   error: string | null;
   captured: Values;
+  /** One result per check of the step; null when they were not evaluated. */
+  checks: CheckResult[] | null;
 }
 
 /** A host a token may name, as the person saw it when they chose it. */
@@ -139,9 +147,17 @@ function toStep(row: Record<string, unknown>): StepRow {
       row.timeoutMs === null || row.timeoutMs === undefined
         ? null
         : Number(row.timeoutMs),
+    waitAfterPreviousSeconds:
+      row.waitAfterPreviousSeconds === null ||
+      row.waitAfterPreviousSeconds === undefined
+        ? null
+        : Number(row.waitAfterPreviousSeconds),
+    waitReason: (row.waitReason as string | null | undefined) ?? null,
+    endedAt: (row.endedAt as string | null | undefined) ?? null,
     revision: Number(row.revision),
     hideOutputFromAgents: Boolean(row.hideOutputFromAgents),
     captures: parseJson<Capture[]>(row.captures, []),
+    checks: parseJson<Check[]>(row.checks, []),
   };
 }
 
@@ -159,6 +175,7 @@ function toRun(row: Record<string, unknown>): RunRow {
     truncated: Boolean(row.truncated),
     timedOut: Boolean(row.timedOut),
     captured: parseJson<Values>(row.captured, {}),
+    checks: parseJson<CheckResult[] | null>(row.checks, null),
   };
 }
 
@@ -179,6 +196,9 @@ export interface NewStep {
   captures: Capture[];
   hideOutputFromAgents: boolean;
   timeoutMs: number | null;
+  checks: Check[];
+  waitAfterPreviousSeconds: number | null;
+  waitReason: string | null;
 }
 
 export type Store = Awaited<ReturnType<typeof createStore>>;
@@ -321,11 +341,15 @@ export async function createStore(db: PluginDatabase) {
       command: step.command,
       expect: step.expect,
       captures: JSON.stringify(step.captures),
+      checks: JSON.stringify(step.checks),
       hideOutputFromAgents: step.hideOutputFromAgents,
       status: "pending",
       skipReason: null,
       ownerNote: "",
       timeoutMs: step.timeoutMs,
+      waitAfterPreviousSeconds: step.waitAfterPreviousSeconds,
+      waitReason: step.waitReason,
+      endedAt: null,
       revision: 1,
       createdAt: at,
       updatedAt: at,
@@ -341,6 +365,7 @@ export async function createStore(db: PluginDatabase) {
         status: StepStatus;
         skipReason: string | null;
         ownerNote: string;
+        endedAt: string | null;
       }
     >,
     options: { edit?: boolean } = {},
@@ -350,7 +375,8 @@ export async function createStore(db: PluginDatabase) {
     const set: Record<string, unknown> = { updatedAt: now() };
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue;
-      set[key] = key === "captures" ? JSON.stringify(value) : value;
+      set[key] =
+        key === "captures" || key === "checks" ? JSON.stringify(value) : value;
     }
     if (options.edit) set.revision = current.revision + 1;
     await (await client()).update(steps).set(set).where(eq(steps.id, id));
@@ -363,8 +389,12 @@ export async function createStore(db: PluginDatabase) {
   async function listRuns(filter: {
     runbookId?: number;
     stepId?: number;
+    status?: RunStatus;
   }): Promise<RunRow[]> {
     const conditions: SQL[] = [];
+    if (filter.status !== undefined) {
+      conditions.push(eq(runs.status, filter.status));
+    }
     if (filter.runbookId !== undefined) {
       conditions.push(eq(runs.runbookId, filter.runbookId));
     }
@@ -422,11 +452,15 @@ export async function createStore(db: PluginDatabase) {
   }
 
   async function insertRun(
-    input: Omit<RunRow, "id" | "captured"> & { captured?: Values },
+    input: Omit<RunRow, "id" | "captured" | "checks"> & {
+      captured?: Values;
+      checks?: CheckResult[] | null;
+    },
   ): Promise<number> {
     return insertId(runs, {
       ...input,
       captured: input.captured ? JSON.stringify(input.captured) : null,
+      checks: input.checks ? JSON.stringify(input.checks) : null,
     });
   }
 
@@ -437,7 +471,10 @@ export async function createStore(db: PluginDatabase) {
     const set: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue;
-      set[key] = key === "captured" ? JSON.stringify(value) : value;
+      set[key] =
+        (key === "captured" || key === "checks") && value !== null
+          ? JSON.stringify(value)
+          : value;
     }
     await (await client()).update(runs).set(set).where(eq(runs.id, id));
   }

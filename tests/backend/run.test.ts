@@ -4,6 +4,7 @@ import {
   runStep,
   startServer,
   view,
+  waitForRun,
   type TestServer,
 } from "./helpers";
 
@@ -47,6 +48,8 @@ describe("running a step", () => {
     }));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.status).toBe(200);
+    // The route answers before the command ends.
+    expect(ran.started).toMatchObject({ status: "running", running: true });
     expect(ran.body).toMatchObject({
       mode: "exec",
       status: "done",
@@ -59,8 +62,9 @@ describe("running a step", () => {
     expect(s.execCalls[0]).toMatchObject({
       host: 1,
       command: "uptime -p # a b",
-      options: { timeoutMs: 5000, maxOutputBytes: 262144, purpose: "runbooks" },
+      options: { purpose: "runbooks" },
     });
+    expect(s.connections).toEqual({ opened: 1, disposed: 1 });
     const shown = await view(s, runbook.id);
     expect(shown.steps[0].status).toBe("done");
     expect(shown.progress).toEqual({ done: 1, failed: 0, total: 1 });
@@ -352,6 +356,8 @@ describe("running a step", () => {
       "running",
     );
     expect(s.execCalls).toHaveLength(1);
+    const runId = replies.find((reply) => reply.status === 200)!.body.id;
+    expect((await waitForRun(s, runbook.id, runId)).status).toBe("done");
     expect((await view(s, runbook.id)).steps[0].runs).toHaveLength(1);
   });
 

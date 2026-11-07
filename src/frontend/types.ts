@@ -1,3 +1,7 @@
+import type { Check, CheckResult } from "../shared/checks";
+
+export type { Check, CheckResult };
+
 export type RunbookStatus = "open" | "done" | "abandoned";
 export type StepStatus = "pending" | "done" | "failed" | "skipped";
 
@@ -38,6 +42,26 @@ export interface Run {
   pastedOutput: string | null;
   error: string | null;
   captured: Record<string, string>;
+  /** One result per check of the step; null when they were not tested. */
+  checks?: CheckResult[] | null;
+  /** The command is running now; stdout and stderr are what arrived so far. */
+  running?: boolean;
+  /** When the running command last printed anything. */
+  lastOutputAt?: string | null;
+  /** For a running run: time since it started, as the server saw it. */
+  elapsedMs?: number | null;
+  /** For a running run: time since its last output (or start). */
+  silentMs?: number | null;
+}
+
+/** The wait a step asks for after the step before it, as the server saw it. */
+export interface StepWait {
+  previous: { id: number; position: number; title: string };
+  seconds: number;
+  reason: string | null;
+  previousEnded: boolean;
+  until: string | null;
+  remainingMs: number;
 }
 
 export interface Step {
@@ -54,11 +78,17 @@ export interface Step {
   missing: string[];
   expect: string;
   captures: Array<{ name: string; pattern: string }>;
+  /** Rules tested on the output when a run ends. */
+  checks?: Check[];
   hideOutputFromAgents: boolean;
   status: StepStatus;
   skipReason: string | null;
   ownerNote: string;
   timeoutMs: number | null;
+  waitAfterPreviousSeconds?: number | null;
+  waitReason?: string | null;
+  /** Null when the step asks for no wait or is the first step. */
+  wait?: StepWait | null;
   revision: number;
   runs: Run[];
 }

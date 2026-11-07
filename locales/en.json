@@ -63,13 +63,14 @@
     "hideFromAgents": "Hide output from agents",
     "showToAgents": "Show output to agents",
     "notes": "Notes",
-    "notesPlaceholder": "Notes for this step. Saved when you leave the box; agents can read them."
+    "notesPlaceholder": "Notes for this step. Saved when you leave the box; agents can read them.",
+    "stop": "Stop"
   },
   "run": {
     "confirmTitle": "Run step {{position}}?",
     "confirm": "Run",
     "ok": "The command finished with exit code 0.",
-    "notOk": "The command failed. See the output.",
+    "notOk": "The command failed or a check did not pass. See the step.",
     "latest": "Latest run",
     "earlier": "Earlier runs ({{count}})",
     "byExec": "Run by {{user}} at {{time}}",
@@ -89,7 +90,11 @@
       "awaiting-output": "Waiting for output",
       "done": "Done",
       "failed": "Failed"
-    }
+    },
+    "elapsed": "Running for {{time}}",
+    "silent": "No output for {{seconds}}s",
+    "noOutputYet": "No output yet.",
+    "exitPlaceholder": "Exit code (optional)"
   },
   "repeat": {
     "titleStep": "This step already ran. Run it again?",
@@ -147,5 +152,30 @@
     "load": "Could not load runbooks.",
     "generic": "Something went wrong.",
     "stale": "The step changed since you saw it. Check the new command before you run it."
+  },
+  "stop": {
+    "title": "Stop step {{position}}?",
+    "hint": "Runbooks sends the command a TERM signal where the server accepts one, then closes its session. The run is kept as failed, with the output so far. A command that ignores the signal may keep running on the host.",
+    "confirm": "Stop"
+  },
+  "checks": {
+    "title": "Checks",
+    "state": {
+      "pending": "not tested yet",
+      "ok": "passed",
+      "failed": "failed"
+    },
+    "failedTitle": "{{count}} of the checks failed",
+    "failedHint": "The step is marked failed even if the command exited 0. Read the output, then Run again or Reopen the step.",
+    "failedToast": "Marked failed: a check did not pass on the pasted output."
+  },
+  "wait": {
+    "later": "Waits {{time}} after step {{position}}",
+    "running": "Wait {{time}} before you start",
+    "over": "You can start now",
+    "confirmTitle": "The wait is not over",
+    "confirm": "The runbook says to wait {{time}} more. Start anyway?",
+    "confirmReason": "The runbook says to wait {{time}} more ({{reason}}). Start anyway?",
+    "anyway": "Start anyway"
   }
 }

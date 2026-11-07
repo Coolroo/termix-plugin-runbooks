@@ -57,16 +57,19 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 
 ### A step
 
-| Field                  | Type            | What it is                                                                                 |
-| ---------------------- | --------------- | ------------------------------------------------------------------------------------------ |
-| `title`                | string          | Required. Up to 200 characters.                                                            |
-| `body`                 | markdown        | What to do and why, shown before the command.                                              |
-| `hostId`               | integer or null | A host from `/hosts`. Leave it out for a manual step (text only).                          |
-| `command`              | string or null  | The shell command. Needs `hostId`.                                                         |
-| `expect`               | markdown        | What the person should see when it works.                                                  |
-| `captures`             | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output. |
-| `hideOutputFromAgents` | boolean         | Hide the output from agents. An agent can set it but not clear it.                         |
-| `timeoutMs`            | integer or null | Time limit, 1000 to 600000. Default 120000.                                                |
+| Field                      | Type            | What it is                                                                                  |
+| -------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
+| `title`                    | string          | Required. Up to 200 characters.                                                             |
+| `body`                     | markdown        | What to do and why, shown before the command.                                               |
+| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only).                           |
+| `command`                  | string or null  | The shell command. Needs `hostId`.                                                          |
+| `expect`                   | markdown        | What the person should see when it works.                                                   |
+| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.  |
+| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.            |
+| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                          |
+| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                 |
+| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers). |
+| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                        |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Add a new step instead.
 
@@ -75,6 +78,59 @@ A step that has run is history: changing it, removing it, or putting a step befo
 `{{name}}` in a command is replaced by the value of `name`, as plain text, with no shell quoting. Values come from the runbook's `values` object first, then from captures of earlier steps in step order; a later value wins. Names match `[A-Za-z_][A-Za-z0-9_.-]*`. A step whose placeholders have no value cannot run, and its `missing` field names them.
 
 A capture is a JavaScript regular expression, in multiline mode, with exactly one capturing group. It runs on the first 256 KB of standard output (or the pasted terminal output); the first match's group becomes the value.
+
+### Checks
+
+`expect` tells the person what to look for. A check makes Runbooks look for it: each check is tested on the run's full output when the run ends, and if any check fails the step is marked failed, even when the command exited 0. The person sees which check failed and why, and decides what to do next. A step without checks works as before: exit code 0 is done.
+
+| Type                      | Fields                                                         | Passes when                                                                                 |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `exitCode`                | `equals` (integer)                                             | the exit code is `equals`                                                                   |
+| `contains`, `notContains` | `text`, `stream`                                               | the stream has (or does not have) `text`                                                    |
+| `matches`, `notMatches`   | `pattern` (JavaScript regular expression, multiline), `stream` | the stream matches (or does not match) `pattern`                                            |
+| `value`                   | `name` (a capture of this step), `equals` or `matches`         | the captured value equals `equals` or matches `matches`; with neither, that it was captured |
+
+`stream` is `stdout`, `stderr` or `any` (the default: either one). Every check may have a `label`, which the person sees instead of a generated description. A step may have at most 20 checks; a wrong one is refused with 400 and names it, such as `steps[0]: checks[1]: pattern is not a valid regular expression`. Checks need a command. A pattern stops after 250 ms and then counts as failed.
+
+For **Send to terminal**, checks are tested when the person presses **Mark done**: the pasted output is the only stream, whatever `stream` says, and an `exitCode` check fails with "no exit code" unless the person entered one. **Mark failed** records the person's verdict without testing.
+
+```json
+"checks": [
+  { "type": "exitCode", "equals": 0 },
+  { "type": "contains", "text": "active (running)", "stream": "stdout", "label": "nginx runs" },
+  { "type": "notMatches", "pattern": "^\\s*error", "stream": "stderr" },
+  { "type": "value", "name": "version", "matches": "^1\\.2[4-9]\\." }
+]
+```
+
+Each run has the results in the same order, as `checks: [{ "label", "ok", "detail" }]`, or `null` when nothing was tested:
+
+```json
+"checks": [
+  { "label": "exit code is 0", "ok": true, "detail": "exit code 0" },
+  { "label": "nginx runs", "ok": false, "detail": "expected stdout to contain 'active (running)'" }
+]
+```
+
+A detail never repeats the output itself, so it is the same for a hidden step. A step that ran cannot change its checks: add a new step with the checks you want.
+
+### Wait timers
+
+When a step must not start right after the one before it (a service restarting, a cache filling, DNS spreading), say so with `waitAfterPreviousSeconds` instead of a line in the body. The timer starts when the step before it, by position, last ended: its latest run finished, or the person marked it done or skipped it. The person sees a countdown ("Wait 1:42 before you start") with `waitReason`, and **Run** or **Send to terminal** before the end asks "Start anyway?" first. Starting early is audited.
+
+While the timer runs, the step in `GET /runbooks/{id}` and `get_runbook` has `waitUntil`, the ISO time it ends; otherwise `waitUntil` is `null`, also before the step before it has ended. The first step never waits.
+
+Restart, then wait 120 s before the health check:
+
+```json
+"steps": [
+  { "title": "Restart the app", "hostId": 3, "command": "sudo systemctl restart app" },
+  { "title": "Health check", "hostId": 3,
+    "command": "curl -fsS https://localhost:8443/health",
+    "waitAfterPreviousSeconds": 120, "waitReason": "let the service restart",
+    "checks": [{ "type": "contains", "text": "ok" }] }
+]
+```
 
 ### Example
 
@@ -91,7 +147,8 @@ curl -sS -H "Authorization: Bearer $RUNBOOKS_TOKEN" \
     "values": { "svc": "nginx" },
     "steps": [
       { "title": "Check the config", "hostId": 3,
-        "command": "sudo nginx -t", "expect": "`syntax is ok`" },
+        "command": "sudo nginx -t", "expect": "`syntax is ok`",
+        "checks": [{ "type": "contains", "text": "syntax is ok" }] },
       { "title": "Note the version", "hostId": 3, "command": "nginx -v 2>&1",
         "captures": [{ "name": "version", "pattern": "nginx/(\\S+)" }] },
       { "title": "Restart", "hostId": 3,
@@ -124,11 +181,22 @@ A run in the answer looks like this:
   "truncated": false,
   "timedOut": false,
   "error": null,
+  "running": false,
+  "lastOutputAt": null,
+  "checks": [
+    {
+      "label": "the output contains 'syntax is ok'",
+      "ok": true,
+      "detail": "the output contains 'syntax is ok'"
+    }
+  ],
   "captured": {}
 }
 ```
 
 `mode` is `exec` (run over SSH) or `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted). `status` is `running`, `awaiting-output`, `done` or `failed`.
+
+While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. Agents cannot stop a run.
 
 ## MCP
 
@@ -182,6 +250,8 @@ Connect the agent with the MCP config above, then ask for a runbook instead of a
 Good habits for the prompt:
 
 - Ask for one command per step, with an `expect` line, so each approval is small.
+- Ask for checks on each step that has an expected result, so a wrong result marks the step failed instead of passing unnoticed.
+- Ask for a wait timer where a step must wait after the one before it, instead of "wait two minutes" in the text.
 - Ask for checks before changes, and a check after each change.
 - Ask the agent to read `get_runbook` after you run steps, and to add new steps rather than change ones that ran.
 - Ask it to put names, paths and versions in values, so you can read them in one place.

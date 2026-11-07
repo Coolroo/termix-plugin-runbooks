@@ -30,6 +30,7 @@ import {
   parseValues,
   runbookSummary,
 } from "./service.js";
+import type { LiveRuns } from "./live.js";
 
 export interface AgentCaller {
   token: TokenRow;
@@ -39,7 +40,7 @@ export type AgentHost = TokenHost;
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
-export function createAgentOps(store: Store) {
+export function createAgentOps(store: Store, live?: LiveRuns) {
   const owner = (caller: AgentCaller) => caller.token.createdBy;
 
   /**
@@ -162,7 +163,7 @@ export function createAgentOps(store: Store) {
 
   async function getRunbook(caller: AgentCaller, runbookId: number) {
     await ownRunbook(caller, runbookId);
-    const bundle = (await loadBundle(store, runbookId))!;
+    const bundle = (await loadBundle(store, runbookId, live))!;
     return agentView(bundle, await hostNamer(caller));
   }
 
@@ -329,6 +330,13 @@ export function createAgentOps(store: Store) {
       hostId: patch.hostId !== undefined ? patch.hostId : step.hostId,
       command: patch.command !== undefined ? patch.command : step.command,
       captures: patch.captures ?? step.captures,
+      checks: patch.checks ?? step.checks,
+      waitAfterPreviousSeconds:
+        patch.waitAfterPreviousSeconds !== undefined
+          ? patch.waitAfterPreviousSeconds
+          : step.waitAfterPreviousSeconds,
+      waitReason:
+        patch.waitReason !== undefined ? patch.waitReason : step.waitReason,
     });
     await checkHosts(caller, [patch]);
     await store.updateStep(stepId, patch, { edit: true });
@@ -404,7 +412,7 @@ export function createAgentOps(store: Store) {
 
   async function getValues(caller: AgentCaller, runbookId: number) {
     await ownRunbook(caller, runbookId);
-    const bundle = (await loadBundle(store, runbookId))!;
+    const bundle = (await loadBundle(store, runbookId, live))!;
     return { runbookId, values: agentValues(bundle) };
   }
 

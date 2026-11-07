@@ -21,6 +21,8 @@ import {
   type Capture,
   type Values,
 } from "./values.js";
+import { checksProblem, normalizeCheck, type Check } from "./checks.js";
+import type { LiveRuns, ShownRun } from "./live.js";
 
 export const HIDDEN = "[hidden by owner]";
 export const RUNBOOK_STATUSES: RunbookStatus[] = ["open", "done", "abandoned"];
@@ -36,6 +38,9 @@ export const LIMITS = {
   timeoutDefault: 120_000,
   timeoutMin: 1_000,
   timeoutMax: 600_000,
+  waitMin: 1,
+  waitMax: 86_400,
+  waitReason: 500,
 };
 
 export class InputError extends Error {
@@ -115,6 +120,9 @@ export function parseStepInput(
     "captures",
     "hideOutputFromAgents",
     "timeoutMs",
+    "checks",
+    "waitAfterPreviousSeconds",
+    "waitReason",
   ]);
   for (const key of Object.keys(raw)) {
     if (!known.has(key)) throw new InputError(`unknown step field "${key}"`);
@@ -154,6 +162,37 @@ export function parseStepInput(
       pattern,
     }));
   }
+  if (has("waitAfterPreviousSeconds")) {
+    const wait = raw.waitAfterPreviousSeconds;
+    if (wait === null || wait === undefined)
+      out.waitAfterPreviousSeconds = null;
+    else if (
+      Number.isInteger(wait) &&
+      (wait as number) >= LIMITS.waitMin &&
+      (wait as number) <= LIMITS.waitMax
+    ) {
+      out.waitAfterPreviousSeconds = wait as number;
+    } else {
+      throw new InputError(
+        `waitAfterPreviousSeconds must be an integer from ${LIMITS.waitMin} to ${LIMITS.waitMax}`,
+      );
+    }
+  }
+  if (has("waitReason")) {
+    const reason = raw.waitReason;
+    if (reason === null || reason === undefined || reason === "") {
+      out.waitReason = null;
+    } else {
+      const value = text(reason, "waitReason", LIMITS.waitReason).trim();
+      out.waitReason = value === "" ? null : value;
+    }
+  }
+  if (has("checks")) {
+    const checks = raw.checks ?? [];
+    const problem = checksProblem(checks);
+    if (problem) throw new InputError(problem);
+    out.checks = (checks as Check[]).map(normalizeCheck);
+  }
   if (has("hideOutputFromAgents")) {
     const hide = raw.hideOutputFromAgents ?? false;
     if (typeof hide !== "boolean") {
@@ -190,23 +229,44 @@ export function completeStep(parsed: Partial<NewStep>): NewStep {
     captures: parsed.captures ?? [],
     hideOutputFromAgents: parsed.hideOutputFromAgents ?? false,
     timeoutMs: parsed.timeoutMs ?? null,
+    checks: parsed.checks ?? [],
+    waitAfterPreviousSeconds: parsed.waitAfterPreviousSeconds ?? null,
+    waitReason: parsed.waitReason ?? null,
   };
   checkStepShape(step);
   return step;
 }
 
-/** A command needs a host to run on, and a capture needs a command. */
+/**
+ * A command needs a host to run on, captures and checks need a command, and
+ * a value check names one of the step's captures.
+ */
 export function checkStepShape(step: {
   hostId: number | null;
   command: string | null;
   captures: Capture[];
+  checks?: Check[];
+  waitAfterPreviousSeconds?: number | null;
+  waitReason?: string | null;
 }): void {
+  if (step.waitReason && !step.waitAfterPreviousSeconds) {
+    throw new InputError("waitReason needs waitAfterPreviousSeconds");
+  }
   if (step.command !== null && step.hostId === null) {
     throw new InputError("a step with a command needs a hostId");
   }
   if (step.captures.length > 0 && step.command === null) {
     throw new InputError("captures need a command whose output they read");
   }
+  const checks = step.checks ?? [];
+  if (checks.length > 0 && step.command === null) {
+    throw new InputError("checks need a command whose output they read");
+  }
+  const problem = checksProblem(
+    checks,
+    step.captures.map((capture) => capture.name),
+  );
+  if (problem) throw new InputError(problem);
 }
 
 export interface EffectiveValue {
@@ -224,7 +284,7 @@ export interface EffectiveValue {
 export function effectiveValues(
   runbook: RunbookRow,
   steps: StepRow[],
-  runsByStep: Map<number, RunRow[]>,
+  runsByStep: Map<number, readonly RunRow[]>,
 ): Map<string, EffectiveValue> {
   const out = new Map<string, EffectiveValue>();
   for (const [name, value] of Object.entries(runbook.values)) {
@@ -275,23 +335,102 @@ export function resolveStep(step: StepRow, values: Values): ResolvedStep {
   };
 }
 
+export interface WaitState {
+  /** The step before this one, whose end starts the timer. */
+  previous: { id: number; position: number; title: string };
+  seconds: number;
+  reason: string | null;
+  /** Whether the previous step has ended; no timer runs before it has. */
+  previousEnded: boolean;
+  /** When the wait is over; null until the previous step ended. */
+  until: string | null;
+  /** Milliseconds still to wait, 0 when over or not started. */
+  remainingMs: number;
+}
+
+/**
+ * The wait a step asks for after the step before it (by position). The
+ * timer starts when that step last ended: its latest run finished, or it was
+ * marked done or skipped. A pending previous step has not ended. Null for a
+ * step with no wait, or with no step before it.
+ */
+export function waitState(
+  step: StepRow,
+  steps: StepRow[],
+  runsByStep: Map<number, readonly RunRow[]>,
+  at = Date.now(),
+): WaitState | null {
+  if (!step.waitAfterPreviousSeconds) return null;
+  const previous = steps
+    .filter((other) => other.position < step.position)
+    .sort((a, b) => b.position - a.position)[0];
+  if (!previous) return null;
+  const base = {
+    previous: {
+      id: previous.id,
+      position: previous.position,
+      title: previous.title,
+    },
+    seconds: step.waitAfterPreviousSeconds,
+    reason: step.waitReason,
+  };
+  if (previous.status === "pending") {
+    return { ...base, previousEnded: false, until: null, remainingMs: 0 };
+  }
+  const times = [
+    previous.endedAt,
+    ...(runsByStep.get(previous.id) ?? []).map((run) => run.finishedAt),
+  ]
+    .filter((time): time is string => Boolean(time))
+    .map((time) => Date.parse(time))
+    .filter((time) => !Number.isNaN(time));
+  // A step that ended before 1.1.0 has no end time: its last change is.
+  const ended = times.length
+    ? Math.max(...times)
+    : Date.parse(previous.updatedAt);
+  const until = ended + step.waitAfterPreviousSeconds * 1000;
+  return {
+    ...base,
+    previousEnded: true,
+    until: new Date(until).toISOString(),
+    remainingMs: Math.max(0, until - at),
+  };
+}
+
 export interface RunbookBundle {
   runbook: RunbookRow;
   steps: StepRow[];
-  runs: RunRow[];
-  runsByStep: Map<number, RunRow[]>;
+  runs: ShownRun[];
+  runsByStep: Map<number, ShownRun[]>;
   values: Map<string, EffectiveValue>;
 }
 
+/** Runs as stored, with nothing running live in this process. */
+function stored(list: RunRow[]): ShownRun[] {
+  return list.map((run) => ({
+    ...run,
+    running: run.status === "running",
+    lastOutputAt: null,
+    elapsedMs: null,
+    silentMs: null,
+  }));
+}
+
+/**
+ * A runbook with its steps and runs. With `live`, running runs carry the
+ * output that has arrived so far.
+ */
 export async function loadBundle(
   store: Store,
   runbookId: number,
+  live?: LiveRuns,
 ): Promise<RunbookBundle | null> {
   const runbook = await store.getRunbook(runbookId);
   if (!runbook) return null;
   const steps = await store.listSteps(runbookId);
-  const runs = await store.listRuns({ runbookId });
-  const runsByStep = new Map<number, RunRow[]>();
+  const rows = await store.listRuns({ runbookId });
+  const runs = live ? live.show(rows) : stored(rows);
+  const runsByStep = new Map<number, ShownRun[]>();
   for (const run of runs) {
     const list = runsByStep.get(run.stepId) ?? [];
     list.push(run);
@@ -360,6 +499,7 @@ export function personView(bundle: RunbookBundle, hostName: HostNames) {
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
         missing: resolved.missing,
+        wait: waitState(step, steps, runsByStep),
         runs: runsByStep.get(step.id) ?? [],
       };
     }),
@@ -408,11 +548,15 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         missing: used.filter((name) => !known.has(name)),
         expect: step.expect,
         captures: step.captures,
+        checks: step.checks,
         hideOutputFromAgents: step.hideOutputFromAgents,
         status: step.status,
         skipReason: step.skipReason,
         ownerNote: step.ownerNote,
         timeoutMs: step.timeoutMs,
+        waitAfterPreviousSeconds: step.waitAfterPreviousSeconds,
+        waitReason: step.waitReason,
+        waitUntil: agentWaitUntil(waitState(step, steps, runsByStep)),
         revision: step.revision,
         editable: stepRuns.length === 0,
         runs: stepRuns.map((run) => agentRun(run, hidden, mask)),
@@ -421,8 +565,13 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
   };
 }
 
+/** The end of a wait that is running now, for agents; null otherwise. */
+function agentWaitUntil(wait: WaitState | null): string | null {
+  return wait && wait.remainingMs > 0 ? wait.until : null;
+}
+
 function agentRun(
-  run: RunRow,
+  run: ShownRun,
   hidden: boolean,
   mask: (value: string | null) => string | null,
 ) {
@@ -445,6 +594,9 @@ function agentRun(
     truncated: run.truncated,
     timedOut: run.timedOut,
     error: mask(run.error),
+    running: run.running,
+    lastOutputAt: run.lastOutputAt,
+    checks: run.checks,
     captured: hidden
       ? Object.fromEntries(Object.keys(run.captured).map((k) => [k, HIDDEN]))
       : run.captured,

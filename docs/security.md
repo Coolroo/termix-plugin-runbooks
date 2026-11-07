@@ -11,7 +11,7 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 
 - The agent routes (`/plugin-api/runbooks/agent/...`) can list hosts, write runbooks and steps, change steps that have not run, and read. There is no agent route that runs, sends, completes, skips or reopens a step, or writes a note.
 - Those actions are person routes (`/plugin-api/runbooks/...`). Termix checks the login, the route checks the Use Runbooks permission, and a request without a signed-in user is refused.
-- A request made with a Termix API key (`tmx_...`) is refused on every route that acts: running, sending to a terminal, marking a run done or failed, skipping, reopening, notes, hiding output, runbook status and tokens. Reading is allowed. Approving a command takes a person in the Termix UI.
+- A request made with a Termix API key (`tmx_...`) is refused on every route that acts: running, stopping, sending to a terminal, marking a run done or failed, skipping, reopening, notes, hiding output, runbook status and tokens. Reading is allowed. Approving a command takes a person in the Termix UI.
 
 ## Tokens
 
@@ -25,10 +25,11 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 ## What runs is what you saw
 
 - The page shows each step's resolved command and a hash of the host id and that command. Running sends back the step's revision and that hash. If the agent changed the step, or a value changed, the hashes differ and the run is refused.
-- **Run** runs a step only after a confirm that shows the host and the exact command.
+- **Run** runs a step only after a confirm that shows the host and the exact command. The command runs on its own SSH connection, opened through Termix as the person who pressed Run: Termix checks their access to the host, uses its stored login and checks its host key, as for any connection. The request answers at once and the command goes on in the background as that person.
+- **Stop** is a person route like Run, refused for agents and Termix API keys, and audited.
 - **Send to terminal** asks no such question: it types the command into a terminal to the step's host without pressing Enter, so nothing runs until the person reads it there and presses Enter. The run is recorded only once that terminal is connected.
 - Run and Send to terminal refuse a host that does not take SSH.
-- A repeat (the step ran before, or the same command ran on the same host in the last 24 hours) and a run out of order each need their own confirm.
+- A repeat (the step ran before, or the same command ran on the same host in the last 24 hours), a run out of order and a start before a step's wait timer ended each need their own confirm. A start before the wait ended is audited.
 - A step that has run cannot be changed or removed by the agent, and nothing can be inserted before it. Runs are never deleted.
 
 ## Host keys
@@ -37,7 +38,7 @@ When Termix connects to a host with no person to ask and the host has no stored 
 
 ## Hidden output
 
-For a step marked hidden, agents get `[hidden by owner]` instead of its standard output, standard error, pasted output and captured values. Captured values of four characters or more are also masked where they appear in later commands that agents read. An agent can mark a step hidden but cannot clear the mark.
+For a step marked hidden, agents get `[hidden by owner]` instead of its standard output, standard error, pasted output and captured values. Captured values of four characters or more are also masked where they appear in later commands that agents read. An agent can mark a step hidden but cannot clear the mark. Check results stay visible on a hidden step: they say only whether each check the agent wrote passed, never the output, but a check such as `contains` does tell whether the output had that text.
 
 ## Markdown
 
@@ -45,7 +46,7 @@ Text from agents renders as Markdown without raw HTML and without images. Links 
 
 ## Audit
 
-Runbooks writes an audit line for each run, each send to a terminal, each completion, each skip, and each token made, changed or revoked. Termix also records each SSH command and each host lookup.
+Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each skip, and each token made, changed or revoked. Termix also records each SSH connection and each host lookup.
 
 ## Capabilities
 

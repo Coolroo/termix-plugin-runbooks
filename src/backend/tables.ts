@@ -65,6 +65,14 @@ export const steps = defineTable(
     skipReason: text(),
     ownerNote: text().notNull(),
     timeoutMs: integer(),
+    // JSON array of checks on the output (1.1.0). Null on older steps: none.
+    checks: text(),
+    // Seconds to wait after the step before it ended (1.1.0), and why.
+    waitAfterPreviousSeconds: integer(),
+    waitReason: text(),
+    // When the step last ended: its run finished, or it was skipped (1.1.0).
+    // Null while pending, and on steps that ended before 1.1.0.
+    endedAt: timestamp(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -99,6 +107,9 @@ export const runs = defineTable(
     error: text(),
     // JSON object, name -> string.
     captured: text(),
+    // JSON array of { label, ok, detail }, one per check (1.1.0). Null when
+    // the run's checks were not evaluated.
+    checks: text(),
   },
   {
     indexes: [

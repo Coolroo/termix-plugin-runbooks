@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.0
+
+### Added
+
+- Live output. Run answers at once and the command goes on in the background. While it runs, the step shows its standard output and standard error as they arrive, how long it has run, and how long since it last printed anything, which turns to a warning after 30 seconds without output. The page reads it every second while a command of the open runbook runs.
+- Stop on a running step, after a confirm. It sends the command a TERM signal where the server takes one and closes its session; the run ends failed with "stopped by" and the person, and is audited. Agents and Termix API keys cannot stop a run.
+- Agents read a running run's output so far: `running: true`, `stdout` and `stderr` up to now, and `lastOutputAt`, in the agent API and MCP `get_runbook`. Hidden steps still read `[hidden by owner]`.
+- Checks on a step's output. Agents set `checks` on a step: `exitCode`, `contains` and `notContains`, `matches` and `notMatches` (on stdout, stderr or either), and `value` (a value the step captures). Runbooks tests them when a run ends, and on the pasted output when a terminal run is marked done. A failed check marks the step failed even on exit code 0; the step lists its checks with a tick or a cross and a reason, and the Run confirm shows them. Runs carry the results as `checks` in the agent API and MCP.
+- An optional exit code box next to Mark done for a terminal run.
+- Wait timers. Agents set `waitAfterPreviousSeconds` (1 to 86400) and an optional `waitReason` on a step. Once the step before it ends, the step counts down ("Wait 1:42 before you start") and Run and Send to terminal look not-yet; starting before the end asks "Start anyway?" and is audited. The server refuses an early start with 409 `wait` until confirmed. Agents read `waitUntil` on a step while its timer runs.
+- Output of a running command is saved every 2 seconds. A run that was running when Termix restarted ends failed with "interrupted: Termix restarted while it ran" and keeps the output saved so far.
+
+### Fixed
+
+- A character split across two pieces of command output (such as an accented letter or a box-drawing line) no longer shows as broken characters.
+
 ## 1.0.1
 
 ### Added

@@ -1,4 +1,6 @@
+import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
+import { vi } from "vitest";
 import express, { type Router } from "express";
 import { inject } from "light-my-request";
 import {
@@ -53,6 +55,34 @@ export type ExecFn = (
   options?: PluginSshExecOptions,
 ) => Promise<PluginSshExecResult>;
 
+/**
+ * A command's channel as ssh2 hands it over: "data" for stdout, stderr's
+ * "data", "close" with the exit code. close() and signal() are recorded.
+ */
+export class FakeChannel extends EventEmitter {
+  readonly stderr = new EventEmitter();
+  closed = false;
+  signals: string[] = [];
+  out(text: string | Buffer): void {
+    this.emit("data", Buffer.isBuffer(text) ? text : Buffer.from(text));
+  }
+  err(text: string | Buffer): void {
+    this.stderr.emit("data", Buffer.isBuffer(text) ? text : Buffer.from(text));
+  }
+  exit(code: number | null): void {
+    this.emit("close", code ?? undefined);
+  }
+  close(): void {
+    this.closed = true;
+  }
+  signal(name: string): void {
+    this.signals.push(name);
+  }
+}
+
+/** Drives a command by hand: called once the command's channel is open. */
+export type ChannelFn = (channel: FakeChannel, command: string) => void;
+
 export interface Reply {
   status: number;
   // Route bodies vary per test; asserting on them is the point.
@@ -64,8 +94,14 @@ export interface Reply {
 export interface TestServer {
   db: TestDb;
   mock: MockPluginContext;
+  /** Every command started: the host, the command and the connect options. */
   execCalls: Array<{ host: unknown; command: string; options?: unknown }>;
+  /** Commands answer with this whole result: stdout, stderr, then the exit. */
   setExec: (fn: ExecFn) => void;
+  /** Commands are driven by hand through their channel instead. */
+  setChannel: (fn: ChannelFn | null) => void;
+  /** Connections opened and how many were disposed. */
+  connections: { opened: number; disposed: number };
   /** As a signed-in person (default alice). */
   person: (
     method: string,
@@ -107,6 +143,8 @@ export async function startServer(
     permissions?: string[];
     hosts?: PluginHostSummary[];
     sshHosts?: PluginSshHost[];
+    /** Rows written before the plugin activates, as a stopped Termix left them. */
+    seed?: (db: TestDb) => void;
   } = {},
 ): Promise<TestServer> {
   const db = await createTestDb(pluginDir);
@@ -115,6 +153,8 @@ export async function startServer(
       .prepare("INSERT INTO users (id, username) VALUES (?, ?)")
       .run(user, user);
   }
+
+  options.seed?.(db);
 
   let router: Router | null = null;
   const mock = createMockCtx({
@@ -140,9 +180,47 @@ export async function startServer(
     truncated: false,
     timedOut: false,
   });
-  (mock.ctx.ssh as { exec: ExecFn }).exec = async (h, command, opts) => {
-    execCalls.push({ host: h, command, options: opts });
-    return exec(h, command, opts);
+  let channelFn: ChannelFn | null = null;
+  const connections = { opened: 0, disposed: 0 };
+  // Runbooks runs commands on a connection of its own from ctx.ssh.connect
+  // and reads the channel as it streams; this client stands in for ssh2's.
+  (mock.ctx.ssh as unknown as { connect: unknown }).connect = async (
+    h: number | PluginSshHost,
+    connectOptions?: unknown,
+  ) => {
+    connections.opened++;
+    const client = {
+      exec: (
+        command: string,
+        callback: (error: Error | undefined, channel: FakeChannel) => void,
+      ) => {
+        execCalls.push({ host: h, command, options: connectOptions });
+        const channel = new FakeChannel();
+        if (channelFn) {
+          const drive = channelFn;
+          callback(undefined, channel);
+          drive(channel, command);
+          return;
+        }
+        void exec(h, command).then(
+          (result) => {
+            callback(undefined, channel);
+            if (result.stdout) channel.out(result.stdout);
+            if (result.stderr) channel.err(result.stderr);
+            channel.exit(result.code);
+          },
+          (error: Error) => callback(error, channel),
+        );
+      },
+    };
+    return {
+      client,
+      jumpClient: null,
+      host: { id: typeof h === "number" ? h : h.id, ip: "", port: 22 },
+      dispose: () => {
+        connections.disposed++;
+      },
+    };
   };
 
   const { activate } = await import("../../src/backend/index.js");
@@ -196,6 +274,10 @@ export async function startServer(
     setExec: (fn) => {
       exec = fn;
     },
+    setChannel: (fn) => {
+      channelFn = fn;
+    },
+    connections,
     person: (method, path, body, opts = {}) =>
       call(
         method,
@@ -252,20 +334,67 @@ export async function view(server: TestServer, id: number) {
   return shown.body;
 }
 
-/** Runs a step the way the UI does: with what the view showed. */
+/** A run as the person view shows it now. */
+export async function shownRun(
+  server: TestServer,
+  runbookId: number,
+  runId: number,
+) {
+  const shown = await view(server, runbookId);
+  for (const step of shown.steps) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const run = step.runs.find((r: any) => r.id === runId);
+    if (run) return run;
+  }
+  throw new Error(`run ${runId} not found`);
+}
+
+/** Waits until a run is no longer running and returns it. */
+export async function waitForRun(
+  server: TestServer,
+  runbookId: number,
+  runId: number,
+) {
+  return vi.waitFor(
+    async () => {
+      const run = await shownRun(server, runbookId, runId);
+      if (run.status === "running") throw new Error("still running");
+      return run;
+    },
+    { timeout: 3000, interval: 5 },
+  );
+}
+
+/**
+ * Runs a step the way the UI does: with what the view showed. A Run answers
+ * at once with the run still running; unless `wait` is false this waits for
+ * it to finish and puts the finished run in `body` (`started` holds the
+ * first answer).
+ */
 export async function runStep(
   server: TestServer,
   runbookId: number,
   stepId: number,
   extra: Record<string, unknown> = {},
   mode: "run" | "terminal" = "run",
-) {
+  options: { wait?: boolean } = {},
+): Promise<Reply & { started?: Reply["body"] }> {
   const shown = await view(server, runbookId);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const step = shown.steps.find((s: any) => s.id === stepId);
-  return server.person("POST", `/steps/${stepId}/${mode}`, {
+  const reply = await server.person("POST", `/steps/${stepId}/${mode}`, {
     revision: step.revision,
     commandHash: step.commandHash,
     ...extra,
   });
+  if (
+    mode === "run" &&
+    options.wait !== false &&
+    reply.status === 200 &&
+    reply.body?.status === "running"
+  ) {
+    const finished = await waitForRun(server, runbookId, reply.body.id);
+    return { ...reply, started: reply.body, body: finished };
+  }
+  return reply;
 }

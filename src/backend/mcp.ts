@@ -15,6 +15,51 @@ const VALUE_SYNTAX =
 const OPEN_LINK =
   "Each runbook has openPath, a link relative to the Termix address: give the person the Termix address followed by openPath (for example https://termix.example.com/?view=runbook&id=12). It opens that runbook in the Runbooks tab, after a sign-in if needed.";
 
+const CHECKS_HELP =
+  "Steps may have checks: rules Runbooks tests on the output when the run ends, so a wrong result is flagged instead of left for the person to spot. Any failed check makes the step failed, even on exit code 0, and the run's checks list says which one failed and why. Four types, each with an optional label shown to the person: " +
+  '{"type":"exitCode","equals":0} (Run only; a terminal run has an exit code only if the person entered one); ' +
+  '{"type":"contains","text":"active (running)","stream":"stdout"} or notContains (stream stdout, stderr or any, default any; a terminal run has only its pasted output); ' +
+  '{"type":"matches","pattern":"^Status: (ok|ready)$"} or notMatches (a JavaScript regular expression, multiline, with a time limit); ' +
+  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step.';
+
+const WAIT_HELP =
+  "A step may ask the person to wait after the step before it ended (its run finished, or it was marked done or skipped): waitAfterPreviousSeconds (1 to 86400) and an optional short waitReason. For example, restart a service in one step, then give the health-check step waitAfterPreviousSeconds 120 and waitReason 'let the service restart'. The person sees a countdown, and starting early takes an extra confirm. get_runbook shows waitUntil on a step while its timer runs.";
+
+const CHECK_SCHEMA = {
+  type: "object",
+  required: ["type"],
+  properties: {
+    type: {
+      type: "string",
+      enum: [
+        "exitCode",
+        "contains",
+        "notContains",
+        "matches",
+        "notMatches",
+        "value",
+      ],
+    },
+    label: { type: "string", description: "Shown to the person." },
+    equals: {
+      type: ["integer", "string"],
+      description:
+        "exitCode: the exit code. value: the text the value must be.",
+    },
+    text: { type: "string", description: "contains, notContains." },
+    pattern: {
+      type: "string",
+      description: "matches, notMatches: a JavaScript regular expression.",
+    },
+    stream: { type: "string", enum: ["stdout", "stderr", "any"] },
+    name: { type: "string", description: "value: one of the step's captures." },
+    matches: {
+      type: "string",
+      description: "value: a regular expression the value must match.",
+    },
+  },
+};
+
 const STEP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -52,6 +97,12 @@ const STEP_SCHEMA = {
         },
       },
     },
+    checks: {
+      type: "array",
+      maxItems: 20,
+      description: CHECKS_HELP,
+      items: CHECK_SCHEMA,
+    },
     hideOutputFromAgents: {
       type: "boolean",
       description:
@@ -62,6 +113,19 @@ const STEP_SCHEMA = {
       minimum: 1000,
       maximum: 600000,
       description: "Time limit for the command. Default 120000.",
+    },
+    waitAfterPreviousSeconds: {
+      type: ["integer", "null"],
+      minimum: 1,
+      maximum: 86400,
+      description:
+        "Seconds the person should wait after the previous step ended before starting this one, such as 120 after a restart.",
+    },
+    waitReason: {
+      type: ["string", "null"],
+      maxLength: 500,
+      description:
+        "Why to wait, shown with the countdown, such as 'let the service restart'. Needs waitAfterPreviousSeconds.",
     },
   },
 };
@@ -96,7 +160,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output). Output of steps the owner hid reads '[hidden by owner]'. Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -106,7 +170,7 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -144,7 +208,7 @@ export const TOOLS = [
   },
   {
     name: "add_steps",
-    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX}`,
+    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX} ${CHECKS_HELP} ${WAIT_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -162,8 +226,7 @@ export const TOOLS = [
   },
   {
     name: "update_step",
-    description:
-      "Change a step that has not run yet. A step that already ran is history and cannot change (error 409): add a new step instead. Only the given fields change.",
+    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): add a new step instead, also to change its checks. Only the given fields change; checks replaces the whole list. ${CHECKS_HELP} ${WAIT_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,

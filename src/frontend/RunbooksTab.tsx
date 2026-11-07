@@ -28,7 +28,14 @@ import { toast } from "sonner";
 import { isSshHost } from "../shared/hosts";
 import { parseRunbookId } from "./deep-link";
 import { Markdown } from "./Markdown";
-import { formatTime, StepCard, type StepActions } from "./StepCard";
+import {
+  ChecksList,
+  checksWords,
+  formatDuration,
+  formatTime,
+  StepCard,
+  type StepActions,
+} from "./StepCard";
 import {
   pickSession,
   PROMPT_SETTLE_MS,
@@ -47,6 +54,8 @@ import {
 } from "./types";
 
 export const POLL_MS = 5000;
+/** While a command of the open runbook runs, its output is read this often. */
+export const LIVE_POLL_MS = 1000;
 
 export function RunbooksIcon(props: { className?: string }) {
   return (
@@ -171,12 +180,22 @@ function RunbookDetail({
   const busyRef = useRef(false);
   const onMissingRef = useRef(onMissing);
   onMissingRef.current = onMissing;
+  /** Runs this person started here, to say how they ended. */
+  const watched = useRef(new Set<number>());
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get<Runbook>(`/runbooks/${id}`);
       setRunbook(data);
       setFailed(false);
+      for (const step of data.steps ?? []) {
+        for (const run of step.runs) {
+          if (!watched.current.has(run.id) || run.running) continue;
+          watched.current.delete(run.id);
+          if (run.status === "done") toast.success(t("run.ok"));
+          else toast.error(t("run.notOk"));
+        }
+      }
     } catch (error) {
       const { status } = errorBody(error);
       if (status === 404 || status === 403) {
@@ -185,17 +204,25 @@ function RunbookDetail({
       }
       setFailed(true);
     }
-  }, [api, id]);
+  }, [api, id, t]);
+
+  const anyRunning = Boolean(
+    runbook?.steps.some((step) => step.runs.some((run) => run.running)),
+  );
 
   useEffect(() => {
     if (!isVisible) return;
     void load();
-    // Agents edit runbooks while the person reads them.
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) void load();
-    }, POLL_MS);
+    // Agents edit runbooks while the person reads them, and a running
+    // command's output is read every second.
+    const timer = window.setInterval(
+      () => {
+        if (!busyRef.current) void load();
+      },
+      anyRunning ? LIVE_POLL_MS : POLL_MS,
+    );
     return () => window.clearInterval(timer);
-  }, [isVisible, load]);
+  }, [isVisible, load, anyRunning]);
 
   const withBusy = async <T,>(fn: () => Promise<T>): Promise<T> => {
     busyRef.current = true;
@@ -296,6 +323,22 @@ function RunbookDetail({
           ? attempt(mode, step, { ...flags, confirmRepeat: true })
           : null;
       }
+      if (status === 409 && data.code === "wait") {
+        const seconds = Number(data.remainingSeconds) || 0;
+        const reason = typeof data.reason === "string" ? data.reason : "";
+        const anyway = await confirm({
+          title: t("wait.confirmTitle"),
+          description: t(reason ? "wait.confirmReason" : "wait.confirm", {
+            time: formatDuration(seconds * 1000),
+            reason,
+          }),
+          confirmLabel: t("wait.anyway"),
+          destructive: false,
+        });
+        return anyway
+          ? attempt(mode, step, { ...flags, waitAnyway: true })
+          : null;
+      }
       if (status === 409 && data.code === "order") {
         const blocking =
           (data.blocking as Array<{ position: number; title: string }>) ?? [];
@@ -327,10 +370,13 @@ function RunbookDetail({
         const ok = await confirm({
           title: t("run.confirmTitle", { position: step.position }),
           description: (
-            <CommandPreview
-              host={hostLabel(step)}
-              command={step.resolvedCommand ?? ""}
-            />
+            <div className="flex flex-col gap-2">
+              <CommandPreview
+                host={hostLabel(step)}
+                command={step.resolvedCommand ?? ""}
+              />
+              <ChecksList checks={step.checks ?? []} words={checksWords(t)} />
+            </div>
           ),
           confirmLabel: t("run.confirm"),
           destructive: false,
@@ -338,8 +384,27 @@ function RunbookDetail({
         if (!ok) return;
         const run = await attempt("run", step);
         if (run) {
-          if (run.status === "done") toast.success(t("run.ok"));
+          if (run.running || run.status === "running") {
+            watched.current.add(run.id);
+          } else if (run.status === "done") toast.success(t("run.ok"));
           else toast.error(t("run.notOk"));
+        }
+        await load();
+      }),
+
+    stop: (step) =>
+      void withBusy(async () => {
+        const ok = await confirm({
+          title: t("stop.title", { position: step.position }),
+          description: t("stop.hint"),
+          confirmLabel: t("stop.confirm"),
+          destructive: true,
+        });
+        if (!ok) return;
+        try {
+          await api.post(`/steps/${step.id}/stop`);
+        } catch (error) {
+          fail(error);
         }
         await load();
       }),
@@ -458,13 +523,17 @@ function RunbookDetail({
         }
       }),
 
-    complete: (run, pasted, outcome) =>
+    complete: (run, pasted, outcome, exitCode) =>
       void withBusy(async () => {
         try {
-          await api.post(`/runs/${run.id}/complete`, {
+          const { data } = await api.post<Run>(`/runs/${run.id}/complete`, {
             pastedOutput: pasted,
             outcome,
+            ...(exitCode !== null ? { exitCode } : {}),
           });
+          if (outcome === "done" && data?.status === "failed") {
+            toast.error(t("checks.failedToast"));
+          }
           await load();
         } catch (error) {
           fail(error);
