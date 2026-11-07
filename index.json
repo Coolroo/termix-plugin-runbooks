@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Termix-SSH/Termix-Registry/main/registry-index-schema.json",
+  "registry": "coolroo",
+  "name": "Coolroo Plugins",
+  "apiVersion": 1,
+  "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
+  "updatedAt": "2026-11-07T19:19:18.000Z",
+  "plugins": [
+    {
+      "id": "runbooks",
+      "name": "Runbooks",
+      "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
+      "author": "Coolroo",
+      "category": "Productivity",
+      "repository": "https://github.com/Coolroo/termix-plugin-runbooks",
+      "icon": "ListChecks",
+      "features": [
+        "Agents propose runbooks through a token API or MCP; they can never run anything",
+        "Each agent token is limited to the hosts you choose for it",
+        "A person runs each step after seeing the exact command and host",
+        "Run over SSH or send the command to an open terminal and paste the output back",
+        "Every run is kept, and a repeat of the same command asks first",
+        "Values with {{name}} placeholders, filled by the author or captured from output",
+        "Outputs can be hidden from agents step by step"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.0.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.0/runbooks-1.0.0.tmxplug",
+          "sha256": "ec1cb57cd6a522bbd9735d0c4a3106c193d9ea37188284a62474572e0ce40456",
+          "signature": "3v+HLlnu0GYfrZOejXxMF6s5hz9hZo89ZRXnyqYdBNztdzmdNWLd/HJ3aMErUSXhJjTcPgyGF++18/8VYgmhCA==",
+          "size": 387979,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.0",
+          "notes": "### Added\n\n- Runbooks, steps, runs and agent tokens, with migrations for SQLite, PostgreSQL and MySQL\n- An agent API under /plugin-api/runbooks/agent/ and an MCP endpoint, both behind Runbooks tokens; agents propose and read, never run\n- Agent tokens limited to the hosts chosen for each token\n- Runs over SSH or through an open terminal, with checks for a changed step, step order, repeats and a stored host key\n- Values with {{name}} placeholders, filled by the author or captured from output\n- Output hidden from agents per step\n- A Runbooks tab with the runbook list, step cards, run history, notes and token management",
+          "publishedAt": "2026-11-07T19:19:18Z"
+        }
+      ],
+      "contributes": [
+        "permissions",
+        "tabs"
+      ]
+    }
+  ]
+}
