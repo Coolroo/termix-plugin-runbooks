@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-07T19:19:18.000Z",
+  "updatedAt": "2026-11-07T20:44:00.000Z",
   "plugins": [
     {
       "id": "runbooks",
@@ -26,6 +26,29 @@
       "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.1/runbooks-1.0.1.tmxplug",
+          "sha256": "430ef741c257e52c1601a9d229d8b2db3b1109e5131be6648fabd1e8eb95d923",
+          "signature": "qWC9HPq6bBi3V1VkCy55wrxc1uMbOOPoCwkRVMss8JCHyfQGknX9fI9/sjWLP5qInRuclX1Emy9LVeC1bM0aBg==",
+          "size": 398192,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.1",
+          "notes": "### Added\n\n- Links that open a runbook: `<Termix address>/?view=runbook&id=<id>` opens the Runbooks tab on that runbook, after a sign-in when the person was signed out. Every runbook in the agent API and MCP answers carries its `openPath`, and the MCP tools tell agents to give the person that link.\n\n### Fixed\n\n- Send to terminal takes one click. With no terminal open to the step's host, it opens one, waits for it to connect and types the command in, instead of only opening it. The \"Send to ...?\" question is gone: the command is typed without Enter, so nothing runs until you press Enter there. The repeat and order questions stay.\n- Send to terminal finds an open terminal when the terminal and Termix give the host id in different forms (text or number), prefers the one on screen, and brings it to the front.\n- When a new terminal does not connect within 30 seconds, no run is recorded and Runbooks says to copy the command instead.\n- Remote desktop hosts (RDP, VNC, consoles) are no longer offered for agent tokens. Runbooks runs and types commands over SSH only, so token hosts, agent steps, Run and Send to terminal now refuse a host that does not take SSH.\n- A 1.0.0 token that lists a remote desktop host stops offering it to agents once someone with Manage Runbooks tokens opens Agent tokens.",
+          "publishedAt": "2026-11-07T20:44:00Z"
+        },
         {
           "version": "1.0.0",
           "api": "1",
