@@ -407,6 +407,35 @@
           ]
         }
       ]
+    },
+    "state": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "type": "varchar",
+          "length": 64,
+          "notNull": true,
+          "unique": true
+        },
+        "value": {
+          "type": "text",
+          "notNull": true
+        },
+        "updatedBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "indexes": []
     }
   }
 }

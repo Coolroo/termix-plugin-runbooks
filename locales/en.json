@@ -158,6 +158,42 @@
   "common": {
     "cancel": "Cancel"
   },
+  "settings": {
+    "notifyEnabled": {
+      "label": "Notify agents",
+      "description": "Send runbook events (an agent's turn, a failed step, a runbook done, Send to agent) to a webhook, so agents hear about them. Events carry ids only, never output or commands."
+    },
+    "notifyUrl": {
+      "label": "Webhook address",
+      "description": "The https address of the receiver that wakes your agents. http is refused.",
+      "placeholder": "https://agents.example.com/runbooks"
+    },
+    "notifyCaPem": {
+      "label": "CA certificate (PEM)",
+      "description": "Trust only this CA for the receiver. Leave it empty to use the server's normal trust store."
+    }
+  },
+  "notify": {
+    "title": "Signing secret",
+    "description": "Each notification is signed with this secret (HMAC-SHA256), so the receiver can tell it came from Runbooks. It is shown once.",
+    "notRunning": "Start Runbooks to manage its signing secret.",
+    "set": "Made {{time}} by {{who}}.",
+    "none": "No signing secret yet: notifications are not sent until you make one.",
+    "make": "Make a new signing secret",
+    "replaceTitle": "Make a new signing secret?",
+    "replaceHint": "The old secret stops working at once. Put the new one in your receiver.",
+    "replace": "Make new secret",
+    "once": "Signing secret. Copy it into your receiver now: it is not shown again.",
+    "copy": "Copy",
+    "hide": "Done",
+    "test": "Test",
+    "saveFirst": "Save the settings first. The test uses the saved address.",
+    "testOk": "Test sent: the receiver answered HTTP {{status}}.",
+    "testStatus": "Test not accepted: the receiver answered HTTP {{status}}.",
+    "testFailed": "Test failed: {{error}}",
+    "problem": "Not ready: {{problem}}",
+    "error": "Could not load the notification settings."
+  },
   "link": {
     "opening": "Opening the runbook…",
     "notFound": "Runbook {{id}} does not exist or is not available to you."

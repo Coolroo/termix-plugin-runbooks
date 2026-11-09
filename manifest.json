@@ -33,7 +33,9 @@
     "ui:surface",
     "hosts:read",
     "ssh:connect",
-    "credentials:use"
+    "credentials:use",
+    "network:outbound",
+    "secrets:own"
   ],
   "requires": [
     {
@@ -64,7 +66,39 @@
         "descriptionKey": "permissions.manageTokens.description",
         "defaultRoles": ["admin"]
       }
-    ]
+    ],
+    "settings": {
+      "admin": [
+        {
+          "key": "notifyEnabled",
+          "type": "boolean",
+          "labelKey": "settings.notifyEnabled.label",
+          "descriptionKey": "settings.notifyEnabled.description",
+          "default": false
+        },
+        {
+          "key": "notifyUrl",
+          "type": "string",
+          "labelKey": "settings.notifyUrl.label",
+          "descriptionKey": "settings.notifyUrl.description",
+          "placeholderKey": "settings.notifyUrl.placeholder",
+          "requires": "notifyEnabled"
+        },
+        {
+          "key": "notifyCaPem",
+          "type": "textarea",
+          "labelKey": "settings.notifyCaPem.label",
+          "descriptionKey": "settings.notifyCaPem.description",
+          "requires": "notifyEnabled"
+        },
+        {
+          "key": "notifySecret",
+          "type": "custom",
+          "component": "notify-secret",
+          "requires": "notifyEnabled"
+        }
+      ]
+    }
   },
   "locales": "locales",
   "platforms": ["linux", "win32", "darwin"],

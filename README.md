@@ -39,6 +39,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 
 - [Setup and use](docs/index.md)
 - [Agent API and MCP](docs/agent-api.md), with curl examples, an MCP client config, and how to prompt an agent to write runbooks
+- [Agent notifications](docs/notifications.md): a signed webhook that tells agents when it is their turn
 - [Security](docs/security.md)
 - [FAQ and limits](docs/faq.md)
 

@@ -210,5 +210,24 @@ export const events = defineTable(
   },
 );
 
+/*
+ * Named values the plugin keeps for itself (1.3.0). "signing-secret": the
+ * key notifications are signed with, sealed with ctx.secrets.seal, so it is
+ * never in the database in the clear and delivery can read it without an
+ * acting user. updatedBy and updatedAt say who made it and when.
+ */
+export const state = defineTable(
+  "state",
+  {
+    id: id(),
+    name: varchar(64).notNull().unique(),
+    // Sealed. Never sent to a browser after the answer that made it.
+    value: text().notNull(),
+    updatedBy: varchar(255).notNull(),
+    updatedAt: timestamp().notNull(),
+  },
+  {},
+);
+
 // termix-plugin migrations reads this list.
-export const tables = [runbooks, steps, runs, tokens, events];
+export const tables = [runbooks, steps, runs, tokens, events, state];

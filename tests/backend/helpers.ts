@@ -23,6 +23,8 @@ export const pluginDir = fileURLToPath(new URL("../..", import.meta.url));
 export const manifest = manifestJson as unknown as PluginManifest;
 
 export const ALL_PERMISSIONS = ["runbooks.use", "runbooks.manage-tokens"];
+/** ALL_PERMISSIONS and core's admin.plugins.manage. */
+export const ADMIN_PERMISSIONS = [...ALL_PERMISSIONS, "admin.plugins.manage"];
 
 export function host(id: number, userId = "alice"): PluginHostSummary {
   return {
@@ -166,6 +168,10 @@ export async function startServer(
     seed?: (db: TestDb) => void;
     /** Provide a fake OpenBao Secrets service (default: none). */
     secrets?: boolean;
+    /** The plugin's admin settings before it activates. */
+    settings?: Record<string, unknown>;
+    /** Answers ctx.fetch (default: every fetch rejects). */
+    fetch?: (url: string, init?: unknown) => Promise<Response>;
   } = {},
 ): Promise<TestServer> {
   const db = await createTestDb(pluginDir);
@@ -194,6 +200,8 @@ export async function startServer(
       sshHost(3, "cc33"),
     ],
     ...(secrets ? { services: { "openbao-secrets.store": secrets } } : {}),
+    ...(options.settings ? { settings: options.settings } : {}),
+    ...(options.fetch ? { fetch: options.fetch as never } : {}),
   });
   mockRef = mock;
   const channels: FakeChannel[] = [];
@@ -430,7 +438,7 @@ export async function runStep(
 
 /** Every row Runbooks keeps, as one text. */
 export function everything(s: TestServer): string {
-  return ["runbooks", "steps", "runs", "tokens"]
+  return ["runbooks", "steps", "runs", "tokens", "events", "state"]
     .map((table) =>
       JSON.stringify(
         s.db.sqlite.prepare(`SELECT * FROM p_runbooks_${table}`).all(),
