@@ -52,6 +52,9 @@
         },
         "secretsRemovedAt": {
           "type": "timestamp"
+        },
+        "owner": {
+          "type": "text"
         }
       },
       "indexes": [
@@ -142,6 +145,10 @@
         },
         "secretCaptures": {
           "type": "text"
+        },
+        "owner": {
+          "type": "varchar",
+          "length": 16
         },
         "revision": {
           "type": "integer",

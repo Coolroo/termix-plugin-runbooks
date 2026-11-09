@@ -38,6 +38,17 @@ type Table = any;
 type Drizzle = any;
 
 export type RunbookStatus = "open" | "done" | "abandoned";
+export type StepOwner = "person" | "agent";
+
+/** The agent and task a runbook belongs to (1.3.0), as the agent set it. */
+export interface RunbookOwner {
+  /** A task id, such as "T-176". */
+  task?: string;
+  /** An address of the agent session that the receiver understands. */
+  agent?: string;
+  /** Shown to the person. */
+  label?: string;
+}
 export type StepStatus = "pending" | "done" | "failed" | "skipped";
 export type RunStatus = "running" | "awaiting-output" | "done" | "failed";
 
@@ -56,6 +67,8 @@ export interface RunbookRow {
   secretsStoredAt: string | null;
   /** When the runbook's secrets were last deleted (1.2.0). */
   secretsRemovedAt: string | null;
+  /** Who the runbook belongs to (1.3.0); null: nobody said. */
+  owner: RunbookOwner | null;
 }
 
 export interface StepRow {
@@ -78,6 +91,8 @@ export interface StepRow {
   stdin: StoredStdin | null;
   /** Secrets a run takes from its output (1.2.0). */
   secretCaptures: Capture[];
+  /** Who does the step (1.3.0): a person runs it, an agent completes it. */
+  owner: StepOwner;
   status: StepStatus;
   skipReason: string | null;
   ownerNote: string;
@@ -91,9 +106,9 @@ export interface RunRow {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual";
+  mode: "exec" | "terminal" | "manual" | "agent";
   status: RunStatus;
-  /** Null for a manual run: its step has no host. */
+  /** Null for a manual or agent run: Termix ran nothing on a host. */
   hostId: number | null;
   command: string;
   commandHash: string;
@@ -157,6 +172,7 @@ function toRunbook(row: Record<string, unknown>): RunbookRow {
     secretsStoredAt: (row.secretsStoredAt as string | null | undefined) ?? null,
     secretsRemovedAt:
       (row.secretsRemovedAt as string | null | undefined) ?? null,
+    owner: parseJson<RunbookOwner | null>(row.owner, null),
   };
 }
 
@@ -187,6 +203,7 @@ function toStep(row: Record<string, unknown>): StepRow {
     secretCaptures: parseJson<Capture[]>(row.secretCaptures, []),
     checks: parseJson<Check[]>(row.checks, []),
     stdin: parseJson<StoredStdin | null>(row.stdin, null),
+    owner: row.owner === "agent" ? "agent" : "person",
   };
 }
 
@@ -196,7 +213,8 @@ function toRun(row: Record<string, unknown>): RunRow {
     id: Number(row.id),
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
-    hostId: row.mode === "manual" ? null : Number(row.hostId),
+    hostId:
+      row.mode === "manual" || row.mode === "agent" ? null : Number(row.hostId),
     note: (row.note as string | null | undefined) ?? null,
     startedEarlySeconds:
       row.startedEarlySeconds === null || row.startedEarlySeconds === undefined
@@ -237,6 +255,7 @@ export interface NewStep {
   waitReason: string | null;
   stdin: StoredStdin | null;
   secretCaptures: Capture[];
+  owner: StepOwner;
 }
 
 /** Columns the store keeps as JSON text. */
@@ -313,6 +332,7 @@ export async function createStore(db: PluginDatabase) {
     values: Values;
     createdBy: string;
     createdByUserId: string;
+    owner?: RunbookOwner | null;
   }): Promise<number> {
     const at = now();
     return insertId(runbooks, {
@@ -320,6 +340,7 @@ export async function createStore(db: PluginDatabase) {
       summary: input.summary,
       status: "open",
       values: JSON.stringify(input.values),
+      owner: input.owner ? JSON.stringify(input.owner) : null,
       createdBy: input.createdBy,
       createdByUserId: input.createdByUserId,
       createdAt: at,
@@ -338,6 +359,7 @@ export async function createStore(db: PluginDatabase) {
       values: Values;
       secretsStoredAt: string;
       secretsRemovedAt: string;
+      owner: RunbookOwner | null;
     }> = {},
   ): Promise<void> {
     const current = await getRunbook(id);
@@ -355,6 +377,9 @@ export async function createStore(db: PluginDatabase) {
     }
     if (patch.secretsRemovedAt !== undefined) {
       set.secretsRemovedAt = patch.secretsRemovedAt;
+    }
+    if (patch.owner !== undefined) {
+      set.owner = patch.owner ? JSON.stringify(patch.owner) : null;
     }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
   }
@@ -409,6 +434,7 @@ export async function createStore(db: PluginDatabase) {
       secretCaptures: step.secretCaptures.length
         ? JSON.stringify(step.secretCaptures)
         : null,
+      owner: step.owner,
       endedAt: null,
       revision: 1,
       createdAt: at,

@@ -4,6 +4,13 @@ export type { Check, CheckResult };
 
 export type RunbookStatus = "open" | "done" | "abandoned";
 
+/** Who a runbook belongs to, as the agent set it (1.3.0). */
+export interface RunbookOwner {
+  task?: string;
+  agent?: string;
+  label?: string;
+}
+
 /** Where a Run takes the command's standard input from (1.2.0). */
 export type StdinSource =
   | {
@@ -56,9 +63,9 @@ export interface Run {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual";
+  mode: "exec" | "terminal" | "manual" | "agent";
   status: "running" | "awaiting-output" | "done" | "failed";
-  /** Null for a manual run. */
+  /** Null for a manual or agent run. */
   hostId: number | null;
   command: string;
   commandHash: string;
@@ -139,6 +146,8 @@ export interface Step {
   secretCaptures?: Array<{ name: string; pattern: string }>;
   /** Why a step that captures secrets cannot run now. */
   secretsProblem?: string | null;
+  /** Who does it: a person runs it, an agent completes it (1.3.0). */
+  owner?: "person" | "agent";
   revision: number;
   runs: Run[];
 }
@@ -156,6 +165,10 @@ export interface Runbook extends RunbookSummary {
   values: Record<string, string>;
   effectiveValues: EffectiveValue[];
   nextStepId: number | null;
+  /** Who the runbook belongs to; null when the agent did not say. */
+  owner?: RunbookOwner | null;
+  /** The owner's label, or the name of the token that made it. */
+  agentLabel?: string;
   /** Whether the OpenBao Secrets service is there. */
   secretsAvailable?: boolean;
   /** Every secret the steps capture: never a value. */

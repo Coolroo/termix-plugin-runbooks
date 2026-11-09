@@ -2,8 +2,9 @@
  * Everything an agent may do, shared by the REST routes and the MCP tools.
  *
  * An agent proposes: it writes runbooks and steps and reads what happened. It
- * never runs a step, never marks one done or skipped and never writes the
- * owner's notes; those routes do not exist on this side at all.
+ * never runs a step, never skips or reopens one and never writes the owner's
+ * notes; those routes do not exist on this side at all. The one step it may
+ * end is its own: a step with owner "agent", once it is its turn (1.3.0).
  */
 
 import type {
@@ -23,6 +24,7 @@ import {
   LIMITS,
   loadBundle,
   openPath,
+  parseOwner,
   parseStatus,
   parseStepInput,
   parseSummary,
@@ -34,6 +36,8 @@ import {
 } from "./service.js";
 import type { LiveRuns } from "./live.js";
 import { StdinPositionError, storeStdin } from "./stdin.js";
+import { evaluateChecks } from "./checks.js";
+import { now } from "./store.js";
 
 export interface AgentCaller {
   token: TokenRow;
@@ -43,7 +47,21 @@ export type AgentHost = TokenHost;
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
-export function createAgentOps(store: Store, live?: LiveRuns) {
+/** An audit line an agent's action writes, without a request. */
+export type AgentAudit = (line: {
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  resourceName?: string;
+  details: string;
+  success: boolean;
+}) => Promise<void>;
+
+export function createAgentOps(
+  store: Store,
+  live?: LiveRuns,
+  options: { audit?: AgentAudit } = {},
+) {
   const owner = (caller: AgentCaller) => caller.token.createdBy;
 
   /**
@@ -230,6 +248,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
     const title = parseTitle(raw.title);
     const summary = parseSummary(raw.summary);
     const values = parseValues(raw.values);
+    const runbookOwner = parseOwner(raw.owner);
     const steps = parseSteps(raw.steps);
     if (steps.length > LIMITS.stepsPerRunbook) {
       throw new InputError(
@@ -246,6 +265,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
       values,
       createdBy: caller.token.name,
       createdByUserId: owner(caller),
+      owner: runbookOwner,
     });
     const ids: number[] = [];
     for (const [index, step] of steps.entries()) {
@@ -272,7 +292,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
     }
     const raw = input as Record<string, unknown>;
     for (const key of Object.keys(raw)) {
-      if (!["title", "summary", "values", "status"].includes(key)) {
+      if (!["title", "summary", "values", "status", "owner"].includes(key)) {
         throw new InputError(`unknown field "${key}"`);
       }
     }
@@ -282,6 +302,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         raw.summary === undefined ? undefined : parseSummary(raw.summary),
       values: raw.values === undefined ? undefined : parseValues(raw.values),
       status: raw.status === undefined ? undefined : parseStatus(raw.status),
+      owner: raw.owner === undefined ? undefined : parseOwner(raw.owner),
     });
     await store.persist();
     return getRunbook(caller, runbookId);
@@ -396,6 +417,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         patch.waitReason !== undefined ? patch.waitReason : step.waitReason,
       stdin: patch.stdin !== undefined ? patch.stdin : step.stdin,
       secretCaptures: patch.secretCaptures ?? step.secretCaptures,
+      owner: patch.owner ?? step.owner,
     });
     await checkHosts(caller, [patch]);
     checkSecretReads(
@@ -520,6 +542,116 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
     return getRunbook(caller, runbookId);
   }
 
+  /**
+   * Ends an agent step: done or failed, with a note and the output the
+   * agent got. Only a step with owner "agent", in an open runbook, still
+   * pending, and only once every earlier step ended (done, failed or
+   * skipped). Records a run in mode agent; checks test the output.
+   */
+  async function completeAgentStep(
+    caller: AgentCaller,
+    stepId: number,
+    input: unknown,
+  ) {
+    const { step, runbook } = await ownStep(caller, stepId);
+    if (step.owner !== "agent") {
+      throw new InputError(
+        "this step is for a person; an agent completes only steps with owner agent",
+        403,
+        { code: "person-step" },
+      );
+    }
+    if (runbook.status !== "open") {
+      throw new InputError(`runbook is ${runbook.status}`, 409, {
+        code: "closed",
+      });
+    }
+    if (step.status !== "pending") {
+      throw new InputError(
+        `this step already ended (${step.status}); only a person can reopen it`,
+        409,
+        { code: "ended" },
+      );
+    }
+    const steps = await store.listSteps(runbook.id);
+    const blocking = steps.filter(
+      (other) => other.position < step.position && other.status === "pending",
+    );
+    if (blocking.length > 0) {
+      throw new InputError(
+        `step ${blocking[0].position} (${blocking[0].title}) is still pending; it is not your turn yet`,
+        409,
+        {
+          code: "order",
+          blocking: blocking.map((other) => ({
+            id: other.id,
+            position: other.position,
+            title: other.title,
+          })),
+        },
+      );
+    }
+    const parsed = parseCompletion(input);
+    const results =
+      parsed.outcome === "done" && step.checks.length > 0
+        ? evaluateChecks(
+            step.checks,
+            {
+              mode: "terminal",
+              exitCode: null,
+              stdout: null,
+              stderr: null,
+              pastedOutput: parsed.output ?? "",
+            },
+            {},
+          )
+        : null;
+    const final =
+      parsed.outcome === "done" && (results ?? []).every((check) => check.ok)
+        ? "done"
+        : "failed";
+    const at = now();
+    await store.insertRun({
+      stepId: step.id,
+      runbookId: runbook.id,
+      mode: "agent",
+      status: final,
+      hostId: null,
+      command: step.command ?? "",
+      commandHash: "",
+      userId: caller.token.name,
+      startedAt: at,
+      finishedAt: at,
+      exitCode: null,
+      stdout: parsed.output,
+      stderr: null,
+      truncated: false,
+      timedOut: false,
+      pastedOutput: null,
+      error: null,
+      note: parsed.note,
+      checks: results,
+    });
+    await store.updateStep(step.id, {
+      status: final,
+      skipReason: null,
+      endedAt: at,
+    });
+    await store.touchRunbook(runbook.id);
+    await store.persist();
+    await options.audit?.({
+      action: "runbooks_step_agent_complete",
+      resourceType: "runbooks_step",
+      resourceId: String(step.id),
+      resourceName: step.title.slice(0, 200),
+      details: `runbook ${runbook.id} step ${step.position} marked ${parsed.outcome} by agent token ${caller.token.name}${
+        final !== parsed.outcome ? ", checks failed" : ""
+      }`,
+      success: true,
+    });
+    return getRunbook(caller, runbook.id);
+  }
+
   async function getValues(caller: AgentCaller, runbookId: number) {
     await ownRunbook(caller, runbookId);
     const bundle = (await loadBundle(store, runbookId, live))!;
@@ -537,5 +669,50 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
     removeStep,
     reorderSteps,
     getValues,
+    completeAgentStep,
+  };
+}
+
+/** { outcome, note?, output? } as an agent completes its step. */
+function parseCompletion(input: unknown): {
+  outcome: "done" | "failed";
+  note: string | null;
+  output: string | null;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new InputError("body must be an object");
+  }
+  const raw = input as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    if (!["outcome", "note", "output"].includes(key)) {
+      throw new InputError(`unknown field "${key}"`);
+    }
+  }
+  if (raw.outcome !== "done" && raw.outcome !== "failed") {
+    throw new InputError('outcome must be "done" or "failed"');
+  }
+  const note = raw.note ?? null;
+  if (note !== null && typeof note !== "string") {
+    throw new InputError("note must be a string");
+  }
+  if (typeof note === "string" && note.length > LIMITS.agentNote) {
+    throw new InputError(`note is longer than ${LIMITS.agentNote} characters`);
+  }
+  const output = raw.output ?? null;
+  if (output !== null && typeof output !== "string") {
+    throw new InputError("output must be a string");
+  }
+  if (
+    typeof output === "string" &&
+    Buffer.byteLength(output) > LIMITS.agentOutputBytes
+  ) {
+    throw new InputError(
+      `output is larger than ${LIMITS.agentOutputBytes / 1024} KB`,
+    );
+  }
+  return {
+    outcome: raw.outcome,
+    note: note && note.trim() ? note : null,
+    output,
   };
 }

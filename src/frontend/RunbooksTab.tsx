@@ -774,6 +774,19 @@ function RunbookDetail({
         </span>
       </div>
 
+      {runbook.owner && (
+        <p className="-mt-2 text-xs text-muted-foreground" data-runbook-owner>
+          {runbook.owner.task
+            ? t("runbook.agentTask", {
+                label: runbook.agentLabel ?? runbook.createdBy,
+                task: runbook.owner.task,
+              })
+            : t("runbook.agent", {
+                label: runbook.agentLabel ?? runbook.createdBy,
+              })}
+        </p>
+      )}
+
       {early && <EarlyStartPrompt request={early} />}
 
       <Markdown source={runbook.summary} />
@@ -822,6 +835,7 @@ function RunbookDetail({
             secrets={(runbook.secrets ?? []).filter(
               (secret) => secret.step === step.position,
             )}
+            agentLabel={runbook.agentLabel ?? runbook.createdBy}
           />
         ))}
       </div>

@@ -56,6 +56,9 @@ export const MAX_TOKEN_HOSTS = 500;
 export const STOP_WAIT_MS = 5000;
 /** How long a failed delete of a closed runbook's secrets waits to retry. */
 export const REMOVE_RETRY_MS = 5 * 60 * 1000;
+/** Why a person cannot run, send or mark an agent step. */
+const AGENT_STEP =
+  "this step is for the agent: it completes it itself; you can Skip or Reopen it";
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
@@ -321,6 +324,9 @@ export function registerPersonRoutes(
     bundle: RunbookBundle,
     input: Record<string, unknown>,
   ) {
+    if (step.owner === "agent") {
+      throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+    }
     if (bundle.runbook.status !== "open") {
       throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
     }
@@ -1072,6 +1078,9 @@ export function registerPersonRoutes(
     wrap(async (req) =>
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
+        if (step.owner === "agent") {
+          throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+        }
         const stdin = stepStdin(step, bundle.steps);
         if (stdin) {
           throw new InputError(
@@ -1210,6 +1219,9 @@ export function registerPersonRoutes(
     wrap(async (req) =>
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
+        if (step.owner === "agent") {
+          throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+        }
         if (bundle.runbook.status !== "open") {
           throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
         }

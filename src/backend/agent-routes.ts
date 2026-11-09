@@ -247,6 +247,28 @@ export function createAgentRouter(
 
   /**
    * @openapi
+   * /plugin-api/runbooks/agent/steps/{id}/complete:
+   *   post:
+   *     summary: End an agent step, done or failed, with a note and output
+   *     description: >
+   *       Body { outcome: done|failed, note?, output? }. Only a step with
+   *       owner agent, once every earlier step ended. Records a run in mode
+   *       agent; the step's checks test the output.
+   *     tags: [Runbooks agent]
+   *     responses:
+   *       200: { description: The runbook }
+   *       403: { description: The step is for a person }
+   *       409: { description: Not its turn yet, already ended, or the runbook is closed }
+   */
+  router.post(
+    "/steps/:id/complete",
+    wrap(async (req, res) =>
+      ops.completeAgentStep(caller(res), idParam(req), req.body),
+    ),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/agent/mcp:
    *   post:
    *     summary: MCP over streamable HTTP (JSON-RPC 2.0, JSON answers)

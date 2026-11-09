@@ -354,9 +354,13 @@ function RunDetails({
               ? run.status === "done"
                 ? "run.manualDone"
                 : "run.manualFailed"
-              : run.mode === "exec"
-                ? "run.byExec"
-                : "run.byTerminal",
+              : run.mode === "agent"
+                ? run.status === "done"
+                  ? "run.agentDone"
+                  : "run.agentFailed"
+                : run.mode === "exec"
+                  ? "run.byExec"
+                  : "run.byTerminal",
             {
               user: run.userId,
               time: formatTime(run.startedAt),
@@ -382,7 +386,7 @@ function RunDetails({
           </span>
         ) : null}
       </div>
-      {run.mode !== "manual" && (
+      {run.mode !== "manual" && run.mode !== "agent" && (
         <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
           $ {run.command}
         </pre>
@@ -477,6 +481,7 @@ export function StepCard({
   busy,
   actions,
   secrets = [],
+  agentLabel = "",
 }: {
   step: Step;
   isNext: boolean;
@@ -485,6 +490,8 @@ export function StepCard({
   actions: StepActions;
   /** The secrets this step captures, and whether each is stored now. */
   secrets?: SecretState[];
+  /** Who the runbook belongs to, for an agent step. */
+  agentLabel?: string;
 }) {
   const { t } = useTranslation();
   const [note, setNote] = useState(step.ownerNote);
@@ -498,6 +505,7 @@ export function StepCard({
     if (!editingNote) setNote(step.ownerNote);
   }, [step.ownerNote, editingNote]);
 
+  const agentStep = step.owner === "agent";
   const [latest, ...earlier] = step.runs;
   const running = step.runs.some((run) => run.running);
   const waitLeft = useWaitRemaining(step.wait);
@@ -542,6 +550,11 @@ export function StepCard({
           {t(`step.status.${step.status}`)}
         </ListBadge>
         {isNext && <ListBadge tone="brand">{t("step.next")}</ListBadge>}
+        {agentStep && (
+          <span data-agent-step>
+            <ListBadge tone="muted">{t("step.agentBadge")}</ListBadge>
+          </span>
+        )}
         {step.hideOutputFromAgents && (
           <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
         )}
@@ -549,7 +562,20 @@ export function StepCard({
 
       <Markdown source={step.body} className="mt-2" />
 
-      {step.hostId !== null && (
+      {agentStep && step.command !== null && (
+        <div className="mt-2" data-agent-command>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            {step.hostName
+              ? t("step.agentCommandOn", { host: step.hostName })
+              : t("step.agentCommand")}
+          </div>
+          <pre className="mt-1 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all">
+            {step.resolvedCommand ?? step.command}
+          </pre>
+        </div>
+      )}
+
+      {!agentStep && step.hostId !== null && (
         <div className="mt-2">
           <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
             <span>
@@ -677,7 +703,15 @@ export function StepCard({
               {t("step.stop")}
             </Button>
           )}
-          {step.hostId !== null && step.command !== null && (
+          {agentStep && step.status === "pending" && (
+            <span
+              className="self-center text-xs text-muted-foreground"
+              data-agent-waiting
+            >
+              {t("step.agentWaiting", { label: agentLabel })}
+            </span>
+          )}
+          {!agentStep && step.hostId !== null && step.command !== null && (
             <>
               <Button
                 size="sm"
@@ -702,7 +736,8 @@ export function StepCard({
               </Button>
             </>
           )}
-          {step.hostId === null &&
+          {!agentStep &&
+            step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (
               <>

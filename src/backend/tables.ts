@@ -40,6 +40,9 @@ export const runbooks = defineTable(
     // were last deleted from OpenBao Secrets (1.2.0). Never the secrets.
     secretsStoredAt: timestamp(),
     secretsRemovedAt: timestamp(),
+    // JSON { task?, agent?, label? }: the agent and task the runbook belongs
+    // to, set by the agent (1.3.0). Null: no owner.
+    owner: text(),
   },
   {
     indexes: [
@@ -83,6 +86,8 @@ export const steps = defineTable(
     // JSON array of { name, pattern }: secrets a run takes from its output
     // and stores in OpenBao Secrets (1.2.0). Null: none.
     secretCaptures: text(),
+    // person | agent: who does the step (1.3.0). Null on older steps: person.
+    owner: varchar(16),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -99,7 +104,8 @@ export const runs = defineTable(
     stepId: integer().notNull(),
     runbookId: integer().notNull(),
     // exec | terminal | manual (1.2.0: a step with no command marked done
-    // or failed by a person; host 0, empty command)
+    // or failed by a person; host 0, empty command) | agent (1.3.0: an agent
+    // step the agent completed; host 0, userId is the token name)
     mode: varchar(16).notNull(),
     // running | awaiting-output | done | failed
     status: varchar(24).notNull(),

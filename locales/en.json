@@ -31,7 +31,9 @@
     "markDone": "Mark done",
     "abandon": "Abandon",
     "reopen": "Reopen",
-    "noSteps": "This runbook has no steps yet."
+    "noSteps": "This runbook has no steps yet.",
+    "agent": "Agent: {{label}}",
+    "agentTask": "Agent: {{label}} · task {{task}}"
   },
   "values": {
     "title": "Values",
@@ -65,7 +67,11 @@
     "showToAgents": "Show output to agents",
     "notes": "Notes",
     "notesPlaceholder": "Notes for this step. Saved when you leave the box; agents can read them.",
-    "stop": "Stop"
+    "stop": "Stop",
+    "agentBadge": "Agent step",
+    "agentWaiting": "Waiting for the agent ({{label}})",
+    "agentCommand": "What the agent will run",
+    "agentCommandOn": "What the agent will run on {{host}}"
   },
   "run": {
     "confirmTitle": "Run step {{position}}?",
@@ -78,6 +84,8 @@
     "byTerminal": "Sent to a terminal by {{user}} at {{time}}",
     "manualDone": "Marked done by {{user}} at {{time}}",
     "manualFailed": "Marked failed by {{user}} at {{time}}",
+    "agentDone": "Done by the agent {{user}} at {{time}}",
+    "agentFailed": "Marked failed by the agent {{user}} at {{time}}",
     "note": "Note: {{note}}",
     "startedEarly": "started {{time}} early",
     "pasteFirst": "Paste the output first: at least one line.",

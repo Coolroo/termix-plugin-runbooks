@@ -26,7 +26,9 @@ export async function activate(ctx: PluginContext) {
   // OpenBao Secrets is optional: without it, steps that use secrets are
   // refused and everything else works.
   const secrets = createSecrets(ctx);
-  const ops = createAgentOps(store, live);
+  const ops = createAgentOps(store, live, {
+    audit: (line) => ctx.audit.record(line),
+  });
 
   const router = ctx.http.router<Router>({
     // Agents call these with a Runbooks token instead of a Termix login; the

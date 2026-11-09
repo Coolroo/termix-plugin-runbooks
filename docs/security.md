@@ -9,7 +9,8 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 
 ## Agents propose, people run
 
-- The agent routes (`/plugin-api/runbooks/agent/...`) can list hosts, write runbooks and steps, change steps that have not run, and read. There is no agent route that runs, sends, completes, skips or reopens a step, or writes a note.
+- The agent routes (`/plugin-api/runbooks/agent/...`) can list hosts, write runbooks and steps, change steps that have not run, and read. There is no agent route that runs, sends, skips or reopens a step, or writes a note.
+- An agent can end only its own steps (`owner: "agent"`), with `POST /agent/steps/{id}/complete`, once every earlier step ended. Termix runs nothing for such a step: Run and Send to terminal refuse it, and its command is only text. A person can skip or reopen it. The completion is audited with the token's name.
 - Those actions are person routes (`/plugin-api/runbooks/...`). Termix checks the login, the route checks the Use Runbooks permission, and a request without a signed-in user is refused.
 - A request made with a Termix API key (`tmx_...`) is refused on every route that acts: running, stopping, sending to a terminal, marking a run done or failed, skipping, reopening, notes, hiding output, runbook status and tokens. Reading is allowed. Approving a command takes a person in the Termix UI.
 
@@ -60,7 +61,7 @@ Text from agents renders as Markdown without raw HTML and without images. Links 
 
 ## Audit
 
-Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
+Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each agent step an agent ended, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
 
 ## Capabilities
 
