@@ -40,7 +40,7 @@ X-Runbooks-Signature: t=1762682820,v1=5f2c...e1
   "runbookId": 12,
   "stepId": 41,
   "stepPosition": 3,
-  "owner": { "task": "T-176", "agent": "session:7f3a", "label": "Lead agent" },
+  "owner": { "task": "T-42", "agent": "session:7f3a", "label": "Lead agent" },
   "openPath": "/?view=runbook&id=12",
   "at": "2026-11-09T10:07:00.000Z",
   "hasNote": true

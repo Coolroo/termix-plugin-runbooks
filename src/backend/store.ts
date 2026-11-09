@@ -46,7 +46,7 @@ export type StepOwner = "person" | "agent";
 
 /** The agent and task a runbook belongs to (1.3.0), as the agent set it. */
 export interface RunbookOwner {
-  /** A task id, such as "T-176". */
+  /** A task id, such as "T-42". */
   task?: string;
   /** An address of the agent session that the receiver understands. */
   agent?: string;

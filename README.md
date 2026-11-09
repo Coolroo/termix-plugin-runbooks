@@ -32,6 +32,9 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Standard input from an earlier step's output, a value or a secret, so nobody copies output from one command to the next
 - Secrets a step captures, kept in OpenBao through the OpenBao Secrets plugin for 7 days, never shown and never given to agents
 - Done and Failed for steps with no command
+- Agent steps: work the agent does itself between your steps, shown as "Waiting for the agent"
+- Events an agent reads (its turn, a failed step, a runbook done), and an optional signed webhook that tells it at once
+- Send to agent on any step, with a short note
 
 <br />
 

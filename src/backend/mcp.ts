@@ -46,7 +46,7 @@ const OWNER_SCHEMA = {
   type: ["object", "null"],
   additionalProperties: false,
   description:
-    "Who the runbook belongs to, shown to the person under its title: task (up to 64 characters, such as T-176), agent (up to 200, an address of your session that a notification receiver understands) and label (up to 80, your name as the person sees it). Null clears it.",
+    "Who the runbook belongs to, shown to the person under its title: task (up to 64 characters, such as T-42), agent (up to 200, an address of your session that a notification receiver understands) and label (up to 80, your name as the person sees it). Null clears it.",
   properties: {
     task: { type: "string", maxLength: 64 },
     agent: { type: "string", maxLength: 200 },

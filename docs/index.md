@@ -72,7 +72,7 @@ A step with no command (text to read, or something to do by hand) has **Done** a
 
 A step the agent does itself (read a dashboard, change a file, wait for a pipeline) is marked **Agent step** and says **Waiting for the agent** with the agent's name. It has no Run, Send to terminal or Done: Termix never runs it, and a command on it only says what the agent will run. When every step before it has ended, the agent ends it, done or failed, with a note and its output, which show in the step's history. You can **Skip** it (with a reason) or **Reopen** it.
 
-The line under the runbook's title says which agent it belongs to and its task, such as "Agent: Lead agent · task T-176".
+The line under the runbook's title says which agent it belongs to and its task, such as "Agent: Lead agent · task T-42".
 
 ### Send to agent
 

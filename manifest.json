@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -20,7 +20,10 @@
     "Values with {{name}} placeholders, filled by the author or captured from output",
     "Outputs can be hidden from agents step by step",
     "Standard input from an earlier step's output, a value or a secret",
-    "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown"
+    "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown",
+    "Agent steps: work the agent does itself between the person's steps, ended through the API",
+    "Runbook events an agent can read or get as a signed webhook, off by default",
+    "Send to agent on any step, with a short note"
   ],
   "env": [],
   "engine": {

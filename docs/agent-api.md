@@ -84,7 +84,7 @@ Set `owner` on a runbook when you create it (`POST /runbooks`, `create_runbook`)
 
 | Field   | Up to          | What it is                                                                                   |
 | ------- | -------------- | -------------------------------------------------------------------------------------------- |
-| `task`  | 64 characters  | The task the runbook is for, such as `T-176` or `ops/T-7`                                    |
+| `task`  | 64 characters  | The task the runbook is for, such as `T-42` or `ops/T-7`                                     |
 | `agent` | 200 characters | An address of your session that a notification receiver understands; Runbooks never reads it |
 | `label` | 80 characters  | Your name as the person sees it                                                              |
 
