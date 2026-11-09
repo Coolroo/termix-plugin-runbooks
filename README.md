@@ -1,6 +1,6 @@
 # Coolroo Plugins: a Termix plugin registry
 
-`index.json` on this branch is a custom Termix plugin registry. Every plugin it lists is signed with one Ed25519 key, whose private half lives in an OpenBao transit engine and cannot be exported.
+`index.json` on this branch is a custom Termix plugin registry. It lists two plugins: **Runbooks** ([termix-plugin-runbooks](https://github.com/Coolroo/termix-plugin-runbooks)) and **OpenBao Secrets** ([termix-plugin-openbao-secrets](https://github.com/Coolroo/termix-plugin-openbao-secrets)). Every plugin it lists is signed with one Ed25519 key, whose private half lives in an OpenBao transit engine and cannot be exported.
 
 Add it in Termix: **Plugins**, **Registries**, **Add registry**, paste
 

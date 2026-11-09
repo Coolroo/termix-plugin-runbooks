@@ -4,8 +4,60 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-07T22:00:02.000Z",
+  "updatedAt": "2026-11-09T22:11:47.000Z",
   "plugins": [
+    {
+      "id": "openbao-secrets",
+      "name": "OpenBao Secrets",
+      "description": "Keep secrets in OpenBao or HashiCorp Vault, type them at a terminal's password prompt, and let other plugins store theirs.",
+      "author": "Coolroo",
+      "category": "Access & Security",
+      "repository": "https://github.com/Coolroo/termix-plugin-openbao-secrets",
+      "icon": "KeyRound",
+      "features": [
+        "One connection to OpenBao or HashiCorp Vault (KV v2), set up by an admin",
+        "The AppRole secret ID comes in a response-wrapped token and is never shown again",
+        "A Secrets tab for your own secrets and shared ones, by name, in folders",
+        "A saved value is never sent to the browser for display: no reveal, no copy",
+        "Type a secret at the cursor of an open terminal, for a password prompt",
+        "A service other plugins use to store, read and delete secrets in their own area",
+        "Secrets with an expiry time are deleted when it passes",
+        "Every read, write and delete is in the audit log, never with the value"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-openbao-secrets/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.1/openbao-secrets-1.0.1.tmxplug",
+          "sha256": "0309f2f7f1ce9ef6d11d484e559259dca4ad46991811afb78526ca3d57a86dd4",
+          "signature": "z1/7sbJatrvKmm/4zGRWRTLoffdqiw3Q7znaHKXPHvleWArLbxxE3tMQlN7pfqBRJGezuSqA2kLn7WEqzldcDA==",
+          "size": 73809,
+          "capabilities": [
+            "db:own",
+            "secrets:own",
+            "network:outbound",
+            "network:serve",
+            "ui:surface"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.1",
+          "notes": "### Fixed\n\n- Adding a secret when OpenBao accepts the value but refuses its metadata (for example a policy without create and update on the KV metadata path) no longer leaves the value behind with no expiry or creator. The new secret is taken back, and adding it again works once the policy is right.",
+          "publishedAt": "2026-11-09T22:11:47Z"
+        }
+      ],
+      "contributes": [
+        "keybindingActions",
+        "permissions",
+        "settings",
+        "tabs",
+        "uses"
+      ]
+    },
     {
       "id": "runbooks",
       "name": "Runbooks",
@@ -21,11 +73,36 @@
         "Run over SSH or send the command to an open terminal and paste the output back",
         "Every run is kept, and a repeat of the same command asks first",
         "Values with {{name}} placeholders, filled by the author or captured from output",
-        "Outputs can be hidden from agents step by step"
+        "Outputs can be hidden from agents step by step",
+        "Standard input from an earlier step's output, a value or a secret",
+        "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown"
       ],
       "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.2.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.2.0/runbooks-1.2.0.tmxplug",
+          "sha256": "c54cd669866e618f348263821f3192d93e106db1b0ab2ecc0a36f6be89b90857",
+          "signature": "aLC3Z0EXxRalGcjv5d3Bp4jt5+xvRUlBmXroKJ3w+JqNlbML9lJQCE+TJxx1R3SWLJ4jda2JXPiJRyAy3SDbDQ==",
+          "size": 470306,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.2.0",
+          "notes": "### Added\n\n- Standard input for a step. Agents set `stdin` on a step: the standard output or standard error of an earlier step's latest finished run (`{ \"from\": \"step\", \"step\": 2, \"stream\": \"stdout\" }`, with `allowFailed` to take a failed run's output), a value (`{ \"from\": \"value\", \"name\": \"build_id\" }`, with one newline), or a secret (`{ \"from\": \"secret\", \"name\": \"api_token\" }` captured earlier in the runbook, or `{ \"from\": \"secret\", \"library\": \"shared/<name>\" }` and `mine/<name>` from the OpenBao Secrets library, read as the person who runs it). Run writes it to the command's standard input and ends it; at most 256 KB. The step and the Run confirm say where it comes from (\"Standard input: output of step 3 (stdout, 1.2 KB)\"), with the first 200 characters of a step or value input and never a secret. The approved hash covers the source. Send to terminal is off for such a step. A Run is refused with 409 `stdin-missing` while the input is not there yet.\n- Secret captures. Agents set `secretCaptures` on a step (at most 10, the same pattern rules as captures). When its run, or a terminal Mark done, ends done, each match is stored in OpenBao through the OpenBao Secrets plugin, in Runbooks' own area, for 7 days; a pattern that matches nothing fails the step with \"secret <name>: no match\". A later step reads it as standard input. Secrets never appear in commands.\n- Secret values a step captures or reads are replaced by `[secret:<name>]` in its standard output, standard error, pasted output and captured values before anything is stored or shown, also when a value is split across two pieces of live output. The output of a step that captures a secret shows when its run ends.\n- A runbook's secrets are deleted when a person marks it done or abandoned, or on the next read by a person after an agent closed it; the rest expire after 7 days.\n- Agents read secrets as `{ name, step, set, expiresAt }` on the runbook, and each run's `stdin` (source and size) and `secrets` (names read and stored), in the agent API and MCP. The MCP tools explain `stdin` and `secretCaptures` with an example.\n- The OpenBao Secrets service (`openbao-secrets.store` `^1.0.0`) is an optional requirement. Without it, steps that use secrets are refused with \"Install and connect the OpenBao Secrets plugin to use secrets\"; people who run them need its Use secrets permission.\n- Done and Failed buttons for a step with no command, the size of Run. A click records a run in mode `manual` with who, when, the outcome and the step's note; agents see it like other runs.\n- Runs keep `startedEarlySeconds` when a person started before the step's wait timer ended; the run history shows \"started 36 s early\" and agents see the field.\n\n### Changed\n\n- Skip is a separate small button on every pending step, always labelled Skip. \"Mark read\" is gone: use Done.\n- Mark done on a terminal run needs at least one line of pasted output; the server refuses an empty paste with 400.\n- An early start on a wait timer asks one question, \"The wait is not over: m:ss left (reason)\", with the command, Cancel focused and Start anyway as a warning, instead of a Run confirm and then a second question.",
+          "publishedAt": "2026-11-09T22:03:56Z"
+        },
         {
           "version": "1.1.0",
           "api": "1",
