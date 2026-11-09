@@ -22,6 +22,13 @@ import {
 } from "./tables.js";
 import { parseJson, type Capture, type Values } from "./values.js";
 import type { Check, CheckResult } from "./checks.js";
+import type { RunStdin, StoredStdin } from "./stdin.js";
+
+/** The secrets a run read or stored, by name. Never their values. */
+export interface RunSecrets {
+  used: string[];
+  captured: Array<{ name: string; expiresAt: string }>;
+}
 
 // Drizzle's table and client types are per dialect; the store treats them
 // loosely and returns its own row types.
@@ -45,6 +52,10 @@ export interface RunbookRow {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** When a run last stored a captured secret (1.2.0). */
+  secretsStoredAt: string | null;
+  /** When the runbook's secrets were last deleted (1.2.0). */
+  secretsRemovedAt: string | null;
 }
 
 export interface StepRow {
@@ -63,6 +74,10 @@ export interface StepRow {
   waitReason: string | null;
   /** When the step last ended (run finished or skipped); null while pending. */
   endedAt: string | null;
+  /** Where a Run takes standard input from (1.2.0); null for none. */
+  stdin: StoredStdin | null;
+  /** Secrets a run takes from its output (1.2.0). */
+  secretCaptures: Capture[];
   status: StepStatus;
   skipReason: string | null;
   ownerNote: string;
@@ -76,9 +91,10 @@ export interface RunRow {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal";
+  mode: "exec" | "terminal" | "manual";
   status: RunStatus;
-  hostId: number;
+  /** Null for a manual run: its step has no host. */
+  hostId: number | null;
   command: string;
   commandHash: string;
   userId: string;
@@ -94,6 +110,14 @@ export interface RunRow {
   captured: Values;
   /** One result per check of the step; null when they were not evaluated. */
   checks: CheckResult[] | null;
+  /** The source and size of the standard input it got; null for none. */
+  stdin: RunStdin | null;
+  /** Secrets it read or stored, by name; null for none. */
+  secrets: RunSecrets | null;
+  /** A manual run's note, from the step's notes (1.2.0). */
+  note: string | null;
+  /** Seconds of the wait still left when it started anyway (1.2.0). */
+  startedEarlySeconds: number | null;
 }
 
 /** A host a token may name, as the person saw it when they chose it. */
@@ -130,6 +154,9 @@ function toRunbook(row: Record<string, unknown>): RunbookRow {
     id: Number(row.id),
     revision: Number(row.revision),
     values: parseJson<Values>(row.values, {}),
+    secretsStoredAt: (row.secretsStoredAt as string | null | undefined) ?? null,
+    secretsRemovedAt:
+      (row.secretsRemovedAt as string | null | undefined) ?? null,
   };
 }
 
@@ -157,7 +184,9 @@ function toStep(row: Record<string, unknown>): StepRow {
     revision: Number(row.revision),
     hideOutputFromAgents: Boolean(row.hideOutputFromAgents),
     captures: parseJson<Capture[]>(row.captures, []),
+    secretCaptures: parseJson<Capture[]>(row.secretCaptures, []),
     checks: parseJson<Check[]>(row.checks, []),
+    stdin: parseJson<StoredStdin | null>(row.stdin, null),
   };
 }
 
@@ -167,7 +196,12 @@ function toRun(row: Record<string, unknown>): RunRow {
     id: Number(row.id),
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
-    hostId: Number(row.hostId),
+    hostId: row.mode === "manual" ? null : Number(row.hostId),
+    note: (row.note as string | null | undefined) ?? null,
+    startedEarlySeconds:
+      row.startedEarlySeconds === null || row.startedEarlySeconds === undefined
+        ? null
+        : Number(row.startedEarlySeconds),
     exitCode:
       row.exitCode === null || row.exitCode === undefined
         ? null
@@ -176,6 +210,8 @@ function toRun(row: Record<string, unknown>): RunRow {
     timedOut: Boolean(row.timedOut),
     captured: parseJson<Values>(row.captured, {}),
     checks: parseJson<CheckResult[] | null>(row.checks, null),
+    stdin: parseJson<RunStdin | null>(row.stdin, null),
+    secrets: parseJson<RunSecrets | null>(row.secrets, null),
   };
 }
 
@@ -199,7 +235,19 @@ export interface NewStep {
   checks: Check[];
   waitAfterPreviousSeconds: number | null;
   waitReason: string | null;
+  stdin: StoredStdin | null;
+  secretCaptures: Capture[];
 }
+
+/** Columns the store keeps as JSON text. */
+const JSON_COLUMNS = new Set([
+  "captures",
+  "checks",
+  "captured",
+  "stdin",
+  "secrets",
+  "secretCaptures",
+]);
 
 export type Store = Awaited<ReturnType<typeof createStore>>;
 
@@ -288,6 +336,8 @@ export async function createStore(db: PluginDatabase) {
       summary: string;
       status: RunbookStatus;
       values: Values;
+      secretsStoredAt: string;
+      secretsRemovedAt: string;
     }> = {},
   ): Promise<void> {
     const current = await getRunbook(id);
@@ -300,6 +350,12 @@ export async function createStore(db: PluginDatabase) {
     if (patch.summary !== undefined) set.summary = patch.summary;
     if (patch.status !== undefined) set.status = patch.status;
     if (patch.values !== undefined) set.values = JSON.stringify(patch.values);
+    if (patch.secretsStoredAt !== undefined) {
+      set.secretsStoredAt = patch.secretsStoredAt;
+    }
+    if (patch.secretsRemovedAt !== undefined) {
+      set.secretsRemovedAt = patch.secretsRemovedAt;
+    }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
   }
 
@@ -349,6 +405,10 @@ export async function createStore(db: PluginDatabase) {
       timeoutMs: step.timeoutMs,
       waitAfterPreviousSeconds: step.waitAfterPreviousSeconds,
       waitReason: step.waitReason,
+      stdin: step.stdin ? JSON.stringify(step.stdin) : null,
+      secretCaptures: step.secretCaptures.length
+        ? JSON.stringify(step.secretCaptures)
+        : null,
       endedAt: null,
       revision: 1,
       createdAt: at,
@@ -376,7 +436,7 @@ export async function createStore(db: PluginDatabase) {
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue;
       set[key] =
-        key === "captures" || key === "checks" ? JSON.stringify(value) : value;
+        JSON_COLUMNS.has(key) && value !== null ? JSON.stringify(value) : value;
     }
     if (options.edit) set.revision = current.revision + 1;
     await (await client()).update(steps).set(set).where(eq(steps.id, id));
@@ -452,15 +512,34 @@ export async function createStore(db: PluginDatabase) {
   }
 
   async function insertRun(
-    input: Omit<RunRow, "id" | "captured" | "checks"> & {
+    input: Omit<
+      RunRow,
+      | "id"
+      | "captured"
+      | "checks"
+      | "stdin"
+      | "secrets"
+      | "note"
+      | "startedEarlySeconds"
+    > & {
+      note?: string | null;
+      startedEarlySeconds?: number | null;
       captured?: Values;
       checks?: CheckResult[] | null;
+      stdin?: RunStdin | null;
+      secrets?: RunSecrets | null;
     },
   ): Promise<number> {
     return insertId(runs, {
       ...input,
+      // A manual run has no host; the column takes none.
+      hostId: input.hostId ?? 0,
+      note: input.note ?? null,
+      startedEarlySeconds: input.startedEarlySeconds ?? null,
       captured: input.captured ? JSON.stringify(input.captured) : null,
       checks: input.checks ? JSON.stringify(input.checks) : null,
+      stdin: input.stdin ? JSON.stringify(input.stdin) : null,
+      secrets: input.secrets ? JSON.stringify(input.secrets) : null,
     });
   }
 
@@ -472,9 +551,7 @@ export async function createStore(db: PluginDatabase) {
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue;
       set[key] =
-        (key === "captured" || key === "checks") && value !== null
-          ? JSON.stringify(value)
-          : value;
+        JSON_COLUMNS.has(key) && value !== null ? JSON.stringify(value) : value;
     }
     await (await client()).update(runs).set(set).where(eq(runs.id, id));
   }

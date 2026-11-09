@@ -58,11 +58,24 @@ export function resolve(text: string, values: Values): Resolved {
   return { text: out, missing };
 }
 
-/** sha256 of the host id and the resolved command, the run's identity. */
-export function commandHash(hostId: number, command: string): string {
+/**
+ * sha256 of the host id and the resolved command, the run's identity, and
+ * of the standard input's source when the step has one (1.2.0). A step with
+ * no input hashes as it did before.
+ */
+export function commandHash(
+  hostId: number,
+  command: string,
+  stdinKey: string | null = null,
+): string {
   return crypto
     .createHash("sha256")
-    .update(`${hostId}\n${command}`, "utf8")
+    .update(
+      stdinKey === null
+        ? `${hostId}\n${command}`
+        : `${hostId}\n${command}\n\0stdin ${stdinKey}`,
+      "utf8",
+    )
     .digest("hex");
 }
 
@@ -154,6 +167,37 @@ export function applyCaptures(
     }
   }
   return { values, errors };
+}
+
+/**
+ * Applies secret capture rules to output (1.2.0): like applyCaptures, but
+ * an empty match counts as no match, so a later step never gets an empty
+ * secret, and a value is never cut short.
+ */
+export function findSecrets(
+  captures: Capture[],
+  output: string | null | undefined,
+): { values: Values; missing: string[] } {
+  const values: Values = {};
+  const missing: string[] = [];
+  const input = (output ?? "").slice(0, CAPTURE_INPUT_LIMIT);
+  const sandbox = vm.createContext({ input, pattern: "" });
+  for (const capture of captures) {
+    sandbox.pattern = capture.pattern;
+    let found: string | null = null;
+    try {
+      found = vm.runInContext(
+        "(() => { const m = new RegExp(pattern, 'm').exec(input); return m && m[1] != null ? String(m[1]) : null; })()",
+        sandbox,
+        { timeout: CAPTURE_TIME_LIMIT_MS },
+      ) as string | null;
+    } catch {
+      found = null;
+    }
+    if (found) values[capture.name] = found;
+    else missing.push(capture.name);
+  }
+  return { values, missing };
 }
 
 /**

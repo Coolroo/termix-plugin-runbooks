@@ -49,12 +49,42 @@ It sends the command a TERM signal, where the SSH server accepts signals, and cl
 
 Send to terminal uses the SSH Terminal plugin. Make sure it is on. If a new terminal does not connect within 30 seconds, Runbooks stops waiting and records nothing. You can always copy the command instead.
 
+## Why is Send to terminal off for this step?
+
+The step gets its standard input from an earlier step, a value or a secret, and only **Run** can give a command its standard input. Use **Run**.
+
+## A step says "Install and connect the OpenBao Secrets plugin to use secrets"
+
+The step captures or reads a secret, and Runbooks keeps secrets only in OpenBao, through the OpenBao Secrets plugin. Install it, connect it to OpenBao, and give the people who run such steps its **Use secrets** permission. Steps without secrets work without it.
+
+## Where are captured secrets, and for how long?
+
+In OpenBao, in Runbooks' own area of the OpenBao Secrets plugin, for 7 days. They are deleted when the runbook is marked done or abandoned. Runbooks never stores them itself, never shows them, and agents never get them. See [Security](security.md#secrets).
+
+## Why does the output say [secret:api_token]?
+
+That is where a secret's value was. Runbooks replaces every secret a step captured or read, in all its output, before it keeps or shows it.
+
+## Why is there no output while a step runs?
+
+The step captures a secret. Its value is known only when the output is complete, so the output shows when the run ends, with the secret replaced.
+
+## Why is Mark done greyed out?
+
+Paste the terminal output first: Mark done needs at least one line of it. If there is nothing to paste, use **Mark failed**, or Skip the step.
+
+## How do I finish a step with no command?
+
+Press **Done** or **Failed**. The note in the step's Notes box goes with it. **Skip** is there too, for a step you do not do.
+
 ## Limits
 
 - Output: at most 256 KB of standard output and of standard error is kept per run; a run that went over is marked "Output cut".
 - Time: 120 seconds per command by default, 600 seconds at most.
 - Live output: the page reads it every second while a command runs; Termix saves it to the database every 2 seconds, so a restart can lose the last 2 seconds of it.
-- Captures read the first 256 KB of output and stop after 250 ms each.
+- Captures read the first 256 KB of output and stop after 250 ms each; so do secret captures, at most 10 per step.
+- Standard input: at most 256 KB.
+- Captured secrets expire after 7 days.
 - Jump hosts: the host key check covers the target host. Termix stores a jump host's key on first use without asking.
 - The hash that binds a run to what you saw covers the host id and the command, not the host's address or login. A host edited in Termix between loading the page and running still runs the shown command on the edited host.
 - Rate limits are kept in memory and reset when Termix restarts.

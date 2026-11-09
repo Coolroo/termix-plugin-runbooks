@@ -36,6 +36,10 @@ export const runbooks = defineTable(
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
     revision: integer().notNull(),
+    // When a run last stored a secret this runbook captured, and when they
+    // were last deleted from OpenBao Secrets (1.2.0). Never the secrets.
+    secretsStoredAt: timestamp(),
+    secretsRemovedAt: timestamp(),
   },
   {
     indexes: [
@@ -73,6 +77,12 @@ export const steps = defineTable(
     // When the step last ended: its run finished, or it was skipped (1.1.0).
     // Null while pending, and on steps that ended before 1.1.0.
     endedAt: timestamp(),
+    // JSON: where a Run takes the command's standard input from (1.2.0): an
+    // earlier step's output (by step id), a value or a secret, by name only.
+    stdin: text(),
+    // JSON array of { name, pattern }: secrets a run takes from its output
+    // and stores in OpenBao Secrets (1.2.0). Null: none.
+    secretCaptures: text(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -88,7 +98,8 @@ export const runs = defineTable(
     id: id(),
     stepId: integer().notNull(),
     runbookId: integer().notNull(),
-    // exec | terminal
+    // exec | terminal | manual (1.2.0: a step with no command marked done
+    // or failed by a person; host 0, empty command)
     mode: varchar(16).notNull(),
     // running | awaiting-output | done | failed
     status: varchar(24).notNull(),
@@ -110,6 +121,17 @@ export const runs = defineTable(
     // JSON array of { label, ok, detail }, one per check (1.1.0). Null when
     // the run's checks were not evaluated.
     checks: text(),
+    // JSON: the source of the standard input the run got and its size; never
+    // the input itself (1.2.0).
+    stdin: text(),
+    // JSON { used: [names], captured: [{ name, expiresAt }] }: the secrets
+    // the run read or stored, by name only. Values are never here (1.2.0).
+    secrets: text(),
+    // The person's note on a manual run, from the step's notes (1.2.0).
+    note: text(),
+    // Seconds of the step's wait timer still left when the person started
+    // it anyway (1.2.0). Null: not early.
+    startedEarlySeconds: integer(),
   },
   {
     indexes: [

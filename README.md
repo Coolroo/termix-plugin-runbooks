@@ -29,6 +29,9 @@ Read the [docs](docs/index.md) to set it up and use it.
 - `{{name}}` values, set by the agent or captured from earlier output
 - Output hidden from agents, step by step
 - Notes on every step that the agent can read
+- Standard input from an earlier step's output, a value or a secret, so nobody copies output from one command to the next
+- Secrets a step captures, kept in OpenBao through the OpenBao Secrets plugin for 7 days, never shown and never given to agents
+- Done and Failed for steps with no command
 
 <br />
 
@@ -43,7 +46,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 
 ## Requirements
 
-Termix 26.11.0 or later (plugin API 1.13). Send to terminal needs the SSH Terminal plugin.
+Termix 26.11.0 or later (plugin API 1.13). Send to terminal needs the SSH Terminal plugin. Secrets need the OpenBao Secrets plugin (1.0.0 or later), which is optional.
 
 <br />
 

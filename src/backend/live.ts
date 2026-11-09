@@ -28,6 +28,11 @@ export interface LiveRun {
   stoppedBy: string | null;
   /** Why the run ended early without a person, such as the plugin stopping. */
   interrupted: string | null;
+  /**
+   * The output is held until the run ends: the step captures a secret,
+   * whose value is not known before the output is complete (1.2.0).
+   */
+  held: boolean;
   /** Ends the command; null until the command started. */
   stop: (() => void) | null;
   /** Settles when the run is finished and written. */
@@ -49,6 +54,8 @@ export type ShownRun = RunRow & {
   elapsedMs: number | null;
   /** Milliseconds since the last output (or the start), as the server saw it. */
   silentMs: number | null;
+  /** Output is not shown until the run ends: the step captures a secret. */
+  outputHeld?: boolean;
 };
 
 export type LiveRuns = ReturnType<typeof createLiveRuns>;
@@ -106,6 +113,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
         lastOutputAt: null,
         stoppedBy: null,
         interrupted: null,
+        held: false,
         stop: null,
         done: Promise.resolve(),
         dirty: false,
@@ -124,6 +132,13 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
       entry.bytes += Buffer.byteLength(text);
       entry.lastOutputAt = now();
       schedule(entry);
+    },
+
+    /** Output arrived but is held back: only the time is kept. */
+    heard(runId: number): void {
+      const entry = runs.get(runId);
+      if (!entry) return;
+      entry.lastOutputAt = now();
     },
 
     truncated(runId: number): void {
@@ -195,6 +210,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
           stderr: entry.stderr,
           truncated: entry.truncated,
           running: true,
+          outputHeld: entry.held,
           lastOutputAt: entry.lastOutputAt,
           elapsedMs: Math.max(0, at - started),
           silentMs: Math.max(0, at - last),

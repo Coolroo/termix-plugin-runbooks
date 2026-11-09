@@ -17,6 +17,7 @@ import type {
 } from "@termix-ssh/plugin-sdk/backend";
 import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
 import manifestJson from "../../manifest.json";
+import { createFakeSecrets, type FakeSecretsService } from "./fake-secrets";
 
 export const pluginDir = fileURLToPath(new URL("../..", import.meta.url));
 export const manifest = manifestJson as unknown as PluginManifest;
@@ -63,6 +64,10 @@ export class FakeChannel extends EventEmitter {
   readonly stderr = new EventEmitter();
   closed = false;
   signals: string[] = [];
+  /** What was written to the command's standard input. */
+  input: Buffer[] = [];
+  /** Standard input was ended. */
+  ended = false;
   out(text: string | Buffer): void {
     this.emit("data", Buffer.isBuffer(text) ? text : Buffer.from(text));
   }
@@ -77,6 +82,16 @@ export class FakeChannel extends EventEmitter {
   }
   signal(name: string): void {
     this.signals.push(name);
+  }
+  write(data: Buffer): void {
+    this.input.push(Buffer.from(data));
+  }
+  end(): void {
+    this.ended = true;
+  }
+  /** Standard input as text. */
+  get stdin(): string {
+    return Buffer.concat(this.input).toString("utf8");
   }
 }
 
@@ -100,6 +115,10 @@ export interface TestServer {
   setExec: (fn: ExecFn) => void;
   /** Commands are driven by hand through their channel instead. */
   setChannel: (fn: ChannelFn | null) => void;
+  /** Every command's channel, in order: what it got on standard input. */
+  channels: FakeChannel[];
+  /** The fake OpenBao Secrets service, when the server has one. */
+  secrets: FakeSecretsService | null;
   /** Connections opened and how many were disposed. */
   connections: { opened: number; disposed: number };
   /** As a signed-in person (default alice). */
@@ -145,6 +164,8 @@ export async function startServer(
     sshHosts?: PluginSshHost[];
     /** Rows written before the plugin activates, as a stopped Termix left them. */
     seed?: (db: TestDb) => void;
+    /** Provide a fake OpenBao Secrets service (default: none). */
+    secrets?: boolean;
   } = {},
 ): Promise<TestServer> {
   const db = await createTestDb(pluginDir);
@@ -157,6 +178,8 @@ export async function startServer(
   options.seed?.(db);
 
   let router: Router | null = null;
+  let mockRef: MockPluginContext | null = null;
+  const secrets = options.secrets ? createFakeSecrets(() => mockRef!) : null;
   const mock = createMockCtx({
     pluginId: manifest.id,
     manifest,
@@ -170,7 +193,10 @@ export async function startServer(
       sshHost(2, null),
       sshHost(3, "cc33"),
     ],
+    ...(secrets ? { services: { "openbao-secrets.store": secrets } } : {}),
   });
+  mockRef = mock;
+  const channels: FakeChannel[] = [];
 
   const execCalls: TestServer["execCalls"] = [];
   let exec: ExecFn = async () => ({
@@ -196,6 +222,7 @@ export async function startServer(
       ) => {
         execCalls.push({ host: h, command, options: connectOptions });
         const channel = new FakeChannel();
+        channels.push(channel);
         if (channelFn) {
           const drive = channelFn;
           callback(undefined, channel);
@@ -278,6 +305,8 @@ export async function startServer(
       channelFn = fn;
     },
     connections,
+    channels,
+    secrets,
     person: (method, path, body, opts = {}) =>
       call(
         method,
@@ -397,4 +426,22 @@ export async function runStep(
     return { ...reply, started: reply.body, body: finished };
   }
   return reply;
+}
+
+/** Every row Runbooks keeps, as one text. */
+export function everything(s: TestServer): string {
+  return ["runbooks", "steps", "runs", "tokens"]
+    .map((table) =>
+      JSON.stringify(
+        s.db.sqlite.prepare(`SELECT * FROM p_runbooks_${table}`).all(),
+      ),
+    )
+    .join("\n");
+}
+
+/** The audit lines without the request object. */
+export function auditText(s: TestServer): string {
+  return JSON.stringify(
+    s.mock.audits.map(({ request: _request, ...rest }) => rest),
+  );
 }

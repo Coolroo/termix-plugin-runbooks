@@ -3,6 +3,36 @@ import type { Check, CheckResult } from "../shared/checks";
 export type { Check, CheckResult };
 
 export type RunbookStatus = "open" | "done" | "abandoned";
+
+/** Where a Run takes the command's standard input from (1.2.0). */
+export type StdinSource =
+  | {
+      from: "step";
+      step: number;
+      stream: "stdout" | "stderr";
+      allowFailed?: boolean;
+    }
+  | { from: "value"; name: string }
+  | { from: "secret"; name: string }
+  | { from: "secret"; library: string };
+
+/** A secret a step captures, as the server shows it: never its value. */
+export interface SecretState {
+  name: string;
+  step: number;
+  set: boolean;
+  expiresAt: string | null;
+}
+
+/** A step's input as the page shows it: never a secret's value. */
+export interface StdinView {
+  source: StdinSource;
+  bytes: number | null;
+  /** The first 200 characters of a step or value input. */
+  preview: string | null;
+  /** Why a Run would be refused now. */
+  problem: string | null;
+}
 export type StepStatus = "pending" | "done" | "failed" | "skipped";
 
 export interface Progress {
@@ -26,11 +56,16 @@ export interface Run {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal";
+  mode: "exec" | "terminal" | "manual";
   status: "running" | "awaiting-output" | "done" | "failed";
-  hostId: number;
+  /** Null for a manual run. */
+  hostId: number | null;
   command: string;
   commandHash: string;
+  /** A manual run's note. */
+  note?: string | null;
+  /** Seconds of the wait timer left when it was started anyway. */
+  startedEarlySeconds?: number | null;
   userId: string;
   startedAt: string;
   finishedAt: string | null;
@@ -52,6 +87,15 @@ export interface Run {
   elapsedMs?: number | null;
   /** For a running run: time since its last output (or start). */
   silentMs?: number | null;
+  /** The output shows only when the run ends: it captures a secret. */
+  outputHeld?: boolean;
+  /** The source and size of the standard input it got. */
+  stdin?: (StdinSource & { bytes: number }) | null;
+  /** Secrets it read or stored, by name. */
+  secrets?: {
+    used: string[];
+    captured: Array<{ name: string; expiresAt: string }>;
+  } | null;
 }
 
 /** The wait a step asks for after the step before it, as the server saw it. */
@@ -89,6 +133,12 @@ export interface Step {
   waitReason?: string | null;
   /** Null when the step asks for no wait or is the first step. */
   wait?: StepWait | null;
+  /** Where a Run takes standard input from; null for none. */
+  stdin?: StdinView | null;
+  /** Secrets a run takes from the output, by name and pattern. */
+  secretCaptures?: Array<{ name: string; pattern: string }>;
+  /** Why a step that captures secrets cannot run now. */
+  secretsProblem?: string | null;
   revision: number;
   runs: Run[];
 }
@@ -106,6 +156,10 @@ export interface Runbook extends RunbookSummary {
   values: Record<string, string>;
   effectiveValues: EffectiveValue[];
   nextStepId: number | null;
+  /** Whether the OpenBao Secrets service is there. */
+  secretsAvailable?: boolean;
+  /** Every secret the steps capture: never a value. */
+  secrets?: SecretState[];
   steps: Step[];
 }
 

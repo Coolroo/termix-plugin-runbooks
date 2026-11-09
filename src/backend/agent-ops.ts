@@ -26,11 +26,14 @@ import {
   parseStatus,
   parseStepInput,
   parseSummary,
+  type AuthorStep,
   parseTitle,
+  secretReadsProblem,
   parseValues,
   runbookSummary,
 } from "./service.js";
 import type { LiveRuns } from "./live.js";
+import { StdinPositionError, storeStdin } from "./stdin.js";
 
 export interface AgentCaller {
   token: TokenRow;
@@ -132,7 +135,7 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
     }
   }
 
-  function parseSteps(input: unknown): NewStep[] {
+  function parseSteps(input: unknown): AuthorStep[] {
     if (input === undefined) return [];
     if (!Array.isArray(input)) throw new InputError("steps must be an array");
     return input.map((raw, index) => {
@@ -145,6 +148,35 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         throw error;
       }
     });
+  }
+
+  /**
+   * The step as stored: a stdin step source by id, for a step at
+   * `position` in an order where `idAt` gives the step at each position.
+   */
+  function toStored(
+    step: AuthorStep,
+    position: number,
+    idAt: (position: number) => number | null,
+    label: string,
+  ): NewStep {
+    try {
+      return { ...step, stdin: storeStdin(step.stdin, position, idAt) };
+    } catch (error) {
+      if (error instanceof StdinPositionError) {
+        throw new InputError(`${label}${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /** A secret read by name needs an earlier step that captures it. */
+  function checkSecretReads(
+    steps: Parameters<typeof secretReadsProblem>[0],
+    status = 400,
+  ): void {
+    const problem = secretReadsProblem(steps);
+    if (problem) throw new InputError(problem, status);
   }
 
   async function renumber(runbookId: number, order: number[]): Promise<void> {
@@ -205,6 +237,9 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
       );
     }
     await checkHosts(caller, steps);
+    checkSecretReads(
+      steps.map((step, index) => ({ ...step, position: index + 1 })),
+    );
     const id = await store.createRunbook({
       title,
       summary,
@@ -212,9 +247,15 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
       createdBy: caller.token.name,
       createdByUserId: owner(caller),
     });
-    let position = 1;
-    for (const step of steps) {
-      await store.insertStep(id, position++, step);
+    const ids: number[] = [];
+    for (const [index, step] of steps.entries()) {
+      const stored = toStored(
+        step,
+        index + 1,
+        (position) => ids[position - 1] ?? null,
+        `steps[${index}]: `,
+      );
+      ids.push(await store.insertStep(id, index + 1, stored));
     }
     await store.persist();
     return getRunbook(caller, id);
@@ -285,12 +326,28 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
       );
     }
     await checkHosts(caller, steps);
+    checkSecretReads(
+      [
+        ...existing.slice(0, insertAt),
+        ...steps,
+        ...existing.slice(insertAt),
+      ].map((step, index) => ({ ...step, position: index + 1 })),
+    );
+    // Positions in stdin are those after the insert, as the answer shows.
+    const before = existing.slice(0, insertAt).map((s) => s.id);
     const newIds: number[] = [];
-    for (const step of steps) {
-      newIds.push(await store.insertStep(runbookId, 0, step));
+    for (const [index, step] of steps.entries()) {
+      const known = [...before, ...newIds];
+      const stored = toStored(
+        step,
+        insertAt + index + 1,
+        (position) => known[position - 1] ?? null,
+        `steps[${index}]: `,
+      );
+      newIds.push(await store.insertStep(runbookId, 0, stored));
     }
     const order = [
-      ...existing.slice(0, insertAt).map((s) => s.id),
+      ...before,
       ...newIds,
       ...existing.slice(insertAt).map((s) => s.id),
     ];
@@ -337,9 +394,33 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
           : step.waitAfterPreviousSeconds,
       waitReason:
         patch.waitReason !== undefined ? patch.waitReason : step.waitReason,
+      stdin: patch.stdin !== undefined ? patch.stdin : step.stdin,
+      secretCaptures: patch.secretCaptures ?? step.secretCaptures,
     });
     await checkHosts(caller, [patch]);
-    await store.updateStep(stepId, patch, { edit: true });
+    checkSecretReads(
+      (await store.listSteps(runbook.id)).map((other) =>
+        other.id === stepId
+          ? {
+              ...other,
+              stdin: patch.stdin !== undefined ? patch.stdin : other.stdin,
+              secretCaptures: patch.secretCaptures ?? other.secretCaptures,
+            }
+          : other,
+      ),
+    );
+    const { stdin, ...rest } = patch;
+    const stored: Partial<NewStep> = { ...rest };
+    if (stdin !== undefined) {
+      const all = await store.listSteps(runbook.id);
+      stored.stdin = toStored(
+        { ...(patch as AuthorStep), stdin },
+        step.position,
+        (position) => all.find((s) => s.position === position)?.id ?? null,
+        "",
+      ).stdin;
+    }
+    await store.updateStep(stepId, stored, { edit: true });
     await store.touchRunbook(runbook.id);
     await store.persist();
     return getRunbook(caller, runbook.id);
@@ -355,6 +436,15 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
       );
     }
     const steps = await store.listSteps(runbook.id);
+    const reader = steps.find(
+      (s) => s.stdin?.from === "step" && s.stdin.stepId === stepId,
+    );
+    if (reader) {
+      throw new InputError(
+        `step ${reader.position} reads this step's output; change or remove it first`,
+        409,
+      );
+    }
     const after = steps.filter(
       (s) => s.position > (steps.find((x) => x.id === stepId)?.position ?? 0),
     );
@@ -365,6 +455,12 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         409,
       );
     }
+    checkSecretReads(
+      steps
+        .filter((s) => s.id !== stepId)
+        .map((s, index) => ({ ...s, position: index + 1 })),
+      409,
+    );
     await store.deleteStep(stepId);
     await renumber(
       runbook.id,
@@ -394,9 +490,20 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         "stepIds must list every step of the runbook exactly once",
       );
     }
+    const newPositionOf = (id: number) => (stepIds as number[]).indexOf(id) + 1;
+    for (const step of steps) {
+      if (
+        step.stdin?.from === "step" &&
+        newPositionOf(step.stdin.stepId) >= newPositionOf(step.id)
+      ) {
+        throw new InputError(
+          `step ${step.id} reads the output of step ${step.stdin.stepId}, which must stay before it`,
+        );
+      }
+    }
     const withRuns = await store.stepsWithRuns(steps.map((s) => s.id));
     for (const step of steps) {
-      const newPosition = (stepIds as number[]).indexOf(step.id) + 1;
+      const newPosition = newPositionOf(step.id);
       if (withRuns.has(step.id) && newPosition !== step.position) {
         throw new InputError(
           `step ${step.id} already ran, so it keeps position ${step.position}`,
@@ -404,6 +511,9 @@ export function createAgentOps(store: Store, live?: LiveRuns) {
         );
       }
     }
+    checkSecretReads(
+      steps.map((s) => ({ ...s, position: newPositionOf(s.id) })),
+    );
     await renumber(runbookId, stepIds as number[]);
     await store.touchRunbook(runbookId);
     await store.persist();

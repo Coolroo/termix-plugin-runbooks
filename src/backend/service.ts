@@ -23,6 +23,21 @@ import {
 } from "./values.js";
 import { checksProblem, normalizeCheck, type Check } from "./checks.js";
 import type { LiveRuns, ShownRun } from "./live.js";
+import {
+  MAX_STDIN_BYTES,
+  normalizeStdin,
+  showStdin,
+  STDIN_PREVIEW_CHARS,
+  stdinKey,
+  secretNameProblem,
+  stdinProblem,
+  type StdinSource,
+} from "./stdin.js";
+
+/** A step as an author writes it: stdin names an earlier step by position. */
+export type AuthorStep = Omit<NewStep, "stdin"> & {
+  stdin: StdinSource | null;
+};
 
 export const HIDDEN = "[hidden by owner]";
 export const RUNBOOK_STATUSES: RunbookStatus[] = ["open", "done", "abandoned"];
@@ -106,7 +121,7 @@ export function parseStatus(value: unknown): RunbookStatus {
 export function parseStepInput(
   input: unknown,
   options: { partial?: boolean } = {},
-): Partial<NewStep> {
+): Partial<AuthorStep> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new InputError("a step must be an object");
   }
@@ -123,11 +138,13 @@ export function parseStepInput(
     "checks",
     "waitAfterPreviousSeconds",
     "waitReason",
+    "stdin",
+    "secretCaptures",
   ]);
   for (const key of Object.keys(raw)) {
     if (!known.has(key)) throw new InputError(`unknown step field "${key}"`);
   }
-  const out: Partial<NewStep> = {};
+  const out: Partial<AuthorStep> = {};
   const has = (key: string) =>
     !options.partial || Object.prototype.hasOwnProperty.call(raw, key);
 
@@ -158,6 +175,15 @@ export function parseStepInput(
     const problem = checkCaptures(captures);
     if (problem) throw new InputError(problem);
     out.captures = (captures as Capture[]).map(({ name, pattern }) => ({
+      name,
+      pattern,
+    }));
+  }
+  if (has("secretCaptures")) {
+    const captures = raw.secretCaptures ?? [];
+    const problem = secretCapturesProblem(captures);
+    if (problem) throw new InputError(problem);
+    out.secretCaptures = (captures as Capture[]).map(({ name, pattern }) => ({
       name,
       pattern,
     }));
@@ -193,6 +219,14 @@ export function parseStepInput(
     if (problem) throw new InputError(problem);
     out.checks = (checks as Check[]).map(normalizeCheck);
   }
+  if (has("stdin")) {
+    if (raw.stdin === null || raw.stdin === undefined) out.stdin = null;
+    else {
+      const problem = stdinProblem(raw.stdin);
+      if (problem) throw new InputError(problem);
+      out.stdin = normalizeStdin(raw.stdin);
+    }
+  }
   if (has("hideOutputFromAgents")) {
     const hide = raw.hideOutputFromAgents ?? false;
     if (typeof hide !== "boolean") {
@@ -218,20 +252,72 @@ export function parseStepInput(
   return out;
 }
 
+export const MAX_SECRET_CAPTURES = 10;
+
+/** Checks secret capture rules: as captures, at most 10, distinct names. */
+export function secretCapturesProblem(input: unknown): string | null {
+  if (!Array.isArray(input)) return "secretCaptures must be an array";
+  if (input.length > MAX_SECRET_CAPTURES) {
+    return `a step may have at most ${MAX_SECRET_CAPTURES} secretCaptures`;
+  }
+  const problem = checkCaptures(input);
+  if (problem)
+    return `secretCaptures: ${problem.replace(/^capture/, "secret")}`;
+  const names = new Set<string>();
+  for (const entry of input as Capture[]) {
+    const nameProblem = secretNameProblem(entry.name, "secret name");
+    if (nameProblem) return `secretCaptures: ${nameProblem}`;
+    if (names.has(entry.name)) {
+      return `secretCaptures: secret "${entry.name}" is named twice`;
+    }
+    names.add(entry.name);
+  }
+  return null;
+}
+
+/**
+ * A secret a step reads by name must be captured by an earlier step of the
+ * same runbook. Returns the problem, or null.
+ */
+export function secretReadsProblem(
+  steps: Array<{
+    position: number;
+    title?: string;
+    stdin: { from: string; name?: string } | null;
+    secretCaptures: Capture[];
+  }>,
+): string | null {
+  for (const step of steps) {
+    const stdin = step.stdin;
+    if (!stdin || stdin.from !== "secret" || stdin.name === undefined) continue;
+    const captured = steps.some(
+      (other) =>
+        other.position < step.position &&
+        other.secretCaptures.some((capture) => capture.name === stdin.name),
+    );
+    if (!captured) {
+      return `step ${step.position} reads secret ${stdin.name}, which no earlier step captures (secretCaptures)`;
+    }
+  }
+  return null;
+}
+
 /** A full new step, after parseStepInput without `partial`. */
-export function completeStep(parsed: Partial<NewStep>): NewStep {
-  const step: NewStep = {
+export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
+  const step: AuthorStep = {
     title: parsed.title!,
     body: parsed.body ?? "",
     hostId: parsed.hostId ?? null,
     command: parsed.command ?? null,
     expect: parsed.expect ?? "",
     captures: parsed.captures ?? [],
+    secretCaptures: parsed.secretCaptures ?? [],
     hideOutputFromAgents: parsed.hideOutputFromAgents ?? false,
     timeoutMs: parsed.timeoutMs ?? null,
     checks: parsed.checks ?? [],
     waitAfterPreviousSeconds: parsed.waitAfterPreviousSeconds ?? null,
     waitReason: parsed.waitReason ?? null,
+    stdin: parsed.stdin ?? null,
   };
   checkStepShape(step);
   return step;
@@ -248,12 +334,22 @@ export function checkStepShape(step: {
   checks?: Check[];
   waitAfterPreviousSeconds?: number | null;
   waitReason?: string | null;
+  stdin?: unknown;
+  secretCaptures?: Capture[];
 }): void {
+  if ((step.secretCaptures ?? []).length > 0 && step.command === null) {
+    throw new InputError(
+      "secretCaptures need a command whose output they read",
+    );
+  }
   if (step.waitReason && !step.waitAfterPreviousSeconds) {
     throw new InputError("waitReason needs waitAfterPreviousSeconds");
   }
   if (step.command !== null && step.hostId === null) {
     throw new InputError("a step with a command needs a hostId");
+  }
+  if (step.stdin && step.command === null) {
+    throw new InputError("stdin needs a command that reads it");
   }
   if (step.captures.length > 0 && step.command === null) {
     throw new InputError("captures need a command whose output they read");
@@ -321,7 +417,16 @@ export interface ResolvedStep {
   missing: string[];
 }
 
-export function resolveStep(step: StepRow, values: Values): ResolvedStep {
+/**
+ * The command as it runs, and the hash a person approves: the host, the
+ * command and, for a step with standard input, the input's source (never
+ * the input itself).
+ */
+export function resolveStep(
+  step: StepRow,
+  values: Values,
+  stdin: StdinSource | null = null,
+): ResolvedStep {
   if (step.command === null || step.hostId === null) {
     return { command: null, hash: null, missing: [] };
   }
@@ -330,9 +435,78 @@ export function resolveStep(step: StepRow, values: Values): ResolvedStep {
     command: resolved.text,
     hash: resolved.missing.length
       ? null
-      : commandHash(step.hostId, resolved.text),
+      : commandHash(step.hostId, resolved.text, stdin ? stdinKey(stdin) : null),
     missing: resolved.missing,
   };
+}
+
+/** A step's stdin source as views show it: earlier steps by position. */
+export function stepStdin(step: StepRow, steps: StepRow[]): StdinSource | null {
+  const positions = new Map(steps.map((other) => [other.id, other.position]));
+  return showStdin(step.stdin, (id) => positions.get(id) ?? null);
+}
+
+export type StdinText = { text: string } | { problem: string };
+
+/**
+ * The input of a step or value source as it stands now, or why there is
+ * none. Null for a secret: only a Run reads a secret, as the person.
+ */
+export function stdinText(
+  source: StdinSource,
+  step: StepRow,
+  steps: StepRow[],
+  runsByStep: Map<number, readonly RunRow[]>,
+  values: Values,
+): StdinText | null {
+  let text: string;
+  if (source.from === "step") {
+    const from = steps.find((other) => other.position === source.step);
+    if (!from || from.position >= step.position) {
+      return { problem: `step ${source.step} is not an earlier step` };
+    }
+    const latest = [...(runsByStep.get(from.id) ?? [])]
+      .sort((a, b) => b.id - a.id)
+      .find((run) => run.status === "done" || run.status === "failed");
+    if (!latest) {
+      return { problem: `step ${source.step} has no finished run yet` };
+    }
+    if (latest.mode === "manual") {
+      return { problem: `step ${source.step} has no command output` };
+    }
+    if (latest.status === "failed" && !source.allowFailed) {
+      return { problem: `the last run of step ${source.step} failed` };
+    }
+    text =
+      latest.mode === "terminal"
+        ? (latest.pastedOutput ?? "")
+        : (latest[source.stream] ?? "");
+  } else if (source.from === "value") {
+    if (!Object.prototype.hasOwnProperty.call(values, source.name)) {
+      return { problem: `value ${source.name} has no value yet` };
+    }
+    text = `${values[source.name]}\n`;
+  } else {
+    return null;
+  }
+  const bytes = Buffer.byteLength(text);
+  if (bytes > MAX_STDIN_BYTES) {
+    return {
+      problem: `the input is ${Math.ceil(bytes / 1024)} KB; at most ${MAX_STDIN_BYTES / 1024} KB`,
+    };
+  }
+  return { text };
+}
+
+/** What the page shows of a step's input: its source, size and start. */
+export interface StdinView {
+  source: StdinSource;
+  /** Bytes of a step or value input; null for a secret or a problem. */
+  bytes: number | null;
+  /** The first characters of a step or value input; never a secret. */
+  preview: string | null;
+  /** Why a Run would be refused now, if it would. */
+  problem: string | null;
 }
 
 export interface WaitState {
@@ -445,6 +619,65 @@ export async function loadBundle(
   };
 }
 
+/** A secret a step captures, as the API, MCP and the page show it. */
+export interface SecretState {
+  name: string;
+  /** The position of the step that captures it. */
+  step: number;
+  /** Stored in OpenBao Secrets now: captured, not deleted, not expired. */
+  set: boolean;
+  expiresAt: string | null;
+}
+
+/** Every secret the runbook's steps capture, by name: never a value. */
+export function secretStates(
+  bundle: Pick<RunbookBundle, "runbook" | "steps" | "runsByStep">,
+  at = Date.now(),
+): SecretState[] {
+  const removedAt = bundle.runbook.secretsRemovedAt;
+  const out: SecretState[] = [];
+  for (const step of bundle.steps) {
+    const runs = [...(bundle.runsByStep.get(step.id) ?? [])].sort(
+      (a, b) => b.id - a.id,
+    );
+    for (const capture of step.secretCaptures) {
+      let entry: { name: string; expiresAt: string } | undefined;
+      const run = runs.find((candidate) => {
+        entry = candidate.secrets?.captured.find(
+          (stored) => stored.name === capture.name,
+        );
+        return Boolean(entry);
+      });
+      const removed = Boolean(
+        run && removedAt && run.finishedAt && run.finishedAt <= removedAt,
+      );
+      const set = Boolean(
+        entry && !removed && Date.parse(entry.expiresAt) > at,
+      );
+      out.push({
+        name: capture.name,
+        step: step.position,
+        set,
+        expiresAt: set ? entry!.expiresAt : null,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether a closed runbook still has secrets to delete: it has steps that
+ * capture secrets, and none were deleted since the last one was stored.
+ */
+export function secretsPending(runbook: RunbookRow, steps: StepRow[]): boolean {
+  if (!steps.some((step) => step.secretCaptures.length > 0)) return false;
+  if (!runbook.secretsRemovedAt) return true;
+  return Boolean(
+    runbook.secretsStoredAt &&
+    runbook.secretsStoredAt > runbook.secretsRemovedAt,
+  );
+}
+
 export function progress(steps: StepRow[]) {
   const finished = steps.filter(
     (step) => step.status === "done" || step.status === "skipped",
@@ -480,21 +713,63 @@ export function runbookSummary(runbook: RunbookRow, steps: StepRow[]) {
 
 type HostNames = (hostId: number) => string | null;
 
+export interface ViewOptions {
+  /** Whether the OpenBao Secrets service is there now. */
+  secretsAvailable?: boolean;
+  /** Why a step that uses secrets cannot run without it. */
+  noSecrets?: string;
+}
+
 /** The whole runbook as the Termix UI shows it. */
-export function personView(bundle: RunbookBundle, hostName: HostNames) {
+export function personView(
+  bundle: RunbookBundle,
+  hostName: HostNames,
+  options: ViewOptions = {},
+) {
   const { runbook, steps, runsByStep } = bundle;
   const values = valuesObject(bundle.values);
   const next = steps.find((step) => step.status === "pending");
+  const stdinView = (step: StepRow, source: StdinSource): StdinView => {
+    const found = stdinText(source, step, steps, runsByStep, values);
+    if (!found) {
+      return {
+        source,
+        bytes: null,
+        preview: null,
+        problem: options.secretsAvailable
+          ? null
+          : (options.noSecrets ?? "no secrets"),
+      };
+    }
+    if ("problem" in found) {
+      return { source, bytes: null, preview: null, problem: found.problem };
+    }
+    return {
+      source,
+      bytes: Buffer.byteLength(found.text),
+      preview: found.text.slice(0, STDIN_PREVIEW_CHARS),
+      problem: null,
+    };
+  };
   return {
     ...runbookSummary(runbook, steps),
     summary: runbook.summary,
     values: runbook.values,
     effectiveValues: [...bundle.values.values()],
     nextStepId: next?.id ?? null,
+    secretsAvailable: Boolean(options.secretsAvailable),
+    secrets: secretStates(bundle),
     steps: steps.map((step) => {
-      const resolved = resolveStep(step, values);
+      const source = stepStdin(step, steps);
+      const resolved = resolveStep(step, values, source);
       return {
         ...step,
+        stdin: source ? stdinView(step, source) : null,
+        // A step that captures secrets cannot run without the service.
+        secretsProblem:
+          step.secretCaptures.length > 0 && !options.secretsAvailable
+            ? (options.noSecrets ?? "no secrets")
+            : null,
         hostName: step.hostId === null ? null : hostName(step.hostId),
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
@@ -531,6 +806,7 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
     summary: runbook.summary,
     values: runbook.values,
     effectiveValues: values,
+    secrets: secretStates(bundle),
     nextStepId: next?.id ?? null,
     steps: steps.map((step) => {
       const hidden = hiddenSteps.has(step.id);
@@ -548,6 +824,7 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         missing: used.filter((name) => !known.has(name)),
         expect: step.expect,
         captures: step.captures,
+        secretCaptures: step.secretCaptures,
         checks: step.checks,
         hideOutputFromAgents: step.hideOutputFromAgents,
         status: step.status,
@@ -557,6 +834,7 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         waitAfterPreviousSeconds: step.waitAfterPreviousSeconds,
         waitReason: step.waitReason,
         waitUntil: agentWaitUntil(waitState(step, steps, runsByStep)),
+        stdin: stepStdin(step, steps),
         revision: step.revision,
         editable: stepRuns.length === 0,
         runs: stepRuns.map((run) => agentRun(run, hidden, mask)),
@@ -597,6 +875,14 @@ function agentRun(
     running: run.running,
     lastOutputAt: run.lastOutputAt,
     checks: run.checks,
+    // Where its standard input came from and its size, never the input.
+    stdin: run.stdin,
+    // Secret names it read or stored, never a value.
+    secrets: run.secrets,
+    // A manual run's note (a step with no command marked by hand).
+    note: run.note,
+    // Seconds of the wait timer left when the person started it anyway.
+    startedEarlySeconds: run.startedEarlySeconds,
     captured: hidden
       ? Object.fromEntries(Object.keys(run.captured).map((k) => [k, HIDDEN]))
       : run.captured,

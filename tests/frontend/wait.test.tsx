@@ -172,8 +172,61 @@ describe("wait timers in the UI", () => {
     expect(later.textContent).toBe("Waits 5 min after step 2");
   });
 
-  it("asks before starting early and retries with waitAnyway", async () => {
+  it("asks one question before an early Run, with Cancel first", async () => {
     const client = server(90_000);
+    client.post.mockImplementation(async () => ({
+      data: { id: 30, status: "running", running: true },
+    }));
+    await open(client, false);
+    fireEvent.click(within(card(2)).getByText(locales.step.run));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
+    expect(dialog.textContent).toContain(
+      "The wait is not over: 1:30 left (let the service restart)",
+    );
+    // No separate "Run step 2?" first; the command is in this one.
+    expect(dialog.textContent).not.toContain("Run step 2?");
+    expect(within(dialog).getByText("true")).toBeTruthy();
+    const cancel = dialog.querySelector("[data-early-cancel]") as HTMLElement;
+    expect(document.activeElement).toBe(cancel);
+    expect(
+      (dialog.querySelector("[data-early-start]") as HTMLElement).className,
+    ).toContain("text-warning");
+    fireEvent.click(dialog.querySelector("[data-early-start]")!);
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/steps/2/run", {
+        revision: 1,
+        commandHash: "b".repeat(64),
+        waitAnyway: true,
+      }),
+    );
+    expect(client.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing on Cancel or Esc", async () => {
+    const client = server(90_000);
+    await open(client, false);
+    fireEvent.click(within(card(2)).getByText(locales.step.run));
+    let dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(dialog.querySelector("[data-early-cancel]")!);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
+    const send = within(card(2))
+      .getByText(locales.step.send)
+      .closest("button")!;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    dialog = await screen.findByRole("alertdialog");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  it("asks the same question when the server says the wait is not over", async () => {
+    const client = server(0);
     let calls = 0;
     client.post.mockImplementation(async () => {
       calls += 1;
@@ -194,7 +247,7 @@ describe("wait timers in the UI", () => {
     });
     await open(client, false);
     fireEvent.click(within(card(2)).getByText(locales.step.run));
-    // First the usual Run confirm.
+    // Not waiting on this clock: the usual Run confirm first.
     let dialog = await screen.findByRole("alertdialog");
     fireEvent.click(
       within(dialog)
@@ -202,11 +255,11 @@ describe("wait timers in the UI", () => {
         .find((b) => b.textContent?.startsWith(locales.run.confirm))!,
     );
     await vi.waitFor(() => expect(client.post).toHaveBeenCalledTimes(1));
-    dialog = await screen.findByText(
-      "The runbook says to wait 1:15 more (let the service restart). Start anyway?",
+    await screen.findByText(
+      "The wait is not over: 1:15 left (let the service restart)",
     );
-    const box = dialog.closest('[role="alertdialog"]') as HTMLElement;
-    fireEvent.click(within(box).getByText(locales.wait.anyway));
+    dialog = screen.getByRole("alertdialog");
+    fireEvent.click(dialog.querySelector("[data-early-start]")!);
     await vi.waitFor(() =>
       expect(client.post).toHaveBeenLastCalledWith("/steps/2/run", {
         revision: 1,
@@ -223,5 +276,49 @@ describe("formatWait", () => {
     expect(formatWait(120)).toBe("2 min");
     expect(formatWait(90)).toBe("1 min 30 s");
     expect(formatWait(3900)).toBe("1 h 5 min");
+  });
+});
+
+describe("a run started early", () => {
+  it("says so in the step's run history", async () => {
+    const client = server(0);
+    const base = client.get.getMockImplementation()!;
+    client.get.mockImplementation(async (url: string) => {
+      const answer = await base(url);
+      if (url === "/runbooks") return answer;
+      const data = answer.data as { steps: Array<Record<string, unknown>> };
+      data.steps[1].runs = [
+        {
+          id: 51,
+          stepId: 2,
+          runbookId: 7,
+          mode: "exec",
+          status: "done",
+          hostId: 1,
+          command: "true",
+          commandHash: "b".repeat(64),
+          userId: "alice",
+          startedAt: "2026-11-07T10:01:00.000Z",
+          finishedAt: "2026-11-07T10:01:01.000Z",
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+          pastedOutput: null,
+          error: null,
+          captured: {},
+          running: false,
+          startedEarlySeconds: 36,
+        },
+      ];
+      return answer;
+    });
+    await open(client, false);
+    await vi.waitFor(() =>
+      expect(card(2).querySelector("[data-started-early]")?.textContent).toBe(
+        "started 36 s early",
+      ),
+    );
   });
 });

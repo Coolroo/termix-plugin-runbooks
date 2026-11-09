@@ -24,12 +24,14 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 
 ## What runs is what you saw
 
-- The page shows each step's resolved command and a hash of the host id and that command. Running sends back the step's revision and that hash. If the agent changed the step, or a value changed, the hashes differ and the run is refused.
+- The page shows each step's resolved command and a hash of the host id, that command and, for a step with standard input, where the input comes from. Running sends back the step's revision and that hash. If the agent changed the step, or a value changed, the hashes differ and the run is refused.
 - **Run** runs a step only after a confirm that shows the host and the exact command. The command runs on its own SSH connection, opened through Termix as the person who pressed Run: Termix checks their access to the host, uses its stored login and checks its host key, as for any connection. The request answers at once and the command goes on in the background as that person.
 - **Stop** is a person route like Run, refused for agents and Termix API keys, and audited.
 - **Send to terminal** asks no such question: it types the command into a terminal to the step's host without pressing Enter, so nothing runs until the person reads it there and presses Enter. The run is recorded only once that terminal is connected.
 - Run and Send to terminal refuse a host that does not take SSH.
-- A repeat (the step ran before, or the same command ran on the same host in the last 24 hours), a run out of order and a start before a step's wait timer ended each need their own confirm. A start before the wait ended is audited.
+- A repeat (the step ran before, or the same command ran on the same host in the last 24 hours), a run out of order and a start before a step's wait timer ended each need their own confirm. A start before the wait ended is audited, and the run keeps how many seconds were left.
+- A step with no command is marked **Done** or **Failed** by a person only (a person route, refused for agents and Termix API keys), and the run records who and when.
+- **Mark done** on a terminal run needs pasted output; the server refuses an empty paste.
 - A step that has run cannot be changed or removed by the agent, and nothing can be inserted before it. Runs are never deleted.
 
 ## Host keys
@@ -40,13 +42,25 @@ When Termix connects to a host with no person to ask and the host has no stored 
 
 For a step marked hidden, agents get `[hidden by owner]` instead of its standard output, standard error, pasted output and captured values. Captured values of four characters or more are also masked where they appear in later commands that agents read. An agent can mark a step hidden but cannot clear the mark. Check results stay visible on a hidden step: they say only whether each check the agent wrote passed, never the output, but a check such as `contains` does tell whether the output had that text.
 
+## Secrets
+
+Runbooks keeps no secret of its own. Secrets go through the OpenBao Secrets plugin's service, `openbao-secrets.store`, which Runbooks declares as an optional requirement: without it, steps that capture or read a secret are refused, and nothing falls back to another store.
+
+- **Where they live.** A captured secret is stored in OpenBao, in Runbooks' own area of OpenBao Secrets, at `runbooks/<runbook id>/<name>`, with an expiry 7 days ahead. Runbooks reaches its area with a key that OpenBao Secrets hands to a receiver only Runbooks can register; Runbooks keeps the key in memory and takes one only while its own request for it runs. Library secrets (`mine/`, `shared/`) stay where the person put them.
+- **Who.** Every call runs as the person who presses Run or Mark done, and OpenBao Secrets checks their **Use secrets** permission first; a library secret is read with their own access to it. Anyone with Use Runbooks and Use secrets who runs a step of the runbook reaches its captured secrets, as they do its output.
+- **Never kept, never shown.** A secret is never written to Runbooks' tables, never sent to the browser, never given to agents, and never part of a command (there is no secret placeholder). The runs table keeps only the names of the secrets a run read or stored, and the source of its standard input with its size.
+- **Redaction.** Before any output is stored or shown (the run row, the live output, the API, MCP and the audit log), every secret value a step captured or read is replaced by `[secret:<name>]` in standard output, standard error, pasted output and captured values. Output arrives in pieces, so Runbooks holds back the last characters of each stream (one fewer than the longest value) until more arrives: a value split across two pieces is still replaced. The output of a step that captures a secret is not shown or saved until the run ends, because the value is known only then. Redaction finds the exact text only: a command that prints a secret changed (encoded, split by other text) prints it where it can be read, so write commands that read secrets from standard input and do not print them.
+- **What agents see.** Agents can set `stdin` and `secretCaptures` on steps, and they read each secret as `{ name, step, set, expiresAt }`, never a value. Output with a secret reads `[secret:<name>]` for them too.
+- **Deleting.** When a person marks a runbook done or abandoned, Runbooks deletes its area prefix `runbooks/<id>/`. An agent that closes a runbook has no person to act as, so the secrets are deleted the next time a person with Use secrets opens the Runbooks tab. OpenBao Secrets deletes whatever is left when it expires.
+- **Audit.** Runs that read or store a secret are audited with the secret's name only ("read secret api_token", "stored secret api_token"), and so is each deletion. OpenBao Secrets audits each call with the area and the name.
+
 ## Markdown
 
 Text from agents renders as Markdown without raw HTML and without images. Links open in a new tab without a referrer.
 
 ## Audit
 
-Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each skip, and each token made, changed or revoked. Termix also records each SSH connection and each host lookup.
+Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
 
 ## Capabilities
 
@@ -58,3 +72,5 @@ Runbooks writes an audit line for each run, each stop, each start before a wait 
 | `hosts:read`      | Host names, the hosts offered for a token, and access checks                |
 | `ssh:connect`     | Run a step over SSH, and read whether a host takes SSH and has a stored key |
 | `credentials:use` | Use the host's stored login for that run                                    |
+
+Runbooks also declares the service `openbao-secrets.store` (`^1.0.0`) as an optional requirement, for secrets. It needs no capability of its own.

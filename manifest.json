@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -18,7 +18,9 @@
     "Run over SSH or send the command to an open terminal and paste the output back",
     "Every run is kept, and a repeat of the same command asks first",
     "Values with {{name}} placeholders, filled by the author or captured from output",
-    "Outputs can be hidden from agents step by step"
+    "Outputs can be hidden from agents step by step",
+    "Standard input from an earlier step's output, a value or a secret",
+    "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown"
   ],
   "env": [],
   "engine": {
@@ -32,6 +34,13 @@
     "hosts:read",
     "ssh:connect",
     "credentials:use"
+  ],
+  "requires": [
+    {
+      "service": "openbao-secrets.store",
+      "versionRange": "^1.0.0",
+      "optional": true
+    }
   ],
   "contributes": {
     "tabs": [

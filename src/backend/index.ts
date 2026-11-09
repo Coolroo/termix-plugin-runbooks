@@ -9,6 +9,7 @@ import {
   type LiveRuns,
 } from "./live.js";
 import { registerPersonRoutes } from "./routes.js";
+import { createSecrets } from "./secrets.js";
 import { createStore } from "./store.js";
 
 /** Requests a minute one address may make to the agent routes (core's limit). */
@@ -22,6 +23,9 @@ export async function activate(ctx: PluginContext) {
   await sweepInterrupted(store);
   const live = createLiveRuns(store);
   active = live;
+  // OpenBao Secrets is optional: without it, steps that use secrets are
+  // refused and everything else works.
+  const secrets = createSecrets(ctx);
   const ops = createAgentOps(store, live);
 
   const router = ctx.http.router<Router>({
@@ -33,7 +37,7 @@ export async function activate(ctx: PluginContext) {
 
   const agent = createAgentRouter(ctx, store, ops, ctx.manifest.version);
   router.use("/agent", agent.router);
-  registerPersonRoutes(router, ctx, store, live);
+  registerPersonRoutes(router, ctx, store, live, secrets);
 }
 
 export async function deactivate() {

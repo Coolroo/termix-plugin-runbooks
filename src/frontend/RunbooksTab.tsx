@@ -22,6 +22,7 @@ import {
   ListRow,
   PanelList,
   PanelShell,
+  PanePrompt,
   useConfirm,
 } from "@termix-ssh/plugin-sdk/ui";
 import { toast } from "sonner";
@@ -31,6 +32,7 @@ import { Markdown } from "./Markdown";
 import {
   ChecksList,
   checksWords,
+  describeStdin,
   formatDuration,
   formatTime,
   StepCard,
@@ -81,14 +83,99 @@ export function RunbooksIcon(props: { className?: string }) {
 type View =
   { kind: "list" } | { kind: "runbook"; id: number } | { kind: "tokens" };
 
-function CommandPreview({ host, command }: { host: string; command: string }) {
+function CommandPreview({
+  host,
+  command,
+  stdin,
+}: {
+  host: string;
+  command: string;
+  /** The step's input: where from, and the start of a step or value. */
+  stdin?: { label: string; preview: string | null } | null;
+}) {
   return (
     <div className="flex flex-col gap-1 text-xs">
       <span>{host}</span>
       <pre className="max-h-60 overflow-auto border border-border bg-muted/40 p-2 font-mono whitespace-pre-wrap break-all">
         {command}
       </pre>
+      {stdin && (
+        <>
+          <span data-confirm-stdin>{stdin.label}</span>
+          {stdin.preview !== null && (
+            <pre
+              data-confirm-stdin-preview
+              className="max-h-40 overflow-auto border border-border bg-muted/40 p-2 font-mono whitespace-pre-wrap break-all"
+            >
+              {stdin.preview}
+            </pre>
+          )}
+        </>
+      )}
     </div>
+  );
+}
+
+interface EarlyRequest {
+  title: string;
+  details: ReactNode;
+  resolve: (ok: boolean) => void;
+}
+
+/**
+ * "The wait is not over": Cancel is focused, so Enter cancels, and Start
+ * anyway is a warning. Esc cancels too.
+ */
+function EarlyStartPrompt({ request }: { request: EarlyRequest }) {
+  const { t } = useTranslation();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const resolveRef = useRef(request.resolve);
+  resolveRef.current = request.resolve;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      resolveRef.current(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      if (previous && document.contains(previous)) previous.focus();
+    };
+  }, []);
+  return (
+    <PanePrompt
+      open
+      role="alertdialog"
+      title={request.title}
+      description={request.details}
+      onCancel={() => request.resolve(false)}
+      className="border-warning/60"
+      actions={
+        <>
+          <button
+            ref={cancelRef}
+            type="button"
+            data-early-cancel
+            onClick={() => request.resolve(false)}
+            className="inline-flex h-7 items-center justify-center border border-border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            data-early-start
+            onClick={() => request.resolve(true)}
+            className="inline-flex h-7 items-center justify-center border border-warning/60 bg-warning/15 px-3 text-xs font-medium text-warning transition-colors hover:bg-warning/25 focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {t("wait.anyway")}
+          </button>
+        </>
+      }
+    />
   );
 }
 
@@ -245,6 +332,75 @@ function RunbookDetail({
   const hostLabel = (step: Step) =>
     step.hostName ?? t("step.unknownHost", { id: step.hostId });
 
+  /** The host, the command, its input, checks and secrets, for a confirm. */
+  const runDetails = (step: Step) => (
+    <div className="flex flex-col gap-2">
+      <CommandPreview
+        host={hostLabel(step)}
+        command={step.resolvedCommand ?? ""}
+        stdin={stdinPreview(step)}
+      />
+      <ChecksList checks={step.checks ?? []} words={checksWords(t)} />
+      {(step.secretCaptures ?? []).length > 0 && (
+        <span className="text-xs" data-confirm-secrets>
+          {t("secrets.confirm", {
+            names: (step.secretCaptures ?? [])
+              .map((capture) => capture.name)
+              .join(", "),
+          })}
+        </span>
+      )}
+    </div>
+  );
+
+  /** The open early-start question, if any. */
+  const [early, setEarly] = useState<EarlyRequest | null>(null);
+
+  /**
+   * Asks before a start while the step's wait timer runs: one question,
+   * Cancel first. Resolves true for Start anyway.
+   */
+  const askEarly = (
+    step: Step,
+    leftMs: number,
+    withDetails: boolean,
+    reason: string = step.wait?.reason ?? "",
+  ) =>
+    new Promise<boolean>((resolve) => {
+      const time = formatDuration(Math.ceil(leftMs / 1000) * 1000);
+      setEarly({
+        title: t(reason ? "wait.earlyReason" : "wait.early", { time, reason }),
+        details: withDetails ? (
+          runDetails(step)
+        ) : (
+          <CommandPreview
+            host={hostLabel(step)}
+            command={step.resolvedCommand ?? ""}
+          />
+        ),
+        resolve: (ok) => {
+          setEarly(null);
+          resolve(ok);
+        },
+      });
+    });
+
+  /** What a confirm says of the step's input, if it has one. */
+  const stdinPreview = (step: Step) =>
+    step.stdin
+      ? {
+          label:
+            t("stdin.label", {
+              source: describeStdin(t, step.stdin.source, step.stdin.bytes),
+            }) +
+            // Whoever wrote the command decides what happens to the secret.
+            (step.stdin.source.from === "secret"
+              ? ` ${t("stdin.secretWarning")}`
+              : ""),
+          preview: step.stdin.preview,
+        }
+      : null;
+
   // The shell, kept in a ref: a send outlives the render that started it.
   const shell = useShell();
   const shellRef = useRef(shell);
@@ -326,15 +482,12 @@ function RunbookDetail({
       if (status === 409 && data.code === "wait") {
         const seconds = Number(data.remainingSeconds) || 0;
         const reason = typeof data.reason === "string" ? data.reason : "";
-        const anyway = await confirm({
-          title: t("wait.confirmTitle"),
-          description: t(reason ? "wait.confirmReason" : "wait.confirm", {
-            time: formatDuration(seconds * 1000),
-            reason,
-          }),
-          confirmLabel: t("wait.anyway"),
-          destructive: false,
-        });
+        const anyway = await askEarly(
+          step,
+          seconds * 1000,
+          mode === "run",
+          reason,
+        );
         return anyway
           ? attempt(mode, step, { ...flags, waitAnyway: true })
           : null;
@@ -365,24 +518,23 @@ function RunbookDetail({
   };
 
   const actions: StepActions = {
-    run: (step) =>
+    run: (step, waitLeftMs = 0) =>
       void withBusy(async () => {
-        const ok = await confirm({
-          title: t("run.confirmTitle", { position: step.position }),
-          description: (
-            <div className="flex flex-col gap-2">
-              <CommandPreview
-                host={hostLabel(step)}
-                command={step.resolvedCommand ?? ""}
-              />
-              <ChecksList checks={step.checks ?? []} words={checksWords(t)} />
-            </div>
-          ),
-          confirmLabel: t("run.confirm"),
-          destructive: false,
-        });
-        if (!ok) return;
-        const run = await attempt("run", step);
+        // Early on a wait timer: one question, and it is about the wait.
+        let flags: Record<string, boolean> = {};
+        if (waitLeftMs > 0) {
+          if (!(await askEarly(step, waitLeftMs, true))) return;
+          flags = { waitAnyway: true };
+        } else {
+          const ok = await confirm({
+            title: t("run.confirmTitle", { position: step.position }),
+            description: runDetails(step),
+            confirmLabel: t("run.confirm"),
+            destructive: false,
+          });
+          if (!ok) return;
+        }
+        const run = await attempt("run", step, flags);
         if (run) {
           if (run.running || run.status === "running") {
             watched.current.add(run.id);
@@ -413,8 +565,13 @@ function RunbookDetail({
     // command there without pressing Enter. The run is recorded only once a
     // terminal is ready, so a terminal that never connects leaves no run
     // waiting for output.
-    send: (step) =>
+    send: (step, waitLeftMs = 0) =>
       void withBusy(async () => {
+        let flags: Record<string, boolean> = {};
+        if (waitLeftMs > 0) {
+          if (!(await askEarly(step, waitLeftMs, false))) return;
+          flags = { waitAnyway: true };
+        }
         const host = hostLabel(step);
         const sessions = await listSessions();
         if (!sessions) {
@@ -456,7 +613,7 @@ function RunbookDetail({
           await sleep(PROMPT_SETTLE_MS);
           toast.dismiss(waiting);
         }
-        const run = await attempt("terminal", step);
+        const run = await attempt("terminal", step, flags);
         if (!run) return;
         let sent = false;
         try {
@@ -484,6 +641,19 @@ function RunbookDetail({
         try {
           const { data } = await api.post<Runbook>(`/steps/${step.id}/skip`, {
             reason,
+          });
+          setRunbook(data);
+        } catch (error) {
+          fail(error);
+        }
+      }),
+
+    manual: (step, outcome, note) =>
+      void withBusy(async () => {
+        try {
+          const { data } = await api.post<Runbook>(`/steps/${step.id}/manual`, {
+            outcome,
+            note,
           });
           setRunbook(data);
         } catch (error) {
@@ -604,6 +774,8 @@ function RunbookDetail({
         </span>
       </div>
 
+      {early && <EarlyStartPrompt request={early} />}
+
       <Markdown source={runbook.summary} />
 
       {runbook.effectiveValues.length > 0 && (
@@ -647,6 +819,9 @@ function RunbookDetail({
             runbookOpen={open}
             busy={busy}
             actions={actions}
+            secrets={(runbook.secrets ?? []).filter(
+              (secret) => secret.step === step.position,
+            )}
           />
         ))}
       </div>

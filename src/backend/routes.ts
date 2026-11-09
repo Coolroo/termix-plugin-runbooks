@@ -17,24 +17,45 @@ import {
   personView,
   resolveStep,
   runbookSummary,
+  secretsPending,
+  stdinText,
+  stepStdin,
   waitState,
   valuesObject,
   type RunbookBundle,
 } from "./service.js";
-import type { RunRow, StepRow, Store, TokenHost, TokenRow } from "./store.js";
+import type {
+  RunbookRow,
+  RunRow,
+  StepRow,
+  Store,
+  TokenHost,
+  TokenRow,
+} from "./store.js";
 import { now } from "./store.js";
 import { newToken } from "./tokens.js";
-import { applyCaptures } from "./values.js";
+import { applyCaptures, findSecrets } from "./values.js";
 import { isSshHost } from "../shared/hosts.js";
 import type { LiveRuns } from "./live.js";
 import { streamExec, type ExecClient } from "./stream-exec.js";
 import { evaluateChecks, type CheckedRun } from "./checks.js";
+import { createRedactor, redact, type SecretText } from "./redact.js";
+import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
+import {
+  describeStdin,
+  libraryRef,
+  secretLabel,
+  type RunStdin,
+  type StdinSource,
+} from "./stdin.js";
 
 export const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_OUTPUT_BYTES = 262_144;
 export const MAX_TOKEN_HOSTS = 500;
 /** How long Stop waits for the run to be written before it answers. */
 export const STOP_WAIT_MS = 5000;
+/** How long a failed delete of a closed runbook's secrets waits to retry. */
+export const REMOVE_RETRY_MS = 5 * 60 * 1000;
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
@@ -72,8 +93,17 @@ export function registerPersonRoutes(
   ctx: PluginContext,
   store: Store,
   live: LiveRuns,
+  secrets: Secrets,
 ): void {
   const actor = () => ctx.currentActor() as string;
+
+  /** The runbook as the page shows it. */
+  async function showRunbook(bundle: RunbookBundle) {
+    return personView(bundle, await hostNamer(), {
+      secretsAvailable: secrets.available(),
+      noSecrets: NO_SECRETS,
+    });
+  }
 
   /** A signed-in person: an acting user is set (core does this after login). */
   const signedIn = (req: Request, res: Response, next: NextFunction) => {
@@ -297,7 +327,8 @@ export function registerPersonRoutes(
     if (step.hostId === null || step.command === null) {
       throw new InputError("this step has no command to run", 400);
     }
-    const resolved = resolveStep(step, valuesObject(bundle.values));
+    const stdin = stepStdin(step, bundle.steps);
+    const resolved = resolveStep(step, valuesObject(bundle.values), stdin);
     if (input.revision !== step.revision) {
       throw new InputError("the step changed; reload", 409, { code: "stale" });
     }
@@ -375,14 +406,76 @@ export function registerPersonRoutes(
     if (!access.hasAccess) {
       throw new InputError("you cannot connect to this host", 403);
     }
+    // A secret this step captures has nowhere to go without the service.
+    if (step.secretCaptures.length > 0) await secrets.require();
     return {
       hostId: step.hostId,
       host,
       command: resolved.command!,
       hash: resolved.hash!,
+      stdin,
       /** Seconds of the wait the person chose to skip, if any. */
       skippedWait: waiting ? Math.ceil(waiting.remainingMs / 1000) : null,
     };
+  }
+
+  /**
+   * The bytes a Run writes to the command's standard input, read as the
+   * person who runs it, with what the run keeps of them (the source and the
+   * size) and the secret it read, if any. Refused with 409 when there is
+   * nothing to give.
+   */
+  async function readStdin(
+    step: StepRow,
+    bundle: RunbookBundle,
+    source: StdinSource,
+  ): Promise<{ bytes: Buffer; record: RunStdin; secret: SecretText | null }> {
+    const found = stdinText(
+      source,
+      step,
+      bundle.steps,
+      bundle.runsByStep,
+      valuesObject(bundle.values),
+    );
+    if (found && "problem" in found) {
+      throw new InputError(found.problem, 409, { code: "stdin-missing" });
+    }
+    let text: string;
+    let secret: SecretText | null = null;
+    if (found) {
+      text = found.text;
+    } else if (source.from === "secret") {
+      const name = secretLabel(source)!;
+      let value: string | null;
+      if ("name" in source) {
+        value = await secrets.getCaptured(step.runbookId, source.name);
+      } else {
+        const ref = libraryRef(source.library);
+        value = await secrets.getLibrary(ref.area, ref.name);
+      }
+      if (value === null || value === "") {
+        throw new InputError(
+          `secret ${name} is not there: it was never captured, it expired or it was deleted`,
+          409,
+          { code: "secret-missing", secret: name },
+        );
+      }
+      text = `${value}\n`;
+      secret = { name, value };
+    } else {
+      throw new InputError("this step has no input", 409, {
+        code: "stdin-missing",
+      });
+    }
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.length > MAX_OUTPUT_BYTES) {
+      throw new InputError(
+        `the input is ${Math.ceil(bytes.length / 1024)} KB; at most ${MAX_OUTPUT_BYTES / 1024} KB`,
+        409,
+        { code: "stdin-missing" },
+      );
+    }
+    return { bytes, record: { ...source, bytes: bytes.length }, secret };
   }
 
   /** Audits a start before the runbook's wait was over. */
@@ -413,38 +506,169 @@ export function registerPersonRoutes(
     outcome: "done" | "failed",
     output: string | null,
     patch: Partial<RunRow>,
-    checked?: CheckedRun,
-  ): Promise<"done" | "failed"> {
+    options: {
+      checked?: CheckedRun;
+      /** Secrets the step read: replaced in everything the run keeps. */
+      used?: SecretText[];
+    } = {},
+  ): Promise<{ final: "done" | "failed"; stored: string[] }> {
+    const used = options.used ?? [];
     const captures = applyCaptures(step.captures, output);
     const results =
-      checked && step.checks.length > 0
-        ? evaluateChecks(step.checks, checked, captures.values)
+      options.checked && step.checks.length > 0
+        ? evaluateChecks(step.checks, options.checked, captures.values)
         : null;
-    const final =
+    let final: "done" | "failed" =
       outcome === "done" && (results ?? []).every((check) => check.ok)
         ? "done"
         : "failed";
-    const errors = [patch.error, ...(final === "done" ? captures.errors : [])]
+    const problems: string[] = [];
+    // Secret values found in the output are replaced whatever the outcome;
+    // they are stored only from a run that ends done.
+    const found = findSecrets(step.secretCaptures, output);
+    const hide: SecretText[] = [
+      ...used,
+      ...Object.entries(found.values).map(([name, value]) => ({ name, value })),
+    ];
+    const stored: Array<{ name: string; expiresAt: string }> = [];
+    if (final === "done" && step.secretCaptures.length > 0) {
+      if (found.missing.length > 0) {
+        final = "failed";
+        problems.push(
+          ...found.missing.map((name) => `secret ${name}: no match`),
+        );
+      } else {
+        const expiresAt = new Date(Date.now() + SECRET_TTL_MS).toISOString();
+        for (const capture of step.secretCaptures) {
+          try {
+            await secrets.putCaptured(
+              step.runbookId,
+              capture.name,
+              found.values[capture.name],
+              expiresAt,
+            );
+            stored.push({ name: capture.name, expiresAt });
+          } catch (error) {
+            final = "failed";
+            problems.push(
+              `secret ${capture.name}: could not be stored: ${
+                error instanceof Error ? error.message : "failed"
+              }`,
+            );
+            break;
+          }
+        }
+        if (final === "failed") {
+          // A step that failed leaves no secret for a later step.
+          for (const secret of stored.splice(0)) {
+            await secrets
+              .removeCaptured(step.runbookId, secret.name)
+              .catch(() => false);
+          }
+        }
+      }
+    }
+    const errors = [
+      patch.error,
+      ...problems,
+      ...(final === "done" ? captures.errors : []),
+    ]
       .filter(Boolean)
       .join("; ");
     const at = now();
+    const kept = (text: string | null | undefined) =>
+      text === undefined ? undefined : redact(text, hide);
+    const usedNames = used.map((secret) => secret.name);
     await store.updateRun(runId, {
       ...patch,
+      stdout: kept(patch.stdout),
+      stderr: kept(patch.stderr),
+      pastedOutput: kept(patch.pastedOutput),
       status: final,
       finishedAt: at,
-      captured: final === "done" ? captures.values : {},
+      captured:
+        final === "done"
+          ? Object.fromEntries(
+              Object.entries(captures.values).map(([name, value]) => [
+                name,
+                redact(value, hide),
+              ]),
+            )
+          : {},
       checks: results,
-      error: errors || null,
+      error: errors ? redact(errors, hide) : null,
+      ...(usedNames.length || stored.length
+        ? { secrets: { used: usedNames, captured: stored } }
+        : {}),
     });
     await store.updateStep(step.id, {
       status: final,
       skipReason: null,
       endedAt: at,
     });
-    await store.touchRunbook(step.runbookId);
+    await store.touchRunbook(
+      step.runbookId,
+      stored.length ? { secretsStoredAt: at } : {},
+    );
     await store.persist();
-    return final;
+    return { final, stored: stored.map((secret) => secret.name) };
   }
+
+  /** When to try again to delete a closed runbook's secrets. */
+  const removeRetryAt = new Map<number, number>();
+
+  /**
+   * Deletes the secrets a done or abandoned runbook captured, as the person
+   * of this request (who needs Use secrets). Tried again on later reads
+   * when it fails, at most every 5 minutes; OpenBao Secrets deletes what is
+   * left when it expires. Returns whether it deleted them.
+   */
+  async function removeSecrets(
+    req: Request,
+    runbook: RunbookRow,
+    steps: StepRow[],
+    force = false,
+  ): Promise<boolean> {
+    if (runbook.status === "open" || !secretsPending(runbook, steps)) {
+      return false;
+    }
+    if (!secrets.available()) return false;
+    if (!force && (removeRetryAt.get(runbook.id) ?? 0) > Date.now()) {
+      return false;
+    }
+    const line = {
+      action: "runbooks_secrets_remove",
+      resourceType: "runbooks_runbook",
+      resourceId: String(runbook.id),
+      resourceName: runbook.title.slice(0, 200),
+      request: req,
+    };
+    try {
+      const count = await secrets.removeRunbook(runbook.id);
+      await store.touchRunbook(runbook.id, { secretsRemovedAt: now() });
+      await store.persist();
+      removeRetryAt.delete(runbook.id);
+      await ctx.audit.record({
+        ...line,
+        details: `runbook ${runbook.id} is ${runbook.status}: deleted ${count} captured secrets`,
+        success: true,
+      });
+      return true;
+    } catch (error) {
+      removeRetryAt.set(runbook.id, Date.now() + REMOVE_RETRY_MS);
+      await ctx.audit.record({
+        ...line,
+        details: `runbook ${runbook.id} is ${runbook.status}: could not delete its captured secrets`,
+        success: false,
+        errorMessage: error instanceof Error ? error.message : "failed",
+      });
+      return false;
+    }
+  }
+
+  /** ", stored secret a, b" for an audit line: names only. */
+  const storedNote = (names: string[]) =>
+    names.length ? `, stored secret ${names.join(", ")}` : "";
 
   async function audit(
     req: Request,
@@ -478,11 +702,14 @@ export function registerPersonRoutes(
   router.get(
     "/runbooks",
     ...use,
-    wrap(async () => {
+    wrap(async (req) => {
       const rows = await store.listRunbooks({});
       const out: ReturnType<typeof runbookSummary>[] = [];
       for (const runbook of rows) {
-        out.push(runbookSummary(runbook, await store.listSteps(runbook.id)));
+        const steps = await store.listSteps(runbook.id);
+        // A runbook an agent closed still has its secrets: delete them now.
+        await removeSecrets(req, runbook, steps);
+        out.push(runbookSummary(runbook, steps));
       }
       const order = { open: 0, done: 1, abandoned: 2 } as const;
       return out.sort((a, b) => order[a.status] - order[b.status]);
@@ -502,9 +729,13 @@ export function registerPersonRoutes(
   router.get(
     "/runbooks/:id",
     ...use,
-    wrap(async (req) =>
-      personView(await bundleFor(idParam(req)), await hostNamer()),
-    ),
+    wrap(async (req) => {
+      const id = idParam(req);
+      const bundle = await bundleFor(id);
+      return (await removeSecrets(req, bundle.runbook, bundle.steps))
+        ? showRunbook(await bundleFor(id))
+        : showRunbook(bundle);
+    }),
   );
 
   /**
@@ -524,7 +755,10 @@ export function registerPersonRoutes(
       await bundleFor(id);
       await store.touchRunbook(id, { status: parseStatus(body(req).status) });
       await store.persist();
-      return personView(await bundleFor(id), await hostNamer());
+      const closed = await bundleFor(id);
+      // Done or abandoned: the secrets it captured are deleted now.
+      await removeSecrets(req, closed.runbook, closed.steps, true);
+      return showRunbook(await bundleFor(id));
     }),
   );
 
@@ -561,6 +795,9 @@ export function registerPersonRoutes(
         if (!target.host.hostKeyFingerprint) {
           throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
         }
+        const input = target.stdin
+          ? await readStdin(step, bundle, target.stdin)
+          : null;
         await auditSkippedWait(req, step, target.skippedWait);
         const startedAt = now();
         const runId = await store.insertRun({
@@ -581,6 +818,11 @@ export function registerPersonRoutes(
           timedOut: false,
           pastedOutput: null,
           error: null,
+          stdin: input?.record ?? null,
+          startedEarlySeconds: target.skippedWait,
+          secrets: input?.secret
+            ? { used: [input.secret.name], captured: [] }
+            : null,
         });
         await store.touchRunbook(step.runbookId);
         await store.persist();
@@ -592,7 +834,18 @@ export function registerPersonRoutes(
         });
         // Started inside the request, so it keeps acting as this person
         // after the answer is sent.
-        record.done = execute(req, runId, step, target, release);
+        record.done = execute(
+          req,
+          runId,
+          step,
+          {
+            hostId: target.hostId,
+            command: target.command,
+            stdin: input?.bytes,
+            used: input?.secret ? [input.secret] : [],
+          },
+          release,
+        );
         handedOff = true;
         return shownRun(runId);
       } finally {
@@ -610,11 +863,32 @@ export function registerPersonRoutes(
     req: Request,
     runId: number,
     step: StepRow,
-    target: { hostId: number; command: string },
+    target: {
+      hostId: number;
+      command: string;
+      /** Written to the command's standard input, then ended. */
+      stdin?: Buffer;
+      /** Secrets the step reads: replaced in its output. */
+      used: SecretText[];
+    },
     release: () => void,
   ): Promise<void> {
     const record = live.get(runId)!;
-    const where = `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}`;
+    const where = `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}${
+      target.used.length
+        ? `, read secret ${target.used.map((secret) => secret.name).join(", ")}`
+        : ""
+    }`;
+    // A value split across two pieces of output is still replaced.
+    const redactors = {
+      stdout: createRedactor(target.used),
+      stderr: createRedactor(target.used),
+    };
+    // A secret this step captures is known only once the output is
+    // complete, so its output is not shown or written before the end.
+    const held = step.secretCaptures.length > 0;
+    record.held = held;
+    const raw = { stdout: "", stderr: "" };
     let connection: { client: ExecClient; dispose: () => void } | null = null;
     try {
       let result: Awaited<ReturnType<typeof streamExec>["result"]>;
@@ -635,8 +909,16 @@ export function registerPersonRoutes(
           const handle = streamExec(connection.client, target.command, {
             timeoutMs: step.timeoutMs ?? LIMITS.timeoutDefault,
             maxOutputBytes: MAX_OUTPUT_BYTES,
-            onOutput: (stream, text) => live.output(runId, stream, text),
+            onOutput: (stream, text) => {
+              if (held) {
+                raw[stream] += text;
+                live.heard(runId);
+              } else {
+                live.output(runId, stream, redactors[stream].push(text));
+              }
+            },
             onTruncate: () => live.truncated(runId),
+            stdin: target.stdin,
           });
           record.stop = handle.stop;
           result = await handle.result;
@@ -645,14 +927,21 @@ export function registerPersonRoutes(
         const message = error instanceof Error ? error.message : String(error);
         await live.settle(runId);
         const partial = live.get(runId)!;
-        await finishRun(runId, step, "failed", null, {
-          stdout: partial.stdout,
-          stderr: partial.stderr,
-          truncated: partial.truncated,
-          error: record.stoppedBy
-            ? `stopped by ${record.stoppedBy}`
-            : (record.interrupted ?? message),
-        });
+        await finishRun(
+          runId,
+          step,
+          "failed",
+          held ? raw.stdout : null,
+          {
+            stdout: held ? raw.stdout : partial.stdout,
+            stderr: held ? raw.stderr : partial.stderr,
+            truncated: partial.truncated,
+            error: record.stoppedBy
+              ? `stopped by ${record.stoppedBy}`
+              : (record.interrupted ?? message),
+          },
+          { used: target.used },
+        );
         await audit(req, "runbooks_step_run", step, where, false, message);
         return;
       }
@@ -679,14 +968,17 @@ export function registerPersonRoutes(
             : record.interrupted,
         },
         {
-          mode: "exec",
-          exitCode: result.code,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          pastedOutput: null,
+          checked: {
+            mode: "exec",
+            exitCode: result.code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            pastedOutput: null,
+          },
+          used: target.used,
         },
       );
-      const ok = outcome === "done";
+      const ok = outcome.final === "done";
       await audit(
         req,
         "runbooks_step_run",
@@ -699,7 +991,7 @@ export function registerPersonRoutes(
               : `exit ${result.code ?? "none"}${
                   exited && !ok ? ", checks failed" : ""
                 }`
-        }`,
+        }${storedNote(outcome.stored)}`,
         ok,
       );
     } catch (error) {
@@ -780,6 +1072,14 @@ export function registerPersonRoutes(
     wrap(async (req) =>
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
+        const stdin = stepStdin(step, bundle.steps);
+        if (stdin) {
+          throw new InputError(
+            `This step gets input from ${describeStdin(stdin)}: use Run`,
+            409,
+            { code: "stdin-run-only" },
+          );
+        }
         const target = await checkRunnable(step, bundle, body(req));
         await auditSkippedWait(req, step, target.skippedWait);
         const runId = await store.insertRun({
@@ -787,6 +1087,7 @@ export function registerPersonRoutes(
           runbookId: step.runbookId,
           mode: "terminal",
           status: "awaiting-output",
+          startedEarlySeconds: target.skippedWait,
           hostId: target.hostId,
           command: target.command,
           commandHash: target.hash,
@@ -845,28 +1146,37 @@ export function registerPersonRoutes(
           `pastedOutput must be text of at most ${MAX_OUTPUT_BYTES} characters`,
         );
       }
+      if (outcome === "done" && pasted.trim() === "") {
+        throw new InputError(
+          "paste at least one line of the output to mark the run done",
+        );
+      }
       const exitCode = input.exitCode ?? null;
       if (exitCode !== null && !Number.isInteger(exitCode)) {
         throw new InputError("exitCode must be an integer or null");
       }
       const step = await store.getStep(run.stepId);
       if (!step) throw new InputError("step not found", 404);
-      const final = await finishRun(
+      const { final, stored } = await finishRun(
         run.id,
         step,
         outcome,
         pasted,
         { pastedOutput: pasted, exitCode: exitCode as number | null },
-        // Mark done tests the checks on what was pasted; Mark failed does not.
-        outcome === "done"
-          ? {
-              mode: "terminal",
-              exitCode: exitCode as number | null,
-              stdout: null,
-              stderr: null,
-              pastedOutput: pasted,
-            }
-          : undefined,
+        {
+          // Mark done tests the checks on what was pasted; Mark failed
+          // does not.
+          checked:
+            outcome === "done"
+              ? {
+                  mode: "terminal",
+                  exitCode: exitCode as number | null,
+                  stdout: null,
+                  stderr: null,
+                  pastedOutput: pasted,
+                }
+              : undefined,
+        },
       );
       await audit(
         req,
@@ -874,11 +1184,89 @@ export function registerPersonRoutes(
         step,
         `runbook ${step.runbookId} step ${step.position} marked ${outcome}${
           final !== outcome ? ", checks failed" : ""
-        }`,
+        }${storedNote(stored)}`,
         true,
       );
       return store.getRun(run.id);
     }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/manual:
+   *   post:
+   *     summary: Mark a step with no command done or failed
+   *     description: >
+   *       Body { outcome: done|failed, note? }. Records a run in mode manual
+   *       with who, when, the outcome and the note. Refused with 400 for a
+   *       step that has a command. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The runbook }
+   */
+  router.post(
+    "/steps/:id/manual",
+    ...act,
+    wrap(async (req) =>
+      claimed(idParam(req), async (stepId) => {
+        const { step, bundle } = await stepContext(stepId);
+        if (bundle.runbook.status !== "open") {
+          throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
+        }
+        if (step.hostId !== null || step.command !== null) {
+          throw new InputError(
+            "this step has a command: use Run or Send to terminal",
+          );
+        }
+        const input = body(req);
+        const outcome = input.outcome;
+        if (outcome !== "done" && outcome !== "failed") {
+          throw new InputError("outcome must be done or failed");
+        }
+        const note = input.note ?? "";
+        if (typeof note !== "string" || note.length > LIMITS.ownerNote) {
+          throw new InputError(
+            `note must be text of at most ${LIMITS.ownerNote} characters`,
+          );
+        }
+        const at = now();
+        await store.insertRun({
+          stepId: step.id,
+          runbookId: step.runbookId,
+          mode: "manual",
+          status: outcome,
+          hostId: null,
+          command: "",
+          commandHash: "",
+          userId: actor(),
+          startedAt: at,
+          finishedAt: at,
+          exitCode: null,
+          stdout: null,
+          stderr: null,
+          truncated: false,
+          timedOut: false,
+          pastedOutput: null,
+          error: null,
+          note: note.trim() === "" ? null : note,
+        });
+        await store.updateStep(step.id, {
+          status: outcome,
+          skipReason: null,
+          endedAt: at,
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
+        await audit(
+          req,
+          "runbooks_step_manual",
+          step,
+          `runbook ${step.runbookId} step ${step.position} marked ${outcome} by hand`,
+          true,
+        );
+        return showRunbook(await bundleFor(step.runbookId));
+      }),
+    ),
   );
 
   /**
@@ -907,7 +1295,7 @@ export function registerPersonRoutes(
       await store.touchRunbook(step.runbookId);
       await store.persist();
       await audit(req, "runbooks_step_skip", step, reason.slice(0, 500), true);
-      return personView(await bundleFor(step.runbookId), await hostNamer());
+      return showRunbook(await bundleFor(step.runbookId));
     }),
   );
 
@@ -932,7 +1320,7 @@ export function registerPersonRoutes(
       });
       await store.touchRunbook(step.runbookId);
       await store.persist();
-      return personView(await bundleFor(step.runbookId), await hostNamer());
+      return showRunbook(await bundleFor(step.runbookId));
     }),
   );
 
@@ -984,7 +1372,7 @@ export function registerPersonRoutes(
       await store.updateStep(step.id, { hideOutputFromAgents: hidden });
       await store.touchRunbook(step.runbookId);
       await store.persist();
-      return personView(await bundleFor(step.runbookId), await hostNamer());
+      return showRunbook(await bundleFor(step.runbookId));
     }),
   );
 

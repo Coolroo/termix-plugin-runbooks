@@ -11,6 +11,7 @@ The agent can never run anything. It only proposes and reads.
 3. Give the people who make agent tokens the **Manage Runbooks tokens** permission. Admins have it by default.
 4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. Only SSH hosts are listed: a remote desktop host (RDP, VNC, a console) cannot run a command. The token is shown once: copy it into your agent's secret store.
 5. Point the agent at the API or the MCP endpoint. See [Agent API and MCP](agent-api.md).
+6. Optional, for secrets: install the OpenBao Secrets plugin and connect it to OpenBao. Give the people who run steps that use secrets its **Use secrets** permission. Without it, everything else works and steps that use secrets are refused. See [Secrets](#secrets).
 
 ## Run a runbook
 
@@ -22,6 +23,7 @@ A runbook shows its summary, its values and its steps in order. The next pending
 
 - what to do and why, written by the agent
 - the host and the exact command, with every `{{value}}` already filled in, and a Copy button
+- where its standard input comes from, if it has one, and the secrets it captures, if any
 - what you should see when it works, and the checks Runbooks tests on the output, if the agent set any
 - its latest run (who, when, exit code, output) and any earlier runs
 - a notes box, saved when you leave it; the agent can read it
@@ -49,7 +51,7 @@ If any check fails, the step is Failed even when the command exited 0, and a red
 
 ### Wait timers
 
-A step can ask you to wait after the step before it ended, for example two minutes after a restart. Until the step before it has ended, the step says "Waits 2 min after step 3". Once it has ended, the step counts down, "Wait 1:42 before you start", with the agent's reason, and **Run** and **Send to terminal** look greyed out. They still work: before the end they ask "Start anyway?", and a start before the end is recorded in the audit log. At zero the step says "You can start now".
+A step can ask you to wait after the step before it ended, for example two minutes after a restart. Until the step before it has ended, the step says "Waits 2 min after step 3". Once it has ended, the step counts down, "Wait 1:42 before you start", with the agent's reason, and **Run** and **Send to terminal** look greyed out. They still work: before the end they ask one question, "The wait is not over: 1:42 left (reason)", with the command. **Cancel** has the focus, so Enter or Esc cancels; **Start anyway** starts the step. A start before the end is recorded in the audit log, and the run shows "started 36 s early" in the step's history. At zero the step says "You can start now".
 
 The timer starts when the step before it last ended: its run finished, or you marked it done or skipped it. Reopening that step stops the timer until it ends again.
 
@@ -57,11 +59,38 @@ The timer starts when the step before it last ended: its run finished, or you ma
 
 **Send to terminal** types the command into a terminal to that host in one click, without pressing Enter, and brings that terminal to the front. Press Enter yourself, then paste the output into the box under the step and press **Mark done** or **Mark failed**.
 
+**Mark done** needs at least one line of pasted output: it stays greyed out until you paste. **Mark failed** works with an empty box.
+
 It uses a connected terminal to the host when one is open, the one on screen first. With none open, it opens one, waits for it to connect (up to 30 seconds), and then types the command. If the terminal does not connect in time, nothing is recorded: copy the command instead. The only questions it asks are the repeat and order questions below.
+
+### Steps with no command
+
+A step with no command (text to read, or something to do by hand) has **Done** and **Failed** buttons instead of Run. Either one records a run with who, when, the outcome and your note from the step's **Notes** box, and the step becomes Done or Failed. Agents read it like any other run.
+
+### Standard input
+
+A step can get its command's standard input from:
+
+- the output of an earlier step (its standard output or standard error, from its latest finished run; for a step sent to a terminal, the output you pasted)
+- a value, with one newline after it
+- a secret: one an earlier step of this runbook captured, or one of yours or a shared one from the OpenBao Secrets library
+
+The step says where it comes from: "Standard input: output of step 3 (stdout, 1.2 KB)", "value build_id" or "secret api_token (hidden)". The Run confirm shows the same, and the first 200 characters of a step's output or a value; never a secret. **Run** writes it to the command and then ends the input, so a command such as `docker login --password-stdin` or `jq .` reads it.
+
+**Send to terminal** is off for such a step ("This step gets input from …: use Run"): Runbooks cannot type into a command's standard input there. Run is refused while the input is not there yet: the earlier step has not run, its last run failed (unless the agent allowed that), or the secret was never captured, expired or was deleted.
+
+### Secrets
+
+A step can capture a secret from its output, for example a token that a command creates. When its run ends done, Runbooks stores the secret in OpenBao, through the OpenBao Secrets plugin, for 7 days. A later step reads it as standard input, so you never copy it from one command to the next. If the step's pattern finds nothing, the step fails with "secret api_token: no match".
+
+- The secret is never shown. Wherever its value would show in output (the step that made it, and every step that reads it), you see `[secret:api_token]`. The output of a step that captures a secret shows when its run ends, not while it runs.
+- The step lists each secret it captures: "stored in OpenBao until <time>" or "not stored".
+- When you mark the runbook **Done** or **Abandon** it, its secrets are deleted. When an agent closes it, they are deleted the next time someone with **Use secrets** opens the Runbooks tab. Anything left expires after 7 days.
+- Running such a step needs the OpenBao Secrets plugin, connected, and its **Use secrets** permission. Without them the step says "Install and connect the OpenBao Secrets plugin to use secrets" and does not run.
 
 ### Skip, reopen and hide
 
-- **Skip** (or **Mark read** for a step with no command) records an optional reason.
+- **Skip** records an optional reason. Every pending step has it.
 - **Reopen** puts a step back to pending. Its runs stay in the history.
 - **Hide output from agents** replaces the step's output, and values captured from it, with `[hidden by owner]` wherever an agent reads them. Use it for steps that print secrets.
 - **Mark done** or **Abandon** at the top closes the runbook. Closed runbooks cannot run steps until reopened.
@@ -70,7 +99,9 @@ It uses a connected terminal to the host when one is open, the one on screen fir
 
 - **Repeats.** A step that already ran, or a command that ran on the same host in the last 24 hours on any runbook, needs an explicit **Run again**. The question shows who ran it last, when, and the exit code.
 - **Order.** A step that comes after a pending step needs **Run out of order**.
-- **Wait.** A step whose wait timer has not ended needs **Start anyway**.
+- **Wait.** A step whose wait timer has not ended needs **Start anyway**, in one question with **Cancel** first.
+- **Standard input.** A step whose input is not there yet (an earlier step that has not run or failed, a value with no value, a secret that is gone) cannot run, and says why. A change of where the input comes from counts as a change of the step.
+- **Secrets.** A step that uses a secret needs the OpenBao Secrets plugin and its Use secrets permission.
 - **Changes.** If the agent changed the step or a value since you loaded the page, the run is refused and the page reloads, so you never run a command you did not see.
 - **Missing values.** A step whose `{{value}}` has no value yet cannot run. It names the missing values.
 - **Host keys.** **Run** refuses a host whose key Termix has not stored yet. Open a terminal to that host once, accept its key, and run the step again.
@@ -83,5 +114,5 @@ A command can use `{{name}}`. The value comes from the runbook's values: the one
 ## More
 
 - [Agent API and MCP](agent-api.md): the endpoints, the MCP tools, and how to have an agent write runbooks
-- [Security](security.md): what an agent can and cannot do, and the checks on every run
+- [Security](security.md): what an agent can and cannot do, the checks on every run, and where secrets live
 - [FAQ and limits](faq.md)

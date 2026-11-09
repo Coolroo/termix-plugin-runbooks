@@ -19,6 +19,10 @@ export interface ExecChannel {
   close: () => unknown;
   /** Sends a signal to the command. Many servers ignore it without a pty. */
   signal?: (name: string) => unknown;
+  /** Writes to the command's standard input. */
+  write?: (data: Buffer) => unknown;
+  /** Ends the command's standard input (EOF). */
+  end?: () => unknown;
 }
 
 /** The parts of an ssh2 Client this module uses. */
@@ -37,6 +41,11 @@ export interface StreamExecOptions {
   onOutput?: (stream: StreamName, text: string) => void;
   /** Called once when output first goes past the cap. */
   onTruncate?: () => void;
+  /**
+   * Written to the command's standard input once it starts, which is then
+   * ended. Without it, standard input is left open, as before 1.2.0.
+   */
+  stdin?: Buffer;
 }
 
 export interface StreamExecResult {
@@ -188,6 +197,14 @@ export function streamExec(
       opened.on("close", ((code: number | null | undefined) =>
         finish(typeof code === "number" ? code : null)) as never);
       opened.on("error", ((streamError: Error) => fail(streamError)) as never);
+      if (options.stdin !== undefined) {
+        try {
+          if (options.stdin.length > 0) opened.write?.(options.stdin);
+          opened.end?.();
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
     });
   } catch (error) {
     fail(error instanceof Error ? error : new Error(String(error)));

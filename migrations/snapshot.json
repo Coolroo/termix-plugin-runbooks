@@ -46,6 +46,12 @@
         "revision": {
           "type": "integer",
           "notNull": true
+        },
+        "secretsStoredAt": {
+          "type": "timestamp"
+        },
+        "secretsRemovedAt": {
+          "type": "timestamp"
         }
       },
       "indexes": [
@@ -130,6 +136,12 @@
         },
         "endedAt": {
           "type": "timestamp"
+        },
+        "stdin": {
+          "type": "text"
+        },
+        "secretCaptures": {
+          "type": "text"
         },
         "revision": {
           "type": "integer",
@@ -231,6 +243,18 @@
         },
         "checks": {
           "type": "text"
+        },
+        "stdin": {
+          "type": "text"
+        },
+        "secrets": {
+          "type": "text"
+        },
+        "note": {
+          "type": "text"
+        },
+        "startedEarlySeconds": {
+          "type": "integer"
         }
       },
       "indexes": [

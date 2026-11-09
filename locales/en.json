@@ -56,7 +56,8 @@
     "run": "Run",
     "send": "Send to terminal",
     "skip": "Skip",
-    "markRead": "Mark read",
+    "done": "Done",
+    "failed": "Failed",
     "reopen": "Reopen",
     "skipReason": "Why skip it? (optional)",
     "skippedBecause": "Skipped: {{reason}}",
@@ -75,6 +76,11 @@
     "earlier": "Earlier runs ({{count}})",
     "byExec": "Run by {{user}} at {{time}}",
     "byTerminal": "Sent to a terminal by {{user}} at {{time}}",
+    "manualDone": "Marked done by {{user}} at {{time}}",
+    "manualFailed": "Marked failed by {{user}} at {{time}}",
+    "note": "Note: {{note}}",
+    "startedEarly": "started {{time}} early",
+    "pasteFirst": "Paste the output first: at least one line.",
     "exit": "exit {{code}}",
     "truncated": "Output cut",
     "timedOut": "Timed out",
@@ -173,9 +179,26 @@
     "later": "Waits {{time}} after step {{position}}",
     "running": "Wait {{time}} before you start",
     "over": "You can start now",
-    "confirmTitle": "The wait is not over",
-    "confirm": "The runbook says to wait {{time}} more. Start anyway?",
-    "confirmReason": "The runbook says to wait {{time}} more ({{reason}}). Start anyway?",
+    "early": "The wait is not over: {{time}} left",
+    "earlyReason": "The wait is not over: {{time}} left ({{reason}})",
     "anyway": "Start anyway"
+  },
+  "stdin": {
+    "label": "Standard input: {{source}}",
+    "fromStep": "output of step {{position}} ({{stream}})",
+    "fromStepSize": "output of step {{position}} ({{stream}}, {{size}})",
+    "value": "value {{name}}",
+    "secret": "secret {{name}} (hidden)",
+    "secretWarning": "The command gets this secret on its standard input: check what it does with it before you run it.",
+    "useRun": "This step gets input from {{source}}: use Run"
+  },
+  "secrets": {
+    "captures": "Captures secret {{name}}",
+    "stored": "stored in OpenBao until {{time}}",
+    "notStored": "not stored",
+    "held": "The output shows when the run ends: this step captures a secret.",
+    "runUsed": "Read secret: {{names}}",
+    "runStored": "Stored secret: {{names}}",
+    "confirm": "Captures secret {{names}}: kept in OpenBao for 7 days, never shown."
   }
 }

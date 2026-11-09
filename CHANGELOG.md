@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- Standard input for a step. Agents set `stdin` on a step: the standard output or standard error of an earlier step's latest finished run (`{ "from": "step", "step": 2, "stream": "stdout" }`, with `allowFailed` to take a failed run's output), a value (`{ "from": "value", "name": "build_id" }`, with one newline), or a secret (`{ "from": "secret", "name": "api_token" }` captured earlier in the runbook, or `{ "from": "secret", "library": "shared/<name>" }` and `mine/<name>` from the OpenBao Secrets library, read as the person who runs it). Run writes it to the command's standard input and ends it; at most 256 KB. The step and the Run confirm say where it comes from ("Standard input: output of step 3 (stdout, 1.2 KB)"), with the first 200 characters of a step or value input and never a secret. The approved hash covers the source. Send to terminal is off for such a step. A Run is refused with 409 `stdin-missing` while the input is not there yet.
+- Secret captures. Agents set `secretCaptures` on a step (at most 10, the same pattern rules as captures). When its run, or a terminal Mark done, ends done, each match is stored in OpenBao through the OpenBao Secrets plugin, in Runbooks' own area, for 7 days; a pattern that matches nothing fails the step with "secret <name>: no match". A later step reads it as standard input. Secrets never appear in commands.
+- Secret values a step captures or reads are replaced by `[secret:<name>]` in its standard output, standard error, pasted output and captured values before anything is stored or shown, also when a value is split across two pieces of live output. The output of a step that captures a secret shows when its run ends.
+- A runbook's secrets are deleted when a person marks it done or abandoned, or on the next read by a person after an agent closed it; the rest expire after 7 days.
+- Agents read secrets as `{ name, step, set, expiresAt }` on the runbook, and each run's `stdin` (source and size) and `secrets` (names read and stored), in the agent API and MCP. The MCP tools explain `stdin` and `secretCaptures` with an example.
+- The OpenBao Secrets service (`openbao-secrets.store` `^1.0.0`) is an optional requirement. Without it, steps that use secrets are refused with "Install and connect the OpenBao Secrets plugin to use secrets"; people who run them need its Use secrets permission.
+- Done and Failed buttons for a step with no command, the size of Run. A click records a run in mode `manual` with who, when, the outcome and the step's note; agents see it like other runs.
+- Runs keep `startedEarlySeconds` when a person started before the step's wait timer ended; the run history shows "started 36 s early" and agents see the field.
+
+### Changed
+
+- Skip is a separate small button on every pending step, always labelled Skip. "Mark read" is gone: use Done.
+- Mark done on a terminal run needs at least one line of pasted output; the server refuses an empty paste with 400.
+- An early start on a wait timer asks one question, "The wait is not over: m:ss left (reason)", with the command, Cancel focused and Start anyway as a warning, instead of a Run confirm and then a second question.
+
 ## 1.1.0
 
 ### Added

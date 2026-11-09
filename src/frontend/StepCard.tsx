@@ -9,16 +9,27 @@ import {
 } from "@termix-ssh/plugin-sdk/ui";
 import { describeCheck } from "../shared/checks";
 import { Markdown } from "./Markdown";
-import type { Check, CheckResult, Run, Step, StepWait } from "./types";
+import type {
+  Check,
+  CheckResult,
+  Run,
+  StdinSource,
+  Step,
+  SecretState,
+  StepWait,
+} from "./types";
 
 export interface StepActions {
-  run: (step: Step) => void;
+  /** `waitLeftMs`: the step's wait timer still runs, this long. */
+  run: (step: Step, waitLeftMs?: number) => void;
   stop: (step: Step) => void;
-  send: (step: Step) => void;
+  send: (step: Step, waitLeftMs?: number) => void;
   skip: (step: Step, reason: string) => void;
   reopen: (step: Step) => void;
   saveNote: (step: Step, note: string) => void;
   setHidden: (step: Step, hidden: boolean) => void;
+  /** Records a step with no command as done or failed, with a note. */
+  manual: (step: Step, outcome: "done" | "failed", note: string) => void;
   complete: (
     run: Run,
     pasted: string,
@@ -131,6 +142,37 @@ export function formatDuration(ms: number): string {
     : `${minutes}:${seconds}`;
 }
 
+/** 7 -> "7 B", 1229 -> "1.2 KB", 3 MB -> "3.0 MB". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * "output of step 3 (stdout, 1.2 KB)", "value build_id", "secret api_token
+ * (hidden)": where a step's standard input comes from, never what it is.
+ */
+export function describeStdin(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  source: StdinSource,
+  bytes: number | null = null,
+): string {
+  if (source.from === "step") {
+    return bytes === null
+      ? t("stdin.fromStep", { position: source.step, stream: source.stream })
+      : t("stdin.fromStepSize", {
+          position: source.step,
+          stream: source.stream,
+          size: formatBytes(bytes),
+        });
+  }
+  if (source.from === "value") return t("stdin.value", { name: source.name });
+  return t("stdin.secret", {
+    name: "name" in source ? source.name : source.library,
+  });
+}
+
 /** 45 -> "45 s", 120 -> "2 min", 90 -> "1 min 30 s", 3900 -> "1 h 5 min". */
 export function formatWait(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -234,7 +276,12 @@ function LiveRun({ run }: { run: Run }) {
           </span>
         )}
       </div>
-      {!run.stdout && !run.stderr && (
+      {run.outputHeld && (
+        <p className="mt-1 text-muted-foreground" data-output-held>
+          {t("secrets.held")}
+        </p>
+      )}
+      {!run.outputHeld && !run.stdout && !run.stderr && (
         <p className="mt-1 text-muted-foreground">{t("run.noOutputYet")}</p>
       )}
       <LiveOutput label={t("run.stdout")} text={run.stdout ?? ""} />
@@ -302,10 +349,19 @@ function RunDetails({
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
         <ListBadge tone={tone}>{t(`run.status.${run.status}`)}</ListBadge>
         <span>
-          {t(run.mode === "exec" ? "run.byExec" : "run.byTerminal", {
-            user: run.userId,
-            time: formatTime(run.startedAt),
-          })}
+          {t(
+            run.mode === "manual"
+              ? run.status === "done"
+                ? "run.manualDone"
+                : "run.manualFailed"
+              : run.mode === "exec"
+                ? "run.byExec"
+                : "run.byTerminal",
+            {
+              user: run.userId,
+              time: formatTime(run.startedAt),
+            },
+          )}
         </span>
         {run.exitCode !== null && (
           <span>{t("run.exit", { code: run.exitCode })}</span>
@@ -316,10 +372,33 @@ function RunDetails({
         {run.timedOut && (
           <ListBadge tone="destructive">{t("run.timedOut")}</ListBadge>
         )}
+        {run.startedEarlySeconds ? (
+          <span data-started-early>
+            <ListBadge tone="warning">
+              {t("run.startedEarly", {
+                time: formatWait(run.startedEarlySeconds),
+              })}
+            </ListBadge>
+          </span>
+        ) : null}
       </div>
-      <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
-        $ {run.command}
-      </pre>
+      {run.mode !== "manual" && (
+        <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
+          $ {run.command}
+        </pre>
+      )}
+      {run.note && (
+        <p className="mt-1 whitespace-pre-wrap" data-run-note>
+          {t("run.note", { note: run.note })}
+        </p>
+      )}
+      {run.stdin && (
+        <p className="mt-1 text-muted-foreground" data-run-stdin>
+          {t("stdin.label", {
+            source: describeStdin(t, run.stdin, run.stdin.bytes),
+          })}
+        </p>
+      )}
       {run.error && <p className="mt-1 text-destructive">{run.error}</p>}
       {run.running ? (
         <LiveRun run={run} />
@@ -330,6 +409,18 @@ function RunDetails({
         </>
       )}
       <Output label={t("run.pasted")} text={run.pastedOutput} />
+      {(run.secrets?.used.length ?? 0) > 0 && (
+        <p className="mt-1 text-muted-foreground" data-run-secrets-used>
+          {t("secrets.runUsed", { names: run.secrets!.used.join(", ") })}
+        </p>
+      )}
+      {(run.secrets?.captured.length ?? 0) > 0 && (
+        <p className="mt-1 text-muted-foreground" data-run-secrets-stored>
+          {t("secrets.runStored", {
+            names: run.secrets!.captured.map((entry) => entry.name).join(", "),
+          })}
+        </p>
+      )}
       {Object.keys(run.captured ?? {}).length > 0 && (
         <p className="mt-1 text-muted-foreground">
           {t("run.captured")}{" "}
@@ -358,6 +449,9 @@ function RunDetails({
             />
             <Button
               size="sm"
+              // Done needs what the terminal printed: one line at least.
+              disabled={pasted.trim() === ""}
+              title={pasted.trim() === "" ? t("run.pasteFirst") : undefined}
               onClick={() => onComplete(run, pasted, "done", enteredExit)}
             >
               {t("run.markDone")}
@@ -382,12 +476,15 @@ export function StepCard({
   runbookOpen,
   busy,
   actions,
+  secrets = [],
 }: {
   step: Step;
   isNext: boolean;
   runbookOpen: boolean;
   busy: boolean;
   actions: StepActions;
+  /** The secrets this step captures, and whether each is stored now. */
+  secrets?: SecretState[];
 }) {
   const { t } = useTranslation();
   const [note, setNote] = useState(step.ownerNote);
@@ -417,6 +514,15 @@ export function StepCard({
     step.resolvedCommand !== null &&
     step.missing.length === 0 &&
     step.commandHash !== null;
+  const stdin = step.stdin ?? null;
+  const stdinSource = stdin
+    ? describeStdin(t, stdin.source, stdin.bytes)
+    : null;
+  /** Send to terminal cannot give a command its standard input. */
+  const blocked = Boolean(stdin?.problem || step.secretsProblem);
+  const sendRefused = stdin
+    ? t("stdin.useRun", { source: describeStdin(t, stdin.source) })
+    : null;
 
   return (
     <section
@@ -460,6 +566,35 @@ export function StepCard({
           {step.missing.length > 0 && (
             <p className="mt-1 text-xs text-destructive">
               {t("step.missing", { names: step.missing.join(", ") })}
+            </p>
+          )}
+          {stdin && (
+            <p className="mt-1 text-xs text-muted-foreground" data-stdin>
+              {t("stdin.label", { source: stdinSource })}
+            </p>
+          )}
+          {secrets.map((secret) => (
+            <p
+              key={secret.name}
+              className="mt-1 text-xs text-muted-foreground"
+              data-secret={secret.name}
+              data-secret-set={secret.set}
+            >
+              {t("secrets.captures", { name: secret.name })}
+              {" · "}
+              {secret.set && secret.expiresAt
+                ? t("secrets.stored", { time: formatTime(secret.expiresAt) })
+                : t("secrets.notStored")}
+            </p>
+          ))}
+          {step.secretsProblem && (
+            <p className="mt-1 text-xs text-destructive" data-secrets-problem>
+              {step.secretsProblem}
+            </p>
+          )}
+          {stdin?.problem && (
+            <p className="mt-1 text-xs text-destructive" data-stdin-problem>
+              {stdin.problem}
             </p>
           )}
         </div>
@@ -549,8 +684,8 @@ export function StepCard({
                 variant={notYet ? "outline" : "default"}
                 className={cn(notYet && "opacity-60")}
                 data-not-yet={notYet || undefined}
-                disabled={!runnable || busy}
-                onClick={() => actions.run(step)}
+                disabled={!runnable || busy || blocked}
+                onClick={() => actions.run(step, notYet ? waitLeft : 0)}
               >
                 {t("step.run")}
               </Button>
@@ -559,13 +694,37 @@ export function StepCard({
                 variant="outline"
                 className={cn(notYet && "opacity-60")}
                 data-not-yet={notYet || undefined}
-                disabled={!runnable || busy}
-                onClick={() => actions.send(step)}
+                disabled={!runnable || busy || blocked || Boolean(sendRefused)}
+                title={sendRefused ?? undefined}
+                onClick={() => actions.send(step, notYet ? waitLeft : 0)}
               >
                 {t("step.send")}
               </Button>
             </>
           )}
+          {step.hostId === null &&
+            step.command === null &&
+            step.status === "pending" && (
+              <>
+                <Button
+                  size="sm"
+                  data-manual="done"
+                  disabled={busy}
+                  onClick={() => actions.manual(step, "done", note)}
+                >
+                  {t("step.done")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-manual="failed"
+                  disabled={busy}
+                  onClick={() => actions.manual(step, "failed", note)}
+                >
+                  {t("step.failed")}
+                </Button>
+              </>
+            )}
           {step.status === "pending" ? (
             <Button
               size="sm"
@@ -573,7 +732,7 @@ export function StepCard({
               disabled={busy}
               onClick={() => setSkipping(true)}
             >
-              {step.hostId === null ? t("step.markRead") : t("step.skip")}
+              {t("step.skip")}
             </Button>
           ) : (
             <Button
@@ -598,6 +757,12 @@ export function StepCard({
         </div>
       )}
 
+      {runbookOpen && sendRefused && step.status === "pending" && (
+        <p className="mt-1 text-xs text-muted-foreground" data-send-refused>
+          {sendRefused}
+        </p>
+      )}
+
       {skipping && (
         <div className="mt-2 flex flex-col gap-2">
           <Textarea
@@ -615,7 +780,7 @@ export function StepCard({
                 setReason("");
               }}
             >
-              {step.hostId === null ? t("step.markRead") : t("step.skip")}
+              {t("step.skip")}
             </Button>
             <Button
               size="sm"

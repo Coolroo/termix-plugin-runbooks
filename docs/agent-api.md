@@ -57,19 +57,21 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 
 ### A step
 
-| Field                      | Type            | What it is                                                                                  |
-| -------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
-| `title`                    | string          | Required. Up to 200 characters.                                                             |
-| `body`                     | markdown        | What to do and why, shown before the command.                                               |
-| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only).                           |
-| `command`                  | string or null  | The shell command. Needs `hostId`.                                                          |
-| `expect`                   | markdown        | What the person should see when it works.                                                   |
-| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.  |
-| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.            |
-| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                          |
-| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                 |
-| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers). |
-| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                        |
+| Field                      | Type            | What it is                                                                                         |
+| -------------------------- | --------------- | -------------------------------------------------------------------------------------------------- |
+| `title`                    | string          | Required. Up to 200 characters.                                                                    |
+| `body`                     | markdown        | What to do and why, shown before the command.                                                      |
+| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only).                                  |
+| `command`                  | string or null  | The shell command. Needs `hostId`.                                                                 |
+| `expect`                   | markdown        | What the person should see when it works.                                                          |
+| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.         |
+| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                   |
+| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                 |
+| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                        |
+| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).        |
+| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                               |
+| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).        |
+| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets). |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Add a new step instead.
 
@@ -132,6 +134,70 @@ Restart, then wait 120 s before the health check:
 ]
 ```
 
+### Standard input
+
+A command that reads its standard input gets it from one source, set as `stdin` on the step. **Run** writes it to the command and then ends the input. **Send to terminal** is refused for such a step (409 `stdin-run-only`), because nothing can be typed into a command's standard input there.
+
+| `stdin`                                                       | The input                                                                                                                           |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `{ "from": "step", "step": 2, "stream": "stdout" }`           | The standard output (or `stderr`) of the latest finished run of an earlier step, by position; for a terminal run, its pasted output |
+| `{ "from": "value", "name": "build_id" }`                     | The value, with one newline after it                                                                                                |
+| `{ "from": "secret", "name": "api_token" }`                   | A secret an earlier step of this runbook captured; see [Secrets](#secrets)                                                          |
+| `{ "from": "secret", "library": "shared/registry/password" }` | A secret from the OpenBao Secrets library: `mine/<name>` (the person's own) or `shared/<name>`, read as the person who runs it      |
+
+- `step` must be before the step. Runbooks keeps the step it names when steps move or are inserted; a step whose output another step reads cannot be removed, or moved after the reader.
+- The run is refused with 409 `stdin-missing` while that step has no finished run, or its last run failed. Add `"allowFailed": true` to the source to take the output of a failed run too. A step with no command has no output to give.
+- At most 256 KB.
+- The hash the person approves covers the source (not the input itself), so changing the source makes an open page stale.
+- Agents see the source, and on each run `stdin: { ...source, "bytes": 1229 }`, never the input.
+
+Read a config, then check it:
+
+```json
+"steps": [
+  { "title": "Read the config", "hostId": 3, "command": "cat /etc/app/config.json" },
+  { "title": "Check the version", "hostId": 3, "command": "jq -e '.version == \"2\"'",
+    "stdin": { "from": "step", "step": 1, "stream": "stdout" } }
+]
+```
+
+### Secrets
+
+A step can keep a secret its command prints, such as a new token, and a later step can read it as standard input. Nobody copies it, and **secrets never appear in commands**: there is no `{{secret}}` placeholder. A command reads a secret from its standard input (`--password-stdin`, `--token-stdin`, `read -r TOKEN`).
+
+`secretCaptures` works like `captures`: a JavaScript regular expression, in multiline mode, with exactly one capturing group, run on the standard output (or the pasted terminal output), with the same time limit. At most 10 per step, names like value names, up to 64 characters. When the run (or a terminal **Mark done**) ends done:
+
+- each match is stored through the OpenBao Secrets plugin, in Runbooks' own area, for 7 days
+- a pattern that matches nothing, or an empty match, fails the step with `secret api_token: no match`, so a later step never gets an empty secret
+- the value is replaced by `[secret:api_token]` in the step's standard output, standard error, pasted output and captured values before anything is stored, and so is every secret a step reads. The output of a step that captures a secret is held until its run ends: a running run has `outputHeld: true` and no output yet.
+
+A step that reads a secret by `name` needs an earlier step that captures it (400 otherwise). When the runbook is done or abandoned, its secrets are deleted.
+
+Step 2 creates a token; step 3 logs in with `--password-stdin` reading the secret:
+
+```json
+"steps": [
+  { "title": "Check the registry", "hostId": 3, "command": "curl -fsS https://registry.example.com/v2/" },
+  { "title": "Create a CI token", "hostId": 3, "command": "registry-admin token create --name ci",
+    "secretCaptures": [{ "name": "api_token", "pattern": "^token: (\\S+)$" }] },
+  { "title": "Log in", "hostId": 4,
+    "command": "docker login -u ci --password-stdin registry.example.com",
+    "stdin": { "from": "secret", "name": "api_token" } }
+]
+```
+
+You never get a value. A runbook in an answer lists its secrets by name:
+
+```json
+"secrets": [
+  { "name": "api_token", "step": 2, "set": true, "expiresAt": "2026-11-16T10:01:01.000Z" }
+]
+```
+
+`set` is false before the step captured it, after it was deleted, and once it expired. Each run says which secrets it read and stored, by name: `"secrets": { "used": ["api_token"], "captured": [] }`.
+
+Secrets need the OpenBao Secrets plugin, connected to OpenBao, and the person who runs the step needs its **Use secrets** permission. Without the plugin, a step that captures or reads a secret is refused with 409 `no-secrets`, "Install and connect the OpenBao Secrets plugin to use secrets". A secret that is not there is refused with 409 `secret-missing`.
+
 ### Example
 
 ```bash
@@ -190,11 +256,15 @@ A run in the answer looks like this:
       "detail": "the output contains 'syntax is ok'"
     }
   ],
+  "stdin": null,
+  "secrets": null,
+  "note": null,
+  "startedEarlySeconds": null,
   "captured": {}
 }
 ```
 
-`mode` is `exec` (run over SSH) or `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted). `status` is `running`, `awaiting-output`, `done` or `failed`.
+`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted) or `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
 
 While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. Agents cannot stop a run.
 
@@ -256,3 +326,4 @@ Good habits for the prompt:
 - Ask the agent to read `get_runbook` after you run steps, and to add new steps rather than change ones that ran.
 - Ask it to put names, paths and versions in values, so you can read them in one place.
 - Ask it to hide output that could hold secrets.
+- Ask it to pass secrets and earlier output with `stdin` and `secretCaptures`, never by putting them in a command, so you do not copy them from step to step.
