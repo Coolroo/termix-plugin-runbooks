@@ -54,6 +54,18 @@ const OWNER_SCHEMA = {
   },
 };
 
+const EVENTS_HELP =
+  "Runbooks records events: agent-turn (one of your agent steps became the next step: every earlier step ended), step-failed (a step ended failed; reason exit, check, stopped, interrupted, secret or manual), runbook-done (reason done or abandoned), sent (the person pressed Send to agent on a step, maybe with a note) and step-done (a step ended done; only when notify lists it). notify on a runbook lists the types the notification webhook delivers (default agent-turn, step-failed, runbook-done, sent; sent always goes). Events hold ids only: read the runbook for output and notes.";
+
+const NOTIFY_SCHEMA = {
+  type: ["array", "null"],
+  description: `Event types to deliver for this runbook. Null keeps the default. ${EVENTS_HELP}`,
+  items: {
+    type: "string",
+    enum: ["agent-turn", "step-failed", "runbook-done", "sent", "step-done"],
+  },
+};
+
 const STDIN_SCHEMA = {
   type: ["object", "null"],
   description: STDIN_HELP,
@@ -259,6 +271,7 @@ export const TOOLS = [
       properties: {
         title: { type: "string" },
         owner: OWNER_SCHEMA,
+        notify: NOTIFY_SCHEMA,
         summary: {
           type: "string",
           description: "Markdown: what the runbook does and why.",
@@ -282,6 +295,7 @@ export const TOOLS = [
       properties: {
         runbookId: ID("The runbook id."),
         owner: OWNER_SCHEMA,
+        notify: NOTIFY_SCHEMA,
         title: { type: "string" },
         summary: { type: "string" },
         values: { type: "object", additionalProperties: { type: "string" } },
@@ -341,6 +355,18 @@ export const TOOLS = [
       properties: {
         runbookId: ID("The runbook id."),
         stepIds: { type: "array", items: { type: "integer" } },
+      },
+    },
+  },
+  {
+    name: "list_events",
+    description: `List events of your runbooks, oldest first, after the event id since (default 0), at most limit (default 100, up to 500). Answers { events, next }: call again with since = next to read on. Each event has id, type, reason, runbookId, stepId, stepPosition, note (a sent event's note), createdBy, createdAt and openPath. get_runbook also lists a runbook's latest events, newest first. ${EVENTS_HELP}`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        since: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
       },
     },
   },
@@ -428,6 +454,8 @@ export async function callTool(
       });
     case "get_values":
       return ops.getValues(caller, int(args, "runbookId"));
+    case "list_events":
+      return ops.listEvents(caller, { since: args.since, limit: args.limit });
     case "complete_step":
       return ops.completeAgentStep(
         caller,

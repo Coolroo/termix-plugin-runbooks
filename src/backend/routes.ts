@@ -41,6 +41,7 @@ import { streamExec, type ExecClient } from "./stream-exec.js";
 import { evaluateChecks, type CheckedRun } from "./checks.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
+import { SYSTEM, type Events, type FailReason } from "./events.js";
 import {
   describeStdin,
   libraryRef,
@@ -97,6 +98,7 @@ export function registerPersonRoutes(
   store: Store,
   live: LiveRuns,
   secrets: Secrets,
+  events: Events,
 ): void {
   const actor = () => ctx.currentActor() as string;
 
@@ -516,6 +518,10 @@ export function registerPersonRoutes(
       checked?: CheckedRun;
       /** Secrets the step read: replaced in everything the run keeps. */
       used?: SecretText[];
+      /** Who ended it, for the events. */
+      by?: string;
+      /** Why it failed, when `outcome` is failed. */
+      reason?: FailReason;
     } = {},
   ): Promise<{ final: "done" | "failed"; stored: string[] }> {
     const used = options.used ?? [];
@@ -585,38 +591,50 @@ export function registerPersonRoutes(
     const kept = (text: string | null | undefined) =>
       text === undefined ? undefined : redact(text, hide);
     const usedNames = used.map((secret) => secret.name);
-    await store.updateRun(runId, {
-      ...patch,
-      stdout: kept(patch.stdout),
-      stderr: kept(patch.stderr),
-      pastedOutput: kept(patch.pastedOutput),
-      status: final,
-      finishedAt: at,
-      captured:
-        final === "done"
-          ? Object.fromEntries(
-              Object.entries(captures.values).map(([name, value]) => [
-                name,
-                redact(value, hide),
-              ]),
-            )
-          : {},
-      checks: results,
-      error: errors ? redact(errors, hide) : null,
-      ...(usedNames.length || stored.length
-        ? { secrets: { used: usedNames, captured: stored } }
-        : {}),
+    const reason: FailReason | null =
+      final === "done"
+        ? null
+        : outcome === "failed"
+          ? (options.reason ?? "exit")
+          : results && !results.every((check) => check.ok)
+            ? "check"
+            : "secret";
+    const by = options.by ?? ctx.currentActor() ?? SYSTEM;
+    await events.around(step.runbookId, by, async () => {
+      await store.updateRun(runId, {
+        ...patch,
+        stdout: kept(patch.stdout),
+        stderr: kept(patch.stderr),
+        pastedOutput: kept(patch.pastedOutput),
+        status: final,
+        finishedAt: at,
+        captured:
+          final === "done"
+            ? Object.fromEntries(
+                Object.entries(captures.values).map(([name, value]) => [
+                  name,
+                  redact(value, hide),
+                ]),
+              )
+            : {},
+        checks: results,
+        error: errors ? redact(errors, hide) : null,
+        ...(usedNames.length || stored.length
+          ? { secrets: { used: usedNames, captured: stored } }
+          : {}),
+      });
+      await store.updateStep(step.id, {
+        status: final,
+        skipReason: null,
+        endedAt: at,
+      });
+      await events.stepEnded(step, final, reason, by);
+      await store.touchRunbook(
+        step.runbookId,
+        stored.length ? { secretsStoredAt: at } : {},
+      );
+      await store.persist();
     });
-    await store.updateStep(step.id, {
-      status: final,
-      skipReason: null,
-      endedAt: at,
-    });
-    await store.touchRunbook(
-      step.runbookId,
-      stored.length ? { secretsStoredAt: at } : {},
-    );
-    await store.persist();
     return { final, stored: stored.map((secret) => secret.name) };
   }
 
@@ -758,9 +776,14 @@ export function registerPersonRoutes(
     ...act,
     wrap(async (req) => {
       const id = idParam(req);
-      await bundleFor(id);
-      await store.touchRunbook(id, { status: parseStatus(body(req).status) });
-      await store.persist();
+      const before = (await bundleFor(id)).runbook;
+      const status = parseStatus(body(req).status);
+      await events.around(id, actor(), async () => {
+        await store.touchRunbook(id, { status });
+        const after = (await store.getRunbook(id))!;
+        await events.statusChanged(after, before.status, actor());
+        await store.persist();
+      });
       const closed = await bundleFor(id);
       // Done or abandoned: the secrets it captured are deleted now.
       await removeSecrets(req, closed.runbook, closed.steps, true);
@@ -845,6 +868,7 @@ export function registerPersonRoutes(
           runId,
           step,
           {
+            by: actor(),
             hostId: target.hostId,
             command: target.command,
             stdin: input?.bytes,
@@ -870,6 +894,8 @@ export function registerPersonRoutes(
     runId: number,
     step: StepRow,
     target: {
+      /** The person who pressed Run. */
+      by: string;
       hostId: number;
       command: string;
       /** Written to the command's standard input, then ended. */
@@ -946,7 +972,15 @@ export function registerPersonRoutes(
               ? `stopped by ${record.stoppedBy}`
               : (record.interrupted ?? message),
           },
-          { used: target.used },
+          {
+            used: target.used,
+            by: target.by,
+            reason: record.stoppedBy
+              ? "stopped"
+              : record.interrupted
+                ? "interrupted"
+                : "exit",
+          },
         );
         await audit(req, "runbooks_step_run", step, where, false, message);
         return;
@@ -982,6 +1016,12 @@ export function registerPersonRoutes(
             pastedOutput: null,
           },
           used: target.used,
+          by: target.by,
+          reason: stopped
+            ? "stopped"
+            : record.interrupted
+              ? "interrupted"
+              : "exit",
         },
       );
       const ok = outcome.final === "done";
@@ -1185,6 +1225,8 @@ export function registerPersonRoutes(
                   pastedOutput: pasted,
                 }
               : undefined,
+          by: actor(),
+          reason: "manual",
         },
       );
       await audit(
@@ -1242,33 +1284,36 @@ export function registerPersonRoutes(
           );
         }
         const at = now();
-        await store.insertRun({
-          stepId: step.id,
-          runbookId: step.runbookId,
-          mode: "manual",
-          status: outcome,
-          hostId: null,
-          command: "",
-          commandHash: "",
-          userId: actor(),
-          startedAt: at,
-          finishedAt: at,
-          exitCode: null,
-          stdout: null,
-          stderr: null,
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          note: note.trim() === "" ? null : note,
+        await events.around(step.runbookId, actor(), async () => {
+          await store.insertRun({
+            stepId: step.id,
+            runbookId: step.runbookId,
+            mode: "manual",
+            status: outcome,
+            hostId: null,
+            command: "",
+            commandHash: "",
+            userId: actor(),
+            startedAt: at,
+            finishedAt: at,
+            exitCode: null,
+            stdout: null,
+            stderr: null,
+            truncated: false,
+            timedOut: false,
+            pastedOutput: null,
+            error: null,
+            note: note.trim() === "" ? null : note,
+          });
+          await store.updateStep(step.id, {
+            status: outcome,
+            skipReason: null,
+            endedAt: at,
+          });
+          await events.stepEnded(step, outcome, "manual", actor());
+          await store.touchRunbook(step.runbookId);
+          await store.persist();
         });
-        await store.updateStep(step.id, {
-          status: outcome,
-          skipReason: null,
-          endedAt: at,
-        });
-        await store.touchRunbook(step.runbookId);
-        await store.persist();
         await audit(
           req,
           "runbooks_step_manual",
@@ -1299,13 +1344,15 @@ export function registerPersonRoutes(
       if (typeof reason !== "string" || reason.length > LIMITS.ownerNote) {
         throw new InputError("reason must be short text");
       }
-      await store.updateStep(step.id, {
-        status: "skipped",
-        skipReason: reason,
-        endedAt: now(),
+      await events.around(step.runbookId, actor(), async () => {
+        await store.updateStep(step.id, {
+          status: "skipped",
+          skipReason: reason,
+          endedAt: now(),
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
       });
-      await store.touchRunbook(step.runbookId);
-      await store.persist();
       await audit(req, "runbooks_step_skip", step, reason.slice(0, 500), true);
       return showRunbook(await bundleFor(step.runbookId));
     }),
@@ -1325,13 +1372,15 @@ export function registerPersonRoutes(
     ...act,
     wrap(async (req) => {
       const { step } = await stepContext(idParam(req));
-      await store.updateStep(step.id, {
-        status: "pending",
-        skipReason: null,
-        endedAt: null,
+      await events.around(step.runbookId, actor(), async () => {
+        await store.updateStep(step.id, {
+          status: "pending",
+          skipReason: null,
+          endedAt: null,
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
       });
-      await store.touchRunbook(step.runbookId);
-      await store.persist();
       return showRunbook(await bundleFor(step.runbookId));
     }),
   );

@@ -269,6 +269,37 @@ export function createAgentRouter(
 
   /**
    * @openapi
+   * /plugin-api/runbooks/agent/events:
+   *   get:
+   *     summary: Events of this token's runbooks, oldest first after an id
+   *     description: >
+   *       agent-turn, step-failed, runbook-done, sent and step-done, with ids,
+   *       reasons and a sent event's note. For agents that poll, and for
+   *       receivers that missed a webhook. Answers { events, next }; pass
+   *       next as since to read on.
+   *     tags: [Runbooks agent]
+   *     parameters:
+   *       - in: query
+   *         name: since
+   *         schema: { type: integer, minimum: 0 }
+   *       - in: query
+   *         name: limit
+   *         schema: { type: integer, minimum: 1, maximum: 500 }
+   *     responses:
+   *       200: { description: The events }
+   */
+  router.get(
+    "/events",
+    wrap(async (req, res) =>
+      ops.listEvents(caller(res), {
+        since: req.query.since,
+        limit: req.query.limit,
+      }),
+    ),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/agent/mcp:
    *   post:
    *     summary: MCP over streamable HTTP (JSON-RPC 2.0, JSON answers)

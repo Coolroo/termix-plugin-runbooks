@@ -38,6 +38,16 @@ import type { LiveRuns } from "./live.js";
 import { StdinPositionError, storeStdin } from "./stdin.js";
 import { evaluateChecks } from "./checks.js";
 import { now } from "./store.js";
+import {
+  agentEvent,
+  createEvents,
+  effectiveNotify,
+  EVENTS_PAGE,
+  EVENTS_PAGE_MAX,
+  parseNotify,
+  RUNBOOK_EVENTS,
+  type Events,
+} from "./events.js";
 
 export interface AgentCaller {
   token: TokenRow;
@@ -60,9 +70,10 @@ export type AgentAudit = (line: {
 export function createAgentOps(
   store: Store,
   live?: LiveRuns,
-  options: { audit?: AgentAudit } = {},
+  options: { audit?: AgentAudit; events?: Events } = {},
 ) {
   const owner = (caller: AgentCaller) => caller.token.createdBy;
+  const events = options.events ?? createEvents(store);
 
   /**
    * The hosts this token may name in steps: the list a person chose when they
@@ -214,7 +225,65 @@ export function createAgentOps(
   async function getRunbook(caller: AgentCaller, runbookId: number) {
     await ownRunbook(caller, runbookId);
     const bundle = (await loadBundle(store, runbookId, live))!;
-    return agentView(bundle, await hostNamer(caller));
+    const positions = new Map(bundle.steps.map((s) => [s.id, s.position]));
+    const recent = await store.listEvents({
+      runbookId,
+      limit: RUNBOOK_EVENTS,
+      order: "newest",
+    });
+    return {
+      ...agentView(bundle, await hostNamer(caller)),
+      notify: effectiveNotify(bundle.runbook),
+      events: recent.map((event) => {
+        const {
+          openPath: _path,
+          runbookId: _id,
+          ...rest
+        } = agentEvent(event, positions);
+        return rest;
+      }),
+    };
+  }
+
+  /**
+   * Events of every runbook this token sees, oldest first after `since`:
+   * for an agent that polls, and for a receiver that missed a webhook.
+   */
+  async function listEvents(
+    caller: AgentCaller,
+    query: { since?: unknown; limit?: unknown } = {},
+  ) {
+    const number = (value: unknown, name: string, fallback: number) => {
+      if (value === undefined || value === null || value === "") {
+        return fallback;
+      }
+      const parsed = typeof value === "string" ? Number(value) : value;
+      if (!Number.isInteger(parsed) || (parsed as number) < 0) {
+        throw new InputError(`${name} must be a whole number`);
+      }
+      return parsed as number;
+    };
+    const since = number(query.since, "since", 0);
+    const limit = Math.min(
+      Math.max(number(query.limit, "limit", EVENTS_PAGE), 1),
+      EVENTS_PAGE_MAX,
+    );
+    const rows = await store.listEvents({
+      ownerUserId: owner(caller),
+      afterId: since,
+      limit,
+      order: "oldest",
+    });
+    const positions = new Map<number, number>();
+    for (const runbookId of new Set(rows.map((row) => row.runbookId))) {
+      for (const step of await store.listSteps(runbookId)) {
+        positions.set(step.id, step.position);
+      }
+    }
+    return {
+      events: rows.map((row) => agentEvent(row, positions)),
+      next: rows.length ? rows[rows.length - 1].id : since,
+    };
   }
 
   async function listRunbooks(
@@ -249,6 +318,7 @@ export function createAgentOps(
     const summary = parseSummary(raw.summary);
     const values = parseValues(raw.values);
     const runbookOwner = parseOwner(raw.owner);
+    const notify = parseNotify(raw.notify);
     const steps = parseSteps(raw.steps);
     if (steps.length > LIMITS.stepsPerRunbook) {
       throw new InputError(
@@ -266,6 +336,7 @@ export function createAgentOps(
       createdBy: caller.token.name,
       createdByUserId: owner(caller),
       owner: runbookOwner,
+      notify,
     });
     const ids: number[] = [];
     for (const [index, step] of steps.entries()) {
@@ -292,19 +363,30 @@ export function createAgentOps(
     }
     const raw = input as Record<string, unknown>;
     for (const key of Object.keys(raw)) {
-      if (!["title", "summary", "values", "status", "owner"].includes(key)) {
+      if (
+        !["title", "summary", "values", "status", "owner", "notify"].includes(
+          key,
+        )
+      ) {
         throw new InputError(`unknown field "${key}"`);
       }
     }
-    await store.touchRunbook(runbookId, {
+    const patch = {
       title: raw.title === undefined ? undefined : parseTitle(raw.title),
       summary:
         raw.summary === undefined ? undefined : parseSummary(raw.summary),
       values: raw.values === undefined ? undefined : parseValues(raw.values),
       status: raw.status === undefined ? undefined : parseStatus(raw.status),
       owner: raw.owner === undefined ? undefined : parseOwner(raw.owner),
+      notify: raw.notify === undefined ? undefined : parseNotify(raw.notify),
+    };
+    const before = await ownRunbook(caller, runbookId);
+    await events.around(runbookId, caller.token.name, async () => {
+      await store.touchRunbook(runbookId, patch);
+      const after = (await store.getRunbook(runbookId))!;
+      await events.statusChanged(after, before.status, caller.token.name);
+      await store.persist();
     });
-    await store.persist();
     return getRunbook(caller, runbookId);
   }
 
@@ -611,34 +693,47 @@ export function createAgentOps(
         ? "done"
         : "failed";
     const at = now();
-    await store.insertRun({
-      stepId: step.id,
-      runbookId: runbook.id,
-      mode: "agent",
-      status: final,
-      hostId: null,
-      command: step.command ?? "",
-      commandHash: "",
-      userId: caller.token.name,
-      startedAt: at,
-      finishedAt: at,
-      exitCode: null,
-      stdout: parsed.output,
-      stderr: null,
-      truncated: false,
-      timedOut: false,
-      pastedOutput: null,
-      error: null,
-      note: parsed.note,
-      checks: results,
+    const by = caller.token.name;
+    await events.around(runbook.id, by, async () => {
+      await store.insertRun({
+        stepId: step.id,
+        runbookId: runbook.id,
+        mode: "agent",
+        status: final,
+        hostId: null,
+        command: step.command ?? "",
+        commandHash: "",
+        userId: caller.token.name,
+        startedAt: at,
+        finishedAt: at,
+        exitCode: null,
+        stdout: parsed.output,
+        stderr: null,
+        truncated: false,
+        timedOut: false,
+        pastedOutput: null,
+        error: null,
+        note: parsed.note,
+        checks: results,
+      });
+      await store.updateStep(step.id, {
+        status: final,
+        skipReason: null,
+        endedAt: at,
+      });
+      await events.stepEnded(
+        step,
+        final,
+        final === "done"
+          ? null
+          : parsed.outcome === "failed"
+            ? "manual"
+            : "check",
+        by,
+      );
+      await store.touchRunbook(runbook.id);
+      await store.persist();
     });
-    await store.updateStep(step.id, {
-      status: final,
-      skipReason: null,
-      endedAt: at,
-    });
-    await store.touchRunbook(runbook.id);
-    await store.persist();
     await options.audit?.({
       action: "runbooks_step_agent_complete",
       resourceType: "runbooks_step",
@@ -670,6 +765,7 @@ export function createAgentOps(
     reorderSteps,
     getValues,
     completeAgentStep,
+    listEvents,
   };
 }
 

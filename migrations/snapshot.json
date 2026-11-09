@@ -55,6 +55,9 @@
         },
         "owner": {
           "type": "text"
+        },
+        "notify": {
+          "type": "text"
         }
       },
       "indexes": [
@@ -329,6 +332,81 @@
         }
       },
       "indexes": []
+    },
+    "events": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "runbookId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "stepId": {
+          "type": "integer"
+        },
+        "ownerUserId": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "type": {
+          "type": "varchar",
+          "length": 24,
+          "notNull": true
+        },
+        "reason": {
+          "type": "varchar",
+          "length": 24
+        },
+        "note": {
+          "type": "text"
+        },
+        "createdBy": {
+          "type": "varchar",
+          "length": 255,
+          "notNull": true
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "deliveredAt": {
+          "type": "timestamp"
+        },
+        "attempts": {
+          "type": "integer",
+          "notNull": true
+        },
+        "nextAttemptAt": {
+          "type": "timestamp"
+        },
+        "lastError": {
+          "type": "text"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_events_runbook",
+          "columns": [
+            "runbookId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_events_owner",
+          "columns": [
+            "ownerUserId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_events_due",
+          "columns": [
+            "nextAttemptAt"
+          ]
+        }
+      ]
     }
   }
 }

@@ -10,6 +10,7 @@ import {
 } from "./live.js";
 import { registerPersonRoutes } from "./routes.js";
 import { createSecrets } from "./secrets.js";
+import { createEvents } from "./events.js";
 import { createStore } from "./store.js";
 
 /** Requests a minute one address may make to the agent routes (core's limit). */
@@ -19,8 +20,9 @@ let active: LiveRuns | null = null;
 
 export async function activate(ctx: PluginContext) {
   const store = await createStore(ctx.db);
+  const events = createEvents(store);
   // Runs a stopped Termix left running never finish: fail them first.
-  await sweepInterrupted(store);
+  await sweepInterrupted(store, events);
   const live = createLiveRuns(store);
   active = live;
   // OpenBao Secrets is optional: without it, steps that use secrets are
@@ -28,6 +30,7 @@ export async function activate(ctx: PluginContext) {
   const secrets = createSecrets(ctx);
   const ops = createAgentOps(store, live, {
     audit: (line) => ctx.audit.record(line),
+    events,
   });
 
   const router = ctx.http.router<Router>({
@@ -39,7 +42,7 @@ export async function activate(ctx: PluginContext) {
 
   const agent = createAgentRouter(ctx, store, ops, ctx.manifest.version);
   router.use("/agent", agent.router);
-  registerPersonRoutes(router, ctx, store, live, secrets);
+  registerPersonRoutes(router, ctx, store, live, secrets, events);
 }
 
 export async function deactivate() {

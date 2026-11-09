@@ -8,13 +8,17 @@ import {
   asc,
   desc,
   eq,
+  gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
+  lte,
   type SQL,
 } from "drizzle-orm";
 import type { PluginDatabase } from "@termix-ssh/plugin-sdk/backend";
 import {
+  events as eventsDef,
   runbooks as runbooksDef,
   runs as runsDef,
   steps as stepsDef,
@@ -69,6 +73,25 @@ export interface RunbookRow {
   secretsRemovedAt: string | null;
   /** Who the runbook belongs to (1.3.0); null: nobody said. */
   owner: RunbookOwner | null;
+  /** Event types the agent wants delivered (1.3.0); null: the default. */
+  notify: string[] | null;
+}
+
+/** Something that happened to a runbook (1.3.0). */
+export interface EventRow {
+  id: number;
+  runbookId: number;
+  stepId: number | null;
+  ownerUserId: string;
+  type: string;
+  reason: string | null;
+  note: string | null;
+  createdBy: string;
+  createdAt: string;
+  deliveredAt: string | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
 }
 
 export interface StepRow {
@@ -173,6 +196,30 @@ function toRunbook(row: Record<string, unknown>): RunbookRow {
     secretsRemovedAt:
       (row.secretsRemovedAt as string | null | undefined) ?? null,
     owner: parseJson<RunbookOwner | null>(row.owner, null),
+    notify: parseJson<string[] | null>(row.notify, null),
+  };
+}
+
+function toEvent(row: Record<string, unknown>): EventRow {
+  const optional = (value: unknown) =>
+    value === null || value === undefined ? null : String(value);
+  return {
+    id: Number(row.id),
+    runbookId: Number(row.runbookId),
+    stepId:
+      row.stepId === null || row.stepId === undefined
+        ? null
+        : Number(row.stepId),
+    ownerUserId: String(row.ownerUserId),
+    type: String(row.type),
+    reason: optional(row.reason),
+    note: optional(row.note),
+    createdBy: String(row.createdBy),
+    createdAt: String(row.createdAt),
+    deliveredAt: optional(row.deliveredAt),
+    attempts: Number(row.attempts),
+    nextAttemptAt: optional(row.nextAttemptAt),
+    lastError: optional(row.lastError),
   };
 }
 
@@ -275,6 +322,7 @@ export async function createStore(db: PluginDatabase) {
   const steps: Table = await db.define(stepsDef);
   const runs: Table = await db.define(runsDef);
   const tokens: Table = await db.define(tokensDef);
+  const events: Table = await db.define(eventsDef);
   const client = (): Promise<Drizzle> => db.client<Drizzle>();
 
   /** Inserts one row and returns its id. MySQL has no RETURNING. */
@@ -333,9 +381,11 @@ export async function createStore(db: PluginDatabase) {
     createdBy: string;
     createdByUserId: string;
     owner?: RunbookOwner | null;
+    notify?: string[] | null;
   }): Promise<number> {
     const at = now();
     return insertId(runbooks, {
+      notify: input.notify ? JSON.stringify(input.notify) : null,
       title: input.title,
       summary: input.summary,
       status: "open",
@@ -360,6 +410,7 @@ export async function createStore(db: PluginDatabase) {
       secretsStoredAt: string;
       secretsRemovedAt: string;
       owner: RunbookOwner | null;
+      notify: string[] | null;
     }> = {},
   ): Promise<void> {
     const current = await getRunbook(id);
@@ -380,6 +431,9 @@ export async function createStore(db: PluginDatabase) {
     }
     if (patch.owner !== undefined) {
       set.owner = patch.owner ? JSON.stringify(patch.owner) : null;
+    }
+    if (patch.notify !== undefined) {
+      set.notify = patch.notify ? JSON.stringify(patch.notify) : null;
     }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
   }
@@ -679,8 +733,96 @@ export async function createStore(db: PluginDatabase) {
     return true;
   }
 
+  async function insertEvent(
+    input: Omit<
+      EventRow,
+      "id" | "deliveredAt" | "attempts" | "lastError" | "createdAt"
+    >,
+  ): Promise<number> {
+    return insertId(events, {
+      ...input,
+      createdAt: now(),
+      deliveredAt: null,
+      attempts: 0,
+      lastError: null,
+    });
+  }
+
+  async function getEvent(id: number): Promise<EventRow | null> {
+    if (!Number.isInteger(id)) return null;
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+    return rows[0] ? toEvent(rows[0]) : null;
+  }
+
+  /**
+   * Events of one runbook (newest first), or of one person's runbooks after
+   * an id (oldest first, for an agent that polls).
+   */
+  async function listEvents(filter: {
+    runbookId?: number;
+    ownerUserId?: string;
+    afterId?: number;
+    limit: number;
+    order: "newest" | "oldest";
+  }): Promise<EventRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(events.runbookId, filter.runbookId));
+    }
+    if (filter.ownerUserId !== undefined) {
+      conditions.push(eq(events.ownerUserId, filter.ownerUserId));
+    }
+    if (filter.afterId !== undefined) {
+      conditions.push(gt(events.id, filter.afterId));
+    }
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(filter.order === "newest" ? desc(events.id) : asc(events.id))
+      .limit(filter.limit);
+    return rows.map(toEvent);
+  }
+
+  /** Events whose delivery is due at `at`, oldest first. */
+  async function dueEvents(at: string, limit: number): Promise<EventRow[]> {
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(
+        and(isNotNull(events.nextAttemptAt), lte(events.nextAttemptAt, at)),
+      )
+      .orderBy(asc(events.id))
+      .limit(limit);
+    return rows.map(toEvent);
+  }
+
+  async function updateEvent(
+    id: number,
+    patch: Partial<
+      Pick<EventRow, "deliveredAt" | "attempts" | "nextAttemptAt" | "lastError">
+    >,
+  ): Promise<void> {
+    await (await client()).update(events).set(patch).where(eq(events.id, id));
+  }
+
   return {
     persist: (lazy = false) => db.persist(lazy ? { lazy: true } : undefined),
+    insertEvent,
+    getEvent,
+    listEvents,
+    dueEvents,
+    updateEvent,
     getRunbook,
     listRunbooks,
     createRunbook,

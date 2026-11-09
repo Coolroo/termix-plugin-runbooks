@@ -43,6 +43,9 @@ export const runbooks = defineTable(
     // JSON { task?, agent?, label? }: the agent and task the runbook belongs
     // to, set by the agent (1.3.0). Null: no owner.
     owner: text(),
+    // JSON array of the event types the agent wants delivered (1.3.0).
+    // Null: the default list.
+    notify: text(),
   },
   {
     indexes: [
@@ -167,5 +170,45 @@ export const tokens = defineTable(
   {},
 );
 
+/*
+ * What happened to a runbook that an agent may want to hear about (1.3.0):
+ * agent-turn, step-failed, runbook-done, sent and step-done. Ids and labels
+ * only; a note is kept only on a "sent" event. The delivery columns say
+ * whether the webhook got it: nextAttemptAt is set while a delivery is due,
+ * and cleared when it was delivered or given up.
+ */
+export const events = defineTable(
+  "events",
+  {
+    id: id(),
+    runbookId: integer().notNull(),
+    // Null for an event about the whole runbook.
+    stepId: integer(),
+    // The runbook's createdByUserId: the agent API lists events by it.
+    ownerUserId: varchar(255).notNull(),
+    type: varchar(24).notNull(),
+    // step-failed: exit | check | stopped | interrupted | secret | manual;
+    // runbook-done: done | abandoned. Null otherwise.
+    reason: varchar(24),
+    // The person's note on a "sent" event, up to 500 characters.
+    note: text(),
+    // A person's user id, a token name, or "termix".
+    createdBy: varchar(255).notNull(),
+    createdAt: timestamp().notNull(),
+    deliveredAt: timestamp(),
+    attempts: integer().notNull(),
+    nextAttemptAt: timestamp(),
+    // Why the last delivery failed: short, never a secret.
+    lastError: text(),
+  },
+  {
+    indexes: [
+      { name: "idx_p_runbooks_events_runbook", columns: ["runbookId"] },
+      { name: "idx_p_runbooks_events_owner", columns: ["ownerUserId"] },
+      { name: "idx_p_runbooks_events_due", columns: ["nextAttemptAt"] },
+    ],
+  },
+);
+
 // termix-plugin migrations reads this list.
-export const tables = [runbooks, steps, runs, tokens];
+export const tables = [runbooks, steps, runs, tokens, events];
