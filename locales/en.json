@@ -71,7 +71,18 @@
     "agentBadge": "Agent step",
     "agentWaiting": "Waiting for the agent ({{label}})",
     "agentCommand": "What the agent will run",
-    "agentCommandOn": "What the agent will run on {{host}}"
+    "agentCommandOn": "What the agent will run on {{host}}",
+    "sendToAgent": "Send to agent"
+  },
+  "sendAgent": {
+    "title": "Send step {{position}} to {{label}}?",
+    "hint": "The agent is told to look at this step. It reads your note in Runbooks; the notice itself carries no output or note.",
+    "notePlaceholder": "Note for the agent (optional)",
+    "count": "{{count}}/{{max}}",
+    "send": "Send",
+    "sent": "Sent to {{label}}",
+    "history": "Sent to the agent by {{user}} at {{time}}",
+    "historyNote": "Sent to the agent by {{user}} at {{time}}, with a note:"
   },
   "run": {
     "confirmTitle": "Run step {{position}}?",

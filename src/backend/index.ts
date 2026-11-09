@@ -52,7 +52,7 @@ export async function activate(ctx: PluginContext) {
 
   const agent = createAgentRouter(ctx, store, ops, ctx.manifest.version);
   router.use("/agent", agent.router);
-  registerPersonRoutes(router, ctx, store, live, secrets, events);
+  registerPersonRoutes(router, ctx, store, live, secrets, events, notifier);
   registerAdminRoutes(router, ctx, notifier, state);
   // Retries, and anything that was due while Termix was down.
   notifier.start();

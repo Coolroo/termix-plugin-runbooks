@@ -12,6 +12,7 @@ The agent can never run anything. It only proposes and reads.
 4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. Only SSH hosts are listed: a remote desktop host (RDP, VNC, a console) cannot run a command. The token is shown once: copy it into your agent's secret store.
 5. Point the agent at the API or the MCP endpoint. See [Agent API and MCP](agent-api.md).
 6. Optional, for secrets: install the OpenBao Secrets plugin and connect it to OpenBao. Give the people who run steps that use secrets its **Use secrets** permission. Without it, everything else works and steps that use secrets are refused. See [Secrets](#secrets).
+7. Optional, for agents that should hear about events: an admin turns on **Notify agents** in the plugin's settings, with a webhook address and a signing secret. See [Agent notifications](notifications.md).
 
 ## Run a runbook
 
@@ -67,6 +68,16 @@ It uses a connected terminal to the host when one is open, the one on screen fir
 
 A step with no command (text to read, or something to do by hand) has **Done** and **Failed** buttons instead of Run. Either one records a run with who, when, the outcome and your note from the step's **Notes** box, and the step becomes Done or Failed. Agents read it like any other run.
 
+### Agent steps
+
+A step the agent does itself (read a dashboard, change a file, wait for a pipeline) is marked **Agent step** and says **Waiting for the agent** with the agent's name. It has no Run, Send to terminal or Done: Termix never runs it, and a command on it only says what the agent will run. When every step before it has ended, the agent ends it, done or failed, with a note and its output, which show in the step's history. You can **Skip** it (with a reason) or **Reopen** it.
+
+The line under the runbook's title says which agent it belongs to and its task, such as "Agent: Lead agent · task T-176".
+
+### Send to agent
+
+When an admin has turned on [agent notifications](notifications.md) and the runbook says which agent it belongs to, every step has **Send to agent**. It asks "Send step N to <agent>?" with an optional note of up to 500 characters, and tells the agent to look at that step. The step's history shows "Sent to the agent by <you>", with the note. Use it to point the agent at an output, or to ask for the next steps.
+
 ### Standard input
 
 A step can get its command's standard input from:
@@ -114,5 +125,6 @@ A command can use `{{name}}`. The value comes from the runbook's values: the one
 ## More
 
 - [Agent API and MCP](agent-api.md): the endpoints, the MCP tools, and how to have an agent write runbooks
+- [Agent notifications](notifications.md): the webhook, its payload and how to check its signature
 - [Security](security.md): what an agent can and cannot do, the checks on every run, and where secrets live
 - [FAQ and limits](faq.md)

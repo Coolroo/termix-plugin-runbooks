@@ -77,6 +77,18 @@ Paste the terminal output first: Mark done needs at least one line of it. If the
 
 Press **Done** or **Failed**. The note in the step's Notes box goes with it. **Skip** is there too, for a step you do not do.
 
+## Why can't I run a step that says "Waiting for the agent"?
+
+It is an agent step: work the agent does itself, outside Termix. Termix never runs it, so it has no Run, Send to terminal or Done. The agent ends it when every step before it has ended. If you did the work yourself, **Skip** it with a reason. If the agent got it wrong, **Reopen** it and the agent can end it again.
+
+## Why is there no Send to agent button?
+
+It shows only when an admin has turned on agent notifications ([Agent notifications](notifications.md)) and the runbook says which agent it belongs to (its owner). Ask the agent to set its owner, or ask an admin to turn notifications on.
+
+## Does Send to agent send the output to the agent?
+
+No. The notification says only which runbook and step, and that there is a note. The agent reads the step, its output and your note with its own token, so output you hid from agents stays hidden.
+
 ## Limits
 
 - Output: at most 256 KB of standard output and of standard error is kept per run; a run that went over is marked "Output cut".
@@ -89,4 +101,6 @@ Press **Done** or **Failed**. The note in the step's Notes box goes with it. **S
 - The hash that binds a run to what you saw covers the host id and the command, not the host's address or login. A host edited in Termix between loading the page and running still runs the shown command on the edited host.
 - Rate limits are kept in memory and reset when Termix restarts.
 - MCP: JSON answers only, no event stream or sessions.
+- Agent steps: a note of up to 2000 characters and output of up to 64 KB. Send to agent: a note of up to 500 characters.
+- Notifications: 10 seconds per request; retries after 1, 5, 30 and 120 minutes, then given up.
 - The endpoint list in Agent tokens uses the browser's address and does not add a base path.

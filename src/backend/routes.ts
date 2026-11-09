@@ -41,7 +41,12 @@ import { streamExec, type ExecClient } from "./stream-exec.js";
 import { evaluateChecks, type CheckedRun } from "./checks.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
-import { SYSTEM, type Events, type FailReason } from "./events.js";
+import {
+  MAX_SENT_NOTE,
+  SYSTEM,
+  type Events,
+  type FailReason,
+} from "./events.js";
 import {
   describeStdin,
   libraryRef,
@@ -99,14 +104,24 @@ export function registerPersonRoutes(
   live: LiveRuns,
   secrets: Secrets,
   events: Events,
+  notify: { enabled: () => Promise<boolean> },
 ): void {
   const actor = () => ctx.currentActor() as string;
 
   /** The runbook as the page shows it. */
   async function showRunbook(bundle: RunbookBundle) {
+    const sent = (
+      await store.listEvents({
+        runbookId: bundle.runbook.id,
+        limit: 1000,
+        order: "newest",
+      })
+    ).filter((event) => event.type === "sent");
     return personView(bundle, await hostNamer(), {
       secretsAvailable: secrets.available(),
       noSecrets: NO_SECRETS,
+      notifyEnabled: await notify.enabled(),
+      sent,
     });
   }
 
@@ -1409,6 +1424,67 @@ export function registerPersonRoutes(
       await store.touchRunbook(step.runbookId);
       await store.persist();
       return { ok: true };
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/send-to-agent:
+   *   post:
+   *     summary: Send a step to the runbook's agent, with an optional note
+   *     description: >
+   *       Body { note? } (up to 500 characters). Records a "sent" event,
+   *       which the notification webhook always delivers. Needs agent
+   *       notifications on and a runbook with an owner. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The runbook }
+   *       409: { description: Notifications are off, or the runbook has no owner }
+   */
+  router.post(
+    "/steps/:id/send-to-agent",
+    ...act,
+    wrap(async (req) => {
+      const { step, bundle } = await stepContext(idParam(req));
+      const raw = body(req).note ?? "";
+      if (typeof raw !== "string" || raw.length > MAX_SENT_NOTE) {
+        throw new InputError(
+          `note must be text of at most ${MAX_SENT_NOTE} characters`,
+        );
+      }
+      if (!(await notify.enabled())) {
+        throw new InputError(
+          "agent notifications are off; an admin turns them on in the plugin's settings",
+          409,
+          { code: "notify-off" },
+        );
+      }
+      if (!bundle.runbook.owner) {
+        throw new InputError(
+          "this runbook does not say which agent it belongs to",
+          409,
+          { code: "no-owner" },
+        );
+      }
+      const note = raw.trim() ? raw : null;
+      await events.record({
+        runbook: bundle.runbook,
+        stepId: step.id,
+        type: "sent",
+        note,
+        by: actor(),
+      });
+      await store.persist();
+      await audit(
+        req,
+        "runbooks_step_sent",
+        step,
+        `runbook ${step.runbookId} step ${step.position} sent to the agent${
+          note ? ", with a note" : ""
+        }`,
+        true,
+      );
+      return showRunbook(await bundleFor(step.runbookId));
     }),
   );
 

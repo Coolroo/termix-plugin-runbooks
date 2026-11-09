@@ -5,6 +5,7 @@
  */
 
 import type {
+  EventRow,
   NewStep,
   RunRow,
   RunbookOwner,
@@ -807,6 +808,10 @@ export interface ViewOptions {
   secretsAvailable?: boolean;
   /** Why a step that uses secrets cannot run without it. */
   noSecrets?: string;
+  /** Whether agent notifications are on (1.3.0). */
+  notifyEnabled?: boolean;
+  /** The runbook's "sent" events, newest first (1.3.0). */
+  sent?: EventRow[];
 }
 
 /**
@@ -866,6 +871,9 @@ export function personView(
     nextStepId: next?.id ?? null,
     owner: runbook.owner,
     agentLabel: agentLabel(runbook),
+    notifyEnabled: Boolean(options.notifyEnabled),
+    // Send to agent needs notifications on and an agent to send to.
+    canSendToAgent: Boolean(options.notifyEnabled && runbook.owner),
     secretsAvailable: Boolean(options.secretsAvailable),
     secrets: secretStates(bundle),
     steps: steps.map((step) => {
@@ -888,6 +896,15 @@ export function personView(
         missing: resolved.missing,
         wait: waitState(step, steps, runsByStep),
         runs: runsByStep.get(step.id) ?? [],
+        // Each time a person sent this step to the agent, with the note.
+        sent: (options.sent ?? [])
+          .filter((event) => event.stepId === step.id)
+          .map((event) => ({
+            id: event.id,
+            createdBy: event.createdBy,
+            createdAt: event.createdAt,
+            note: event.note,
+          })),
       };
     }),
   };

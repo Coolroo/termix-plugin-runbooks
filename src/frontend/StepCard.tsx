@@ -30,6 +30,8 @@ export interface StepActions {
   setHidden: (step: Step, hidden: boolean) => void;
   /** Records a step with no command as done or failed, with a note. */
   manual: (step: Step, outcome: "done" | "failed", note: string) => void;
+  /** Asks for a note and sends the step to the runbook's agent (1.3.0). */
+  sendToAgent: (step: Step) => void;
   complete: (
     run: Run,
     pasted: string,
@@ -482,6 +484,7 @@ export function StepCard({
   actions,
   secrets = [],
   agentLabel = "",
+  canSendToAgent = false,
 }: {
   step: Step;
   isNext: boolean;
@@ -492,6 +495,8 @@ export function StepCard({
   secrets?: SecretState[];
   /** Who the runbook belongs to, for an agent step. */
   agentLabel?: string;
+  /** Agent notifications are on and the runbook has an owner. */
+  canSendToAgent?: boolean;
 }) {
   const { t } = useTranslation();
   const [note, setNote] = useState(step.ownerNote);
@@ -691,9 +696,9 @@ export function StepCard({
         </p>
       )}
 
-      {runbookOpen && (
+      {(runbookOpen || canSendToAgent) && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {running && (
+          {runbookOpen && running && (
             <Button
               size="sm"
               variant="destructive"
@@ -703,7 +708,7 @@ export function StepCard({
               {t("step.stop")}
             </Button>
           )}
-          {agentStep && step.status === "pending" && (
+          {runbookOpen && agentStep && step.status === "pending" && (
             <span
               className="self-center text-xs text-muted-foreground"
               data-agent-waiting
@@ -711,32 +716,38 @@ export function StepCard({
               {t("step.agentWaiting", { label: agentLabel })}
             </span>
           )}
-          {!agentStep && step.hostId !== null && step.command !== null && (
-            <>
-              <Button
-                size="sm"
-                variant={notYet ? "outline" : "default"}
-                className={cn(notYet && "opacity-60")}
-                data-not-yet={notYet || undefined}
-                disabled={!runnable || busy || blocked}
-                onClick={() => actions.run(step, notYet ? waitLeft : 0)}
-              >
-                {t("step.run")}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className={cn(notYet && "opacity-60")}
-                data-not-yet={notYet || undefined}
-                disabled={!runnable || busy || blocked || Boolean(sendRefused)}
-                title={sendRefused ?? undefined}
-                onClick={() => actions.send(step, notYet ? waitLeft : 0)}
-              >
-                {t("step.send")}
-              </Button>
-            </>
-          )}
-          {!agentStep &&
+          {runbookOpen &&
+            !agentStep &&
+            step.hostId !== null &&
+            step.command !== null && (
+              <>
+                <Button
+                  size="sm"
+                  variant={notYet ? "outline" : "default"}
+                  className={cn(notYet && "opacity-60")}
+                  data-not-yet={notYet || undefined}
+                  disabled={!runnable || busy || blocked}
+                  onClick={() => actions.run(step, notYet ? waitLeft : 0)}
+                >
+                  {t("step.run")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={cn(notYet && "opacity-60")}
+                  data-not-yet={notYet || undefined}
+                  disabled={
+                    !runnable || busy || blocked || Boolean(sendRefused)
+                  }
+                  title={sendRefused ?? undefined}
+                  onClick={() => actions.send(step, notYet ? waitLeft : 0)}
+                >
+                  {t("step.send")}
+                </Button>
+              </>
+            )}
+          {runbookOpen &&
+            !agentStep &&
             step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (
@@ -760,35 +771,51 @@ export function StepCard({
                 </Button>
               </>
             )}
-          {step.status === "pending" ? (
+          {runbookOpen &&
+            (step.status === "pending" ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setSkipping(true)}
+              >
+                {t("step.skip")}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => actions.reopen(step)}
+              >
+                {t("step.reopen")}
+              </Button>
+            ))}
+          {runbookOpen && (
             <Button
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => setSkipping(true)}
+              onClick={() =>
+                actions.setHidden(step, !step.hideOutputFromAgents)
+              }
             >
-              {t("step.skip")}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => actions.reopen(step)}
-            >
-              {t("step.reopen")}
+              {step.hideOutputFromAgents
+                ? t("step.showToAgents")
+                : t("step.hideFromAgents")}
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => actions.setHidden(step, !step.hideOutputFromAgents)}
-          >
-            {step.hideOutputFromAgents
-              ? t("step.showToAgents")
-              : t("step.hideFromAgents")}
-          </Button>
+          {canSendToAgent && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-send-to-agent
+              disabled={busy}
+              onClick={() => actions.sendToAgent(step)}
+            >
+              {t("step.sendToAgent")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -826,6 +853,28 @@ export function StepCard({
             </Button>
           </div>
         </div>
+      )}
+
+      {(step.sent ?? []).length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1 text-xs" data-sent-history>
+          {(step.sent ?? []).map((sent) => (
+            <li
+              key={sent.id}
+              className="border-l-2 border-border pl-3 text-muted-foreground"
+              data-sent={sent.id}
+            >
+              {t(sent.note ? "sendAgent.historyNote" : "sendAgent.history", {
+                user: sent.createdBy,
+                time: formatTime(sent.createdAt),
+              })}
+              {sent.note && (
+                <p className="mt-0.5 whitespace-pre-wrap text-foreground">
+                  {sent.note}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       {latest && (

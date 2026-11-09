@@ -105,6 +105,14 @@ export interface Run {
   } | null;
 }
 
+/** A "sent" event on a step: who sent it to the agent, when, the note. */
+export interface SentToAgent {
+  id: number;
+  createdBy: string;
+  createdAt: string;
+  note: string | null;
+}
+
 /** The wait a step asks for after the step before it, as the server saw it. */
 export interface StepWait {
   previous: { id: number; position: number; title: string };
@@ -148,6 +156,8 @@ export interface Step {
   secretsProblem?: string | null;
   /** Who does it: a person runs it, an agent completes it (1.3.0). */
   owner?: "person" | "agent";
+  /** Each time a person sent it to the agent, newest first (1.3.0). */
+  sent?: SentToAgent[];
   revision: number;
   runs: Run[];
 }
@@ -169,6 +179,10 @@ export interface Runbook extends RunbookSummary {
   owner?: RunbookOwner | null;
   /** The owner's label, or the name of the token that made it. */
   agentLabel?: string;
+  /** Whether agent notifications are on. */
+  notifyEnabled?: boolean;
+  /** Notifications are on and the runbook has an owner: Send to agent. */
+  canSendToAgent?: boolean;
   /** Whether the OpenBao Secrets service is there. */
   secretsAvailable?: boolean;
   /** Every secret the steps capture: never a value. */

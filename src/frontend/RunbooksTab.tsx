@@ -23,6 +23,7 @@ import {
   PanelList,
   PanelShell,
   PanePrompt,
+  Textarea,
   useConfirm,
 } from "@termix-ssh/plugin-sdk/ui";
 import { toast } from "sonner";
@@ -176,6 +177,91 @@ function EarlyStartPrompt({ request }: { request: EarlyRequest }) {
         </>
       }
     />
+  );
+}
+
+/** The longest note Send to agent takes, as the server does. */
+export const MAX_SENT_NOTE = 500;
+
+interface SendRequest {
+  step: Step;
+  label: string;
+  resolve: (note: string | null) => void;
+}
+
+/**
+ * "Send step N to <agent>?": an optional note with a counter, Send and
+ * Cancel. Resolves the note ("" for none), or null for Cancel.
+ */
+function SendToAgentPrompt({ request }: { request: SendRequest }) {
+  const { t } = useTranslation();
+  const [note, setNote] = useState("");
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  const resolveRef = useRef(request.resolve);
+  resolveRef.current = request.resolve;
+  useEffect(() => {
+    boxRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      resolveRef.current(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const tooLong = note.length > MAX_SENT_NOTE;
+  return (
+    <PanePrompt
+      open
+      role="dialog"
+      title={t("sendAgent.title", {
+        position: request.step.position,
+        label: request.label,
+      })}
+      description={t("sendAgent.hint")}
+      onCancel={() => request.resolve(null)}
+      actions={
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            data-send-cancel
+            onClick={() => request.resolve(null)}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            size="sm"
+            data-send-confirm
+            disabled={tooLong}
+            onClick={() => request.resolve(note)}
+          >
+            {t("sendAgent.send")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-1" data-send-prompt>
+        <Textarea
+          ref={boxRef}
+          value={note}
+          maxLength={MAX_SENT_NOTE}
+          onChange={(event) =>
+            setNote(event.target.value.slice(0, MAX_SENT_NOTE))
+          }
+          placeholder={t("sendAgent.notePlaceholder")}
+          aria-label={t("sendAgent.notePlaceholder")}
+          className="min-h-20 text-xs"
+        />
+        <span
+          className="self-end text-[11px] text-muted-foreground"
+          data-send-count
+        >
+          {t("sendAgent.count", { count: note.length, max: MAX_SENT_NOTE })}
+        </span>
+      </div>
+    </PanePrompt>
   );
 }
 
@@ -355,6 +441,8 @@ function RunbookDetail({
 
   /** The open early-start question, if any. */
   const [early, setEarly] = useState<EarlyRequest | null>(null);
+  /** The open Send to agent dialog, if any. */
+  const [sending, setSending] = useState<SendRequest | null>(null);
 
   /**
    * Asks before a start while the step's wait timer runs: one question,
@@ -671,6 +759,32 @@ function RunbookDetail({
         }
       }),
 
+    sendToAgent: (step) =>
+      void withBusy(async () => {
+        const label = runbook?.agentLabel ?? runbook?.createdBy ?? "";
+        const note = await new Promise<string | null>((resolve) =>
+          setSending({
+            step,
+            label,
+            resolve: (value) => {
+              setSending(null);
+              resolve(value);
+            },
+          }),
+        );
+        if (note === null) return;
+        try {
+          const { data } = await api.post<Runbook>(
+            `/steps/${step.id}/send-to-agent`,
+            { note },
+          );
+          setRunbook(data);
+          toast.success(t("sendAgent.sent", { label }));
+        } catch (error) {
+          fail(error);
+        }
+      }),
+
     saveNote: (step, note) =>
       void (async () => {
         try {
@@ -788,6 +902,7 @@ function RunbookDetail({
       )}
 
       {early && <EarlyStartPrompt request={early} />}
+      {sending && <SendToAgentPrompt request={sending} />}
 
       <Markdown source={runbook.summary} />
 
@@ -836,6 +951,7 @@ function RunbookDetail({
               (secret) => secret.step === step.position,
             )}
             agentLabel={runbook.agentLabel ?? runbook.createdBy}
+            canSendToAgent={Boolean(runbook.canSendToAgent)}
           />
         ))}
       </div>
