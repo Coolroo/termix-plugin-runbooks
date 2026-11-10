@@ -203,4 +203,49 @@ describe("steps run outside Termix", () => {
     }
     expect(card(3).textContent).toContain("url");
   });
+
+  it("disable Done on a step with checks until output is pasted; Failed stays (1.4.1)", async () => {
+    const client = await open();
+    const done = card(2).querySelector(
+      '[data-outside-mark="done"]',
+    ) as HTMLButtonElement;
+    const failed = card(2).querySelector(
+      '[data-outside-mark="failed"]',
+    ) as HTMLButtonElement;
+    expect(done.disabled).toBe(true);
+    expect(done.title).toBe(locales.run.pasteFirst);
+    expect(card(2).querySelector("[data-paste-first]")!.textContent).toBe(
+      locales.run.pasteFirst,
+    );
+    expect(failed.disabled).toBe(false);
+    const paste = card(2).querySelector(
+      "[data-outside-paste] textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(paste, { target: { value: "   " } });
+    expect(done.disabled).toBe(true);
+    fireEvent.change(paste, { target: { value: "OsVersion : 10.0" } });
+    expect(done.disabled).toBe(false);
+    expect(done.title).toBe("");
+    expect(card(2).querySelector("[data-paste-first]")).toBeNull();
+    fireEvent.change(paste, { target: { value: "" } });
+    fireEvent.click(failed);
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/steps/2/manual", {
+        outcome: "failed",
+        note: "",
+        output: "",
+        revision: 3,
+      }),
+    );
+  });
+
+  it("let Done go without a paste on a step with no checks", async () => {
+    await open();
+    // Step 3 has no checks; only its missing value holds Done back.
+    expect(card(3).querySelector("[data-paste-first]")).toBeNull();
+    expect(
+      (card(3).querySelector('[data-outside-mark="done"]') as HTMLButtonElement)
+        .title,
+    ).toBe("");
+  });
 });

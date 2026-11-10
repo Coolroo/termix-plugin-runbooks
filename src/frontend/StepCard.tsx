@@ -502,6 +502,11 @@ function RunDetails({
               {t("run.markFailed")}
             </Button>
           </div>
+          {pasted.trim() === "" && (
+            <p className="text-xs text-muted-foreground" data-paste-first>
+              {t("run.pasteFirst")}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -539,6 +544,9 @@ export function StepCard({
   const [expanded, setExpanded] = useState(false);
   const [outsideOutput, setOutsideOutput] = useState("");
   const replaced = step.status === "replaced";
+  // Done on a step with checks needs the output they read (1.4.1).
+  const pasteFirst =
+    (step.checks ?? []).length > 0 && outsideOutput.trim() === "";
 
   // Agent edits and polls must not wipe a note being typed.
   useEffect(() => {
@@ -706,7 +714,8 @@ export function StepCard({
                 <Button
                   size="sm"
                   data-outside-mark="done"
-                  disabled={busy || step.missing.length > 0}
+                  disabled={busy || step.missing.length > 0 || pasteFirst}
+                  title={pasteFirst ? t("run.pasteFirst") : undefined}
                   onClick={() =>
                     actions.manual(step, "done", note, outsideOutput)
                   }
@@ -725,6 +734,11 @@ export function StepCard({
                   {t("step.failed")}
                 </Button>
               </div>
+              {pasteFirst && (
+                <p className="text-xs text-muted-foreground" data-paste-first>
+                  {t("run.pasteFirst")}
+                </p>
+              )}
             </div>
           )}
         </div>

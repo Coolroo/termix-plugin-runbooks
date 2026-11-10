@@ -1362,6 +1362,17 @@ export function registerPersonRoutes(
               `output must be text of at most ${MAX_OUTPUT_BYTES / 1024} KB`,
             );
           }
+          // Done on a step with checks needs the output they read (1.4.1),
+          // as a terminal run's Mark done does. Failed needs nothing.
+          if (
+            outcome === "done" &&
+            step.checks.length > 0 &&
+            output.trim() === ""
+          ) {
+            throw new InputError(
+              "paste at least one line of the output to mark the step done",
+            );
+          }
           // An outside step cannot capture or read secrets today; the order
           // is finishRun's anyway: find the secrets, then check the output
           // with them hidden (1.4.1).

@@ -125,7 +125,7 @@ Some commands do not run in a shell on a Termix host: PowerShell on a Windows PC
 ```
 
 - The person sees "Run outside Termix: <where>", the command with its values filled in, and a **Copy** button (off while a value is missing). There is no Run and no Send to terminal (409 `outside`): Termix never runs it.
-- The person pastes the output and marks the step **Done** or **Failed**. Checks (not `exitCode`) and `captures` read the pasted output; a failed check makes the step failed. It records a run with `mode: "outside"`, the command as the person copied it, and the output as `pastedOutput`.
+- The person pastes the output and marks the step **Done** or **Failed**. Checks (not `exitCode`) and `captures` read the pasted output; a failed check makes the step failed. On a step with checks, **Done** needs at least one line of pasted output (1.4.1; refused with 400 otherwise); **Failed** needs none. It records a run with `mode: "outside"`, the command as the person copied it, and the output as `pastedOutput`.
 - Refused with 400: `where` without `command`, `where` with `hostId`, `stdin`, `secretCaptures`, `exitCode` checks, and `where` on an agent step. A command with no `hostId` and no `where` is refused too.
 - The repeat guard and the command hash do not apply. Done and Failed are bound to the step's revision: a step that changed since the person saw it is refused with 409 `stale`.
 
