@@ -73,6 +73,14 @@ The step captures a secret. Its value is known only when the output is complete,
 
 Paste the terminal output first: Mark done needs at least one line of it. If there is nothing to paste, use **Mark failed**, or Skip the step.
 
+## Why is Done greyed out on a step run outside Termix?
+
+The step has checks, and they read the output you paste. Paste at least one line of it first (1.4.1). If there is nothing to paste, press **Failed**, or Skip the step.
+
+## How do I change the step colors?
+
+In **Settings**, **Runbooks**: an admin sets **Step colors** for everyone, and each person can set **Your step colors** for themselves. Use `#rgb` or `#rrggbb`, or leave a color empty for the built-in one.
+
 ## How do I finish a step with no command?
 
 Press **Done** or **Failed**. The note in the step's Notes box goes with it. **Skip** is there too, for a step you do not do.

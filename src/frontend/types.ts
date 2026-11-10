@@ -75,6 +75,8 @@ export interface RunbookSummary {
   progress: Progress;
   /** Amendments that have not run yet (1.4.0): the list shows "amended". */
   amendedPending?: number;
+  /** The kind of the next step (1.4.1), null when none is pending. */
+  nextKind?: string | null;
 }
 
 export interface Run {

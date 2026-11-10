@@ -16,11 +16,29 @@ The agent can never run anything. It only proposes and reads.
 
 ## Run a runbook
 
-Open **Runbooks** from the sidebar. Open runbooks come first, with their progress and author.
+Open **Runbooks** from the sidebar. Open runbooks come first, with their progress, their author and the kind of their next step (a colored dot, an icon and a name).
 
 An agent can also give you a link to a runbook, like `https://<your Termix address>/?view=runbook&id=12`. It opens Termix with the Runbooks tab on that runbook, after you sign in if you were signed out.
 
-A runbook shows its summary, its values and its steps in order. The next pending step has an orange border. Each step shows:
+A runbook shows its summary, its values and its steps in order. Each step shows its kind, so you see at a glance who does it and how (1.4.1):
+
+| Kind           | When                                                             | Color     | Icon          | Label              |
+| -------------- | ---------------------------------------------------------------- | --------- | ------------- | ------------------ |
+| Run here       | a command and a host                                             | green     | Play          | Run on <host>      |
+| Lead's step    | the agent does it                                                | cool blue | Bot           | <agent>'s step     |
+| Outside Termix | a command and where to run it                                    | amber     | External link | Run outside Termix |
+| In an app      | no command: you click through a page or check something by eye   | violet    | Mouse pointer | Do it yourself     |
+| Finish         | the last step, with no command, whose title starts with "Finish" | neutral   | Flag          | Finish             |
+
+Two chips can go on any kind: **Secret** (a lock: the step captures a secret or reads one on its standard input) and **Wait** (a clock: the step has a wait timer).
+
+The next pending step, marked **Next**, has a 2 px border and a soft glow in its kind's color. The pending steps after it have a thin stripe in their kind's color on the left; done steps have the stripe dimmed. A failed step has a red stripe and the red **Failed** badge, whatever its kind. Replaced and skipped steps are grey. Color is never the only sign: every kind has its icon and its label too.
+
+### Step colors
+
+An admin can change the color of each kind in the plugin's settings (**Settings**, **Runbooks**, **Step colors**), and each person can set their own under **Your step colors**, which win over the admin's. A color is `#rgb` or `#rrggbb`; anything else is refused when you save. Leave a color empty for the built-in one, which suits light and dark themes. One color drives the kind's border, glow, stripe and dot. Failed stays red.
+
+Each step shows:
 
 - what to do and why, written by the agent
 - the host and the exact command, with every `{{value}}` already filled in, and a Copy button

@@ -10,6 +10,7 @@ import {
 import { describeCheck } from "../shared/checks";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
+import { cardState, KindChip, kindStyle, MarkChip, useStepKind } from "./kinds";
 import type {
   Check,
   CheckResult,
@@ -522,9 +523,12 @@ export function StepCard({
   secrets = [],
   agentLabel = "",
   canSendToAgent = false,
+  last = false,
 }: {
   step: Step;
   isNext: boolean;
+  /** The runbook's last step: it may be the Finish step (1.4.1). */
+  last?: boolean;
   runbookOpen: boolean;
   busy: boolean;
   actions: StepActions;
@@ -554,6 +558,10 @@ export function StepCard({
   }, [step.ownerNote, editingNote]);
 
   const agentStep = step.owner === "agent";
+  // Who does it and how (1.4.1): a color, an icon and a label.
+  const kindRunbook = { last, agentLabel };
+  const { kind, marks, color: kindColor } = useStepKind(step, kindRunbook);
+  const state = cardState(step, isNext);
   const [latest, ...earlier] = step.runs;
   const running = step.runs.some((run) => run.running);
   const waitLeft = useWaitRemaining(step.wait);
@@ -594,18 +602,23 @@ export function StepCard({
       >
         {step.title}
       </h3>
+      <KindChip
+        kind={kind}
+        step={step}
+        runbook={kindRunbook}
+        color={kindColor}
+        state={state}
+      />
       <ListBadge tone={STATUS_TONE[step.status] ?? "muted"}>
         {t(`step.status.${step.status}`)}
       </ListBadge>
+      {marks.map((mark) => (
+        <MarkChip key={mark.id} mark={mark} />
+      ))}
       {step.amendment && (
         <ListBadge tone="warning">{t("amend.badge")}</ListBadge>
       )}
       {isNext && <ListBadge tone="brand">{t("step.next")}</ListBadge>}
-      {agentStep && (
-        <span data-agent-step>
-          <ListBadge tone="muted">{t("step.agentBadge")}</ListBadge>
-        </span>
-      )}
       {step.hideOutputFromAgents && (
         <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
       )}
@@ -639,7 +652,10 @@ export function StepCard({
     return (
       <section
         className="border border-dashed border-border p-3 opacity-80"
+        style={kindStyle.card(state, kindColor)}
         data-step={step.id}
+        data-kind={kind.id}
+        data-state={state}
         data-collapsed
       >
         {header}
@@ -650,12 +666,11 @@ export function StepCard({
 
   return (
     <section
-      className={cn(
-        "border border-border p-3",
-        isNext && "border-accent-brand",
-        replaced && "border-dashed",
-      )}
+      className={cn("border border-border p-3", replaced && "border-dashed")}
+      style={kindStyle.card(state, kindColor)}
       data-step={step.id}
+      data-kind={kind.id}
+      data-state={state}
       aria-current={isNext ? "step" : undefined}
     >
       {header}

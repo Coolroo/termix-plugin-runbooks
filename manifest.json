@@ -101,6 +101,30 @@
           "type": "custom",
           "component": "notify-secret",
           "requires": "notifyEnabled"
+        },
+        {
+          "key": "stepColorsEditor",
+          "type": "custom",
+          "component": "step-colors"
+        },
+        {
+          "key": "stepColors",
+          "type": "json",
+          "labelKey": "settings.stepColors.label",
+          "hidden": true
+        }
+      ],
+      "user": [
+        {
+          "key": "stepColorsEditor",
+          "type": "custom",
+          "component": "step-colors-user"
+        },
+        {
+          "key": "stepColors",
+          "type": "json",
+          "labelKey": "settings.stepColors.label",
+          "hidden": true
         }
       ]
     }

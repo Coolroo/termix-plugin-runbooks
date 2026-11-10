@@ -38,6 +38,8 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Events an agent reads (its turn, a failed step, a runbook done), and an optional signed webhook that tells it at once
 - Send to agent on any step, with a short note
 - Amendments: an agent fixes a step (3a replaces 3) or adds one after it, in place, with its reason, and later steps keep their numbers
+- Step kinds: each step shows who does it and how (Run here, the lead's step, outside Termix, in an app, Finish) with its own color, icon and label, and the current step stands out
+- Step colors an admin sets for everyone, and each person for themselves
 
 <br />
 
@@ -77,6 +79,28 @@ npm run pack   # writes runbooks-<version>.tmxplug
 ```
 
 `.npmrc` sets `legacy-peer-deps`, because npm 10 cannot resolve the SDK's optional peer set without it.
+
+### Adding a step kind
+
+Kinds of step live in one registry, `src/shared/step-kinds.ts`. A kind is one `StepKind` entry:
+
+```ts
+{
+  id: "ask-secret",                 // stable: colors are stored by it
+  nameKey: "kind.name.askSecret",   // its short name in the list and the settings
+  icon: "KeyRound",                 // a Lucide icon name
+  label: (t, step, runbook) => t("kind.askSecret"),
+  defaultColor: { light: "#0f766e", dark: "#2dd4bf" },
+  matches: (step, runbook) => step.stdin?.from === "ask",
+  priority: 45,                     // the highest matching kind wins
+}
+```
+
+1. Add the entry to `BUILT_IN_KINDS` (or call `registerStepKind`).
+2. Add its words to `locales/en.json`.
+3. Prefer Termix tokens for `defaultColor` (`var(--warning)`). A hex color of your own needs at least 4.5:1 on Termix's light and dark cards: the tests check every hex default.
+
+The step cards, the list dot, the settings (one color row per kind) and `GET /colors` read the registry, so nothing else changes. A step that matches no kind gets the fallback kind, `app`. Marks such as Secret and Wait are `StepMark` entries in the same file.
 
 <br />
 

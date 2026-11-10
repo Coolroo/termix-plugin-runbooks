@@ -38,6 +38,11 @@ import { newToken } from "./tokens.js";
 import { applyCaptures, findSecrets, resolve } from "./values.js";
 import { isSshHost } from "../shared/hosts.js";
 import { isBefore, stepLabel } from "../shared/steps.js";
+import {
+  COLORS_SETTING,
+  effectiveColors,
+  nextKind,
+} from "../shared/step-kinds.js";
 import type { LiveRuns } from "./live.js";
 import { streamExec, type ExecClient } from "./stream-exec.js";
 import { checkHidden, type CheckedRun, type CheckResult } from "./checks.js";
@@ -767,15 +772,45 @@ export function registerPersonRoutes(
     ...use,
     wrap(async (req) => {
       const rows = await store.listRunbooks({});
-      const out: ReturnType<typeof runbookSummary>[] = [];
+      const out: Array<
+        ReturnType<typeof runbookSummary> & { nextKind: string | null }
+      > = [];
       for (const runbook of rows) {
         const steps = await store.listSteps(runbook.id);
         // A runbook an agent closed still has its secrets: delete them now.
         await removeSecrets(req, runbook, steps);
-        out.push(runbookSummary(runbook, steps));
+        // The kind of the next step (1.4.1): the list shows its color.
+        out.push({
+          ...runbookSummary(runbook, steps),
+          nextKind: nextKind(steps),
+        });
       }
       const order = { open: 0, done: 1, abandoned: 2 } as const;
       return out.sort((a, b) => order[a.status] - order[b.status]);
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/colors:
+   *   get:
+   *     summary: The step colors this person sees, by kind of step
+   *     description: >
+   *       { [kind id]: "#rrggbb" }: the person's own color, else the
+   *       admin's. A kind that is not there keeps its built-in color.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The colors }
+   */
+  router.get(
+    "/colors",
+    ...use,
+    wrap(async () => {
+      // Checked again on read: only a color ever reaches a style.
+      return effectiveColors(
+        await ctx.settings.get(COLORS_SETTING),
+        await ctx.settings.getUser(actor(), COLORS_SETTING),
+      );
     }),
   );
 

@@ -48,6 +48,7 @@ import {
   waitForNewSession,
 } from "./terminal";
 import { TokensView } from "./TokensView";
+import { KindColorsProvider, NextKindDot } from "./kinds";
 import {
   errorBody,
   type Run,
@@ -323,6 +324,9 @@ function RunbookList({
                 <span data-amended-badge>
                   <ListBadge tone="warning">{t("list.amended")}</ListBadge>
                 </span>
+              )}
+              {row.status === "open" && row.nextKind && (
+                <NextKindDot kindId={row.nextKind} />
               )}
             </>
           }
@@ -958,11 +962,12 @@ function RunbookDetail({
         <EmptyState title={t("runbook.noSteps")} />
       )}
       <div className="flex flex-col gap-3">
-        {runbook.steps.map((step) => (
+        {runbook.steps.map((step, index) => (
           <StepCard
             key={step.id}
             step={step}
             isNext={step.id === runbook.nextStepId}
+            last={index === runbook.steps.length - 1}
             runbookOpen={open}
             busy={busy}
             actions={actions}
@@ -1051,7 +1056,7 @@ export function createRunbooksTab(app: TermixApp) {
           ) : null
         }
       >
-        {body}
+        <KindColorsProvider active={isVisible}>{body}</KindColorsProvider>
       </PanelShell>
     );
   };
