@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.1
+
+### Fixed
+
+- Checks test the output with its secrets hidden, the same text Runbooks keeps and shows. Before, they read the raw output: a check for `token: [secret:api_token]` failed, and a check that named part of a secret's value passed or failed on its characters, so an agent could learn the secret one guess at a time. Captured values that a check reads are hidden the same way. This holds for Run, Send to terminal with Mark done, steps run outside Termix and agent steps.
+- **Done** on a step run outside Termix needs pasted output when the step has checks: the button is off with "Paste the output first: at least one line.", as Mark done on a terminal run is, and the server refuses it with 400. **Failed** needs nothing. The hint also shows as text under the buttons, for phones.
+
+### Added
+
+- Step kinds. Each step shows who does it and how, read from the fields it already has: **Run here** (a command and a host; green, Play, "Run on <host>"), **Lead's step** (an agent step; blue, Bot, "<agent>'s step"), **Outside Termix** (a command and `where`; amber, External link, "Run outside Termix"), **In an app** (no command; violet, Mouse pointer, "Do it yourself") and **Finish** (the last step, with no command, whose title starts with "Finish"; neutral, Flag). The chips **Secret** (it captures or reads a secret) and **Wait** (it has a wait timer) go on any kind.
+- The current step has a 2 px border and a soft glow in its kind's color. Pending steps have a stripe in their kind's color, dimmed once done; failed steps a red stripe, whatever their kind; replaced and skipped steps a grey one. The runbook list shows the next step's kind as a dot, an icon and its name (`nextKind` in `GET /runbooks`).
+- Step colors. Admins set one color per kind for everyone, and each person can set their own, which win (setting `stepColors` in both scopes, `#rgb` or `#rrggbb` only, anything else refused on save). `GET /colors` answers the colors a person sees. Empty keeps the built-in color, which suits light and dark themes. Failed stays red.
+- Kinds and marks are one registry, `src/shared/step-kinds.ts`: a new kind is one entry. See "Adding a step kind" in the README.
+
 ## 1.4.0
 
 This update asks the admin to agree to two new capabilities: `network:outbound`, to send agent notifications to the webhook an admin sets, and `secrets:own`, to keep the webhook's signing secret sealed with Termix's installation key. Runbooks sends nothing until an admin turns notifications on.
