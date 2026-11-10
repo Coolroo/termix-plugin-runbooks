@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-10T05:04:10.000Z",
+  "updatedAt": "2026-11-10T15:26:53.000Z",
   "plugins": [
     {
       "id": "openbao-secrets",
@@ -27,6 +27,28 @@
       "docs": "https://github.com/Coolroo/termix-plugin-openbao-secrets/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.3",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.3/openbao-secrets-1.0.3.tmxplug",
+          "sha256": "b8f4d0d3a8ed678f75bdaa6ca6bdf395c62c2553a5e999faf7136ad6d2dfc74f",
+          "signature": "r5h88rjg6nZOYKcQSNPoKtWORp0OrXYpGoIjRihKiTtLGDNAjhs/GouCbTtVUDaBTDp4yF60+Rfh7r1dpCo0DQ==",
+          "size": 72316,
+          "capabilities": [
+            "db:own",
+            "secrets:own",
+            "network:outbound",
+            "network:serve",
+            "ui:surface"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.3",
+          "notes": "### Fixed\n\n- The **Replace value** and **Delete** buttons on a secret's row are icons, as in Termix's own lists. They held words that spilled out of the buttons and over the row, most of all on a phone. Each icon keeps its name as a tooltip and for screen readers.",
+          "publishedAt": "2026-11-10T15:26:53Z"
+        },
         {
           "version": "1.0.2",
           "api": "1",
