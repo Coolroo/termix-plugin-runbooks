@@ -4,8 +4,82 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-10T04:35:30.000Z",
+  "updatedAt": "2026-11-10T05:04:10.000Z",
   "plugins": [
+    {
+      "id": "openbao-secrets",
+      "name": "OpenBao Secrets",
+      "description": "Keep secrets in OpenBao or HashiCorp Vault, type them at a terminal's password prompt, and let other plugins store theirs.",
+      "author": "Coolroo",
+      "category": "Access & Security",
+      "repository": "https://github.com/Coolroo/termix-plugin-openbao-secrets",
+      "icon": "KeyRound",
+      "features": [
+        "One connection to OpenBao or HashiCorp Vault (KV v2), set up by an admin",
+        "The AppRole secret ID comes in a response-wrapped token and is never shown again",
+        "A Secrets tab for your own secrets and shared ones, by name, in folders",
+        "A saved value is never sent to the browser for display: no reveal, no copy",
+        "Type a secret at the cursor of an open terminal, for a password prompt",
+        "A service other plugins use to store, read and delete secrets in their own area",
+        "Secrets with an expiry time are deleted when it passes",
+        "Every read, write and delete is in the audit log, never with the value"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-openbao-secrets/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.0.2",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.2/openbao-secrets-1.0.2.tmxplug",
+          "sha256": "d51e2876af2f9d77f4282a96083820924bcb96170b789538a60078df8a457594",
+          "signature": "jlOrZxzZTxiLp1kQbt6rhSxxsDZKN2GIjE09VsgqFcEgnNRB/dG/Cxoq8+xNA67sLZgRAmISTj0vYzjIbH8aCQ==",
+          "size": 72082,
+          "capabilities": [
+            "db:own",
+            "secrets:own",
+            "network:outbound",
+            "network:serve",
+            "ui:surface"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.2",
+          "notes": "### Fixed\n\n- **Add secret** and **Replace value** work with phone keyboards. An Android keyboard composes a whole word before it hands it over, and the old dots-only field missed those words, so **Add** stayed off. The value field is now a plain text field: typing, paste and autofill all set the value.\n\n### Changed\n\n- The value shows while you type, so you can check it before you save. A **Hide** button draws it as dots, and **Show** brings it back; neither changes the value. Once saved, a value is still never sent to the browser to be shown.",
+          "publishedAt": "2026-11-10T05:04:10Z"
+        },
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.1/openbao-secrets-1.0.1.tmxplug",
+          "sha256": "0309f2f7f1ce9ef6d11d484e559259dca4ad46991811afb78526ca3d57a86dd4",
+          "signature": "z1/7sbJatrvKmm/4zGRWRTLoffdqiw3Q7znaHKXPHvleWArLbxxE3tMQlN7pfqBRJGezuSqA2kLn7WEqzldcDA==",
+          "size": 73809,
+          "capabilities": [
+            "db:own",
+            "secrets:own",
+            "network:outbound",
+            "network:serve",
+            "ui:surface"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.1",
+          "notes": "### Fixed\n\n- Adding a secret when OpenBao accepts the value but refuses its metadata (for example a policy without create and update on the KV metadata path) no longer leaves the value behind with no expiry or creator. The new secret is taken back, and adding it again works once the policy is right.",
+          "publishedAt": "2026-11-09T22:11:47Z"
+        }
+      ],
+      "contributes": [
+        "keybindingActions",
+        "permissions",
+        "settings",
+        "tabs",
+        "uses"
+      ]
+    },
     {
       "id": "runbooks",
       "name": "Runbooks",
@@ -155,58 +229,6 @@
         "permissions",
         "settings",
         "tabs"
-      ]
-    },
-    {
-      "id": "openbao-secrets",
-      "name": "OpenBao Secrets",
-      "description": "Keep secrets in OpenBao or HashiCorp Vault, type them at a terminal's password prompt, and let other plugins store theirs.",
-      "author": "Coolroo",
-      "category": "Access & Security",
-      "repository": "https://github.com/Coolroo/termix-plugin-openbao-secrets",
-      "icon": "KeyRound",
-      "features": [
-        "One connection to OpenBao or HashiCorp Vault (KV v2), set up by an admin",
-        "The AppRole secret ID comes in a response-wrapped token and is never shown again",
-        "A Secrets tab for your own secrets and shared ones, by name, in folders",
-        "A saved value is never sent to the browser for display: no reveal, no copy",
-        "Type a secret at the cursor of an open terminal, for a password prompt",
-        "A service other plugins use to store, read and delete secrets in their own area",
-        "Secrets with an expiry time are deleted when it passes",
-        "Every read, write and delete is in the audit log, never with the value"
-      ],
-      "docs": "https://github.com/Coolroo/termix-plugin-openbao-secrets/tree/main/docs",
-      "versions": [],
-      "gated": [
-        {
-          "version": "1.0.1",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.1/openbao-secrets-1.0.1.tmxplug",
-          "sha256": "0309f2f7f1ce9ef6d11d484e559259dca4ad46991811afb78526ca3d57a86dd4",
-          "signature": "z1/7sbJatrvKmm/4zGRWRTLoffdqiw3Q7znaHKXPHvleWArLbxxE3tMQlN7pfqBRJGezuSqA2kLn7WEqzldcDA==",
-          "size": 73809,
-          "capabilities": [
-            "db:own",
-            "secrets:own",
-            "network:outbound",
-            "network:serve",
-            "ui:surface"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.1",
-          "notes": "### Fixed\n\n- Adding a secret when OpenBao accepts the value but refuses its metadata (for example a policy without create and update on the KV metadata path) no longer leaves the value behind with no expiry or creator. The new secret is taken back, and adding it again works once the policy is right.",
-          "publishedAt": "2026-11-09T22:11:47Z"
-        }
-      ],
-      "contributes": [
-        "keybindingActions",
-        "permissions",
-        "settings",
-        "tabs",
-        "uses"
       ]
     }
   ]
