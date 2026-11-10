@@ -20,7 +20,7 @@ const CHECKS_HELP =
   '{"type":"exitCode","equals":0} (Run only; a terminal run has an exit code only if the person entered one); ' +
   '{"type":"contains","text":"active (running)","stream":"stdout"} or notContains (stream stdout, stderr or any, default any; a terminal run has only its pasted output); ' +
   '{"type":"matches","pattern":"^Status: (ok|ready)$"} or notMatches (a JavaScript regular expression, multiline, with a time limit); ' +
-  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step.';
+  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step. Checks read the output with its secrets hidden, as the person sees it: test for "token: [secret:api_token]", never for part of a secret.';
 
 const WAIT_HELP =
   "A step may ask the person to wait after the step before it ended (its run finished, or it was marked done or skipped): waitAfterPreviousSeconds (1 to 86400) and an optional short waitReason. For example, restart a service in one step, then give the health-check step waitAfterPreviousSeconds 120 and waitReason 'let the service restart'. The person sees a countdown, and starting early takes an extra confirm. get_runbook shows waitUntil on a step while its timer runs.";

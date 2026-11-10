@@ -40,7 +40,7 @@ import { isSshHost } from "../shared/hosts.js";
 import { isBefore, stepLabel } from "../shared/steps.js";
 import type { LiveRuns } from "./live.js";
 import { streamExec, type ExecClient } from "./stream-exec.js";
-import { evaluateChecks, type CheckedRun, type CheckResult } from "./checks.js";
+import { checkHidden, type CheckedRun, type CheckResult } from "./checks.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
 import {
@@ -560,23 +560,24 @@ export function registerPersonRoutes(
     } = {},
   ): Promise<{ final: "done" | "failed"; stored: string[] }> {
     const used = options.used ?? [];
+    // Secret values found in the output are replaced whatever the outcome;
+    // they are stored only from a run that ends done. They are found first,
+    // so the checks see the output with its secrets hidden (1.4.1).
+    const found = findSecrets(step.secretCaptures, output);
+    const hide: SecretText[] = [
+      ...used,
+      ...Object.entries(found.values).map(([name, value]) => ({ name, value })),
+    ];
     const captures = applyCaptures(step.captures, output);
     const results =
       options.checked && step.checks.length > 0
-        ? evaluateChecks(step.checks, options.checked, captures.values)
+        ? checkHidden(step.checks, options.checked, captures.values, hide)
         : null;
     let final: "done" | "failed" =
       outcome === "done" && (results ?? []).every((check) => check.ok)
         ? "done"
         : "failed";
     const problems: string[] = [];
-    // Secret values found in the output are replaced whatever the outcome;
-    // they are stored only from a run that ends done.
-    const found = findSecrets(step.secretCaptures, output);
-    const hide: SecretText[] = [
-      ...used,
-      ...Object.entries(found.values).map(([name, value]) => ({ name, value })),
-    ];
     const stored: Array<{ name: string; expiresAt: string }> = [];
     if (final === "done" && step.secretCaptures.length > 0) {
       if (found.missing.length > 0) {
@@ -1361,11 +1362,18 @@ export function registerPersonRoutes(
               `output must be text of at most ${MAX_OUTPUT_BYTES / 1024} KB`,
             );
           }
-          pasted = output === "" ? null : output;
+          // An outside step cannot capture or read secrets today; the order
+          // is finishRun's anyway: find the secrets, then check the output
+          // with them hidden (1.4.1).
+          const found = findSecrets(step.secretCaptures, output);
+          const hide: SecretText[] = Object.entries(found.values).map(
+            ([name, value]) => ({ name, value }),
+          );
+          pasted = output === "" ? null : redact(output, hide);
           const captures = applyCaptures(step.captures, output);
           results =
             step.checks.length > 0
-              ? evaluateChecks(
+              ? checkHidden(
                   step.checks,
                   {
                     mode: "terminal",
@@ -1375,10 +1383,18 @@ export function registerPersonRoutes(
                     pastedOutput: output,
                   },
                   captures.values,
+                  hide,
                 )
               : null;
           if ((results ?? []).some((check) => !check.ok)) final = "failed";
-          if (final === "done") captured = captures.values;
+          if (final === "done") {
+            captured = Object.fromEntries(
+              Object.entries(captures.values).map(([name, value]) => [
+                name,
+                redact(value, hide),
+              ]),
+            );
+          }
         }
         const at = now();
         await events.around(step.runbookId, actor(), async () => {

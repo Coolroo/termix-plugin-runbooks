@@ -219,6 +219,8 @@ A capture is a JavaScript regular expression, in multiline mode, with exactly on
 
 `stream` is `stdout`, `stderr` or `any` (the default: either one). Every check may have a `label`, which the person sees instead of a generated description. A step may have at most 20 checks; a wrong one is refused with 400 and names it, such as `steps[0]: checks[1]: pattern is not a valid regular expression`. Checks need a command. A pattern stops after 250 ms and then counts as failed.
 
+Checks see the output with its secrets hidden (1.4.1), the same text the person sees: every secret the step captures or reads reads `[secret:<name>]`, in the output and in captured values. So test for `token: [secret:api_token]`, not for the token. A check that names part of a secret's real value never matches it, whatever the value is, so a check cannot tell you anything about a secret.
+
 For **Send to terminal**, checks are tested when the person presses **Mark done**: the pasted output is the only stream, whatever `stream` says, and an `exitCode` check fails with "no exit code" unless the person entered one. **Mark failed** records the person's verdict without testing.
 
 ```json

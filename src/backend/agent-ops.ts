@@ -38,7 +38,8 @@ import {
 } from "./service.js";
 import type { LiveRuns } from "./live.js";
 import { StdinPositionError, storeStdin } from "./stdin.js";
-import { evaluateChecks } from "./checks.js";
+import { checkHidden } from "./checks.js";
+import { findSecrets } from "./values.js";
 import { now } from "./store.js";
 import {
   isBefore,
@@ -749,9 +750,12 @@ export function createAgentOps(
       );
     }
     const parsed = parseCompletion(input);
+    // An agent step has no secrets to find today; the order is the same as
+    // a person's run anyway: checks see the output with secrets hidden.
+    const found = findSecrets(step.secretCaptures, parsed.output);
     const results =
       parsed.outcome === "done" && step.checks.length > 0
-        ? evaluateChecks(
+        ? checkHidden(
             step.checks,
             {
               mode: "terminal",
@@ -761,6 +765,10 @@ export function createAgentOps(
               pastedOutput: parsed.output ?? "",
             },
             {},
+            Object.entries(found.values).map(([name, value]) => ({
+              name,
+              value,
+            })),
           )
         : null;
     const final =
