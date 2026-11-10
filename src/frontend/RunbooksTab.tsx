@@ -23,6 +23,7 @@ import {
   PanelList,
   PanelShell,
   PanePrompt,
+  Textarea,
   useConfirm,
 } from "@termix-ssh/plugin-sdk/ui";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ import {
   formatDuration,
   formatTime,
   StepCard,
+  stepLabel,
   type StepActions,
 } from "./StepCard";
 import {
@@ -179,6 +181,91 @@ function EarlyStartPrompt({ request }: { request: EarlyRequest }) {
   );
 }
 
+/** The longest note Send to agent takes, as the server does. */
+export const MAX_SENT_NOTE = 500;
+
+interface SendRequest {
+  step: Step;
+  label: string;
+  resolve: (note: string | null) => void;
+}
+
+/**
+ * "Send step N to <agent>?": an optional note with a counter, Send and
+ * Cancel. Resolves the note ("" for none), or null for Cancel.
+ */
+function SendToAgentPrompt({ request }: { request: SendRequest }) {
+  const { t } = useTranslation();
+  const [note, setNote] = useState("");
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  const resolveRef = useRef(request.resolve);
+  resolveRef.current = request.resolve;
+  useEffect(() => {
+    boxRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      resolveRef.current(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const tooLong = note.length > MAX_SENT_NOTE;
+  return (
+    <PanePrompt
+      open
+      role="dialog"
+      title={t("sendAgent.title", {
+        position: stepLabel(request.step),
+        label: request.label,
+      })}
+      description={t("sendAgent.hint")}
+      onCancel={() => request.resolve(null)}
+      actions={
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            data-send-cancel
+            onClick={() => request.resolve(null)}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            size="sm"
+            data-send-confirm
+            disabled={tooLong}
+            onClick={() => request.resolve(note)}
+          >
+            {t("sendAgent.send")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-1" data-send-prompt>
+        <Textarea
+          ref={boxRef}
+          value={note}
+          maxLength={MAX_SENT_NOTE}
+          onChange={(event) =>
+            setNote(event.target.value.slice(0, MAX_SENT_NOTE))
+          }
+          placeholder={t("sendAgent.notePlaceholder")}
+          aria-label={t("sendAgent.notePlaceholder")}
+          className="min-h-20 text-xs"
+        />
+        <span
+          className="self-end text-[11px] text-muted-foreground"
+          data-send-count
+        >
+          {t("sendAgent.count", { count: note.length, max: MAX_SENT_NOTE })}
+        </span>
+      </div>
+    </PanePrompt>
+  );
+}
+
 function RunbookList({
   onOpen,
   isVisible,
@@ -231,6 +318,11 @@ function RunbookList({
                 <ListBadge tone="destructive">
                   {t("list.failed", { count: row.progress.failed })}
                 </ListBadge>
+              )}
+              {(row.amendedPending ?? 0) > 0 && (
+                <span data-amended-badge>
+                  <ListBadge tone="warning">{t("list.amended")}</ListBadge>
+                </span>
               )}
             </>
           }
@@ -355,6 +447,8 @@ function RunbookDetail({
 
   /** The open early-start question, if any. */
   const [early, setEarly] = useState<EarlyRequest | null>(null);
+  /** The open Send to agent dialog, if any. */
+  const [sending, setSending] = useState<SendRequest | null>(null);
 
   /**
    * Asks before a start while the step's wait timer runs: one question,
@@ -494,11 +588,17 @@ function RunbookDetail({
       }
       if (status === 409 && data.code === "order") {
         const blocking =
-          (data.blocking as Array<{ position: number; title: string }>) ?? [];
+          (data.blocking as Array<{
+            position: number;
+            label?: string;
+            title: string;
+          }>) ?? [];
         const anyway = await confirm({
           title: t("order.title"),
           description: t("order.hint", {
-            steps: blocking.map((b) => `${b.position}. ${b.title}`).join(", "),
+            steps: blocking
+              .map((b) => `${b.label ?? b.position}. ${b.title}`)
+              .join(", "),
           }),
           confirmLabel: t("order.anyway"),
           destructive: false,
@@ -527,7 +627,7 @@ function RunbookDetail({
           flags = { waitAnyway: true };
         } else {
           const ok = await confirm({
-            title: t("run.confirmTitle", { position: step.position }),
+            title: t("run.confirmTitle", { position: stepLabel(step) }),
             description: runDetails(step),
             confirmLabel: t("run.confirm"),
             destructive: false,
@@ -547,7 +647,7 @@ function RunbookDetail({
     stop: (step) =>
       void withBusy(async () => {
         const ok = await confirm({
-          title: t("stop.title", { position: step.position }),
+          title: t("stop.title", { position: stepLabel(step) }),
           description: t("stop.hint"),
           confirmLabel: t("stop.confirm"),
           destructive: true,
@@ -648,12 +748,16 @@ function RunbookDetail({
         }
       }),
 
-    manual: (step, outcome, note) =>
+    manual: (step, outcome, note, output) =>
       void withBusy(async () => {
         try {
           const { data } = await api.post<Runbook>(`/steps/${step.id}/manual`, {
             outcome,
             note,
+            // A step run outside Termix: bound to the revision shown.
+            ...(step.where
+              ? { output: output ?? "", revision: step.revision }
+              : {}),
           });
           setRunbook(data);
         } catch (error) {
@@ -666,6 +770,32 @@ function RunbookDetail({
         try {
           const { data } = await api.post<Runbook>(`/steps/${step.id}/reopen`);
           setRunbook(data);
+        } catch (error) {
+          fail(error);
+        }
+      }),
+
+    sendToAgent: (step) =>
+      void withBusy(async () => {
+        const label = runbook?.agentLabel ?? runbook?.createdBy ?? "";
+        const note = await new Promise<string | null>((resolve) =>
+          setSending({
+            step,
+            label,
+            resolve: (value) => {
+              setSending(null);
+              resolve(value);
+            },
+          }),
+        );
+        if (note === null) return;
+        try {
+          const { data } = await api.post<Runbook>(
+            `/steps/${step.id}/send-to-agent`,
+            { note },
+          );
+          setRunbook(data);
+          toast.success(t("sendAgent.sent", { label }));
         } catch (error) {
           fail(error);
         }
@@ -774,7 +904,21 @@ function RunbookDetail({
         </span>
       </div>
 
+      {runbook.owner && (
+        <p className="-mt-2 text-xs text-muted-foreground" data-runbook-owner>
+          {runbook.owner.task
+            ? t("runbook.agentTask", {
+                label: runbook.agentLabel ?? runbook.createdBy,
+                task: runbook.owner.task,
+              })
+            : t("runbook.agent", {
+                label: runbook.agentLabel ?? runbook.createdBy,
+              })}
+        </p>
+      )}
+
       {early && <EarlyStartPrompt request={early} />}
+      {sending && <SendToAgentPrompt request={sending} />}
 
       <Markdown source={runbook.summary} />
 
@@ -795,9 +939,12 @@ function RunbookDetail({
                     {value.source === "author"
                       ? t("values.author")
                       : t("values.captured", {
-                          position:
-                            runbook.steps.find((s) => s.id === value.stepId)
-                              ?.position ?? "?",
+                          position: (() => {
+                            const from = runbook.steps.find(
+                              (s) => s.id === value.stepId,
+                            );
+                            return from ? stepLabel(from) : "?";
+                          })(),
                         })}
                   </td>
                 </tr>
@@ -820,8 +967,10 @@ function RunbookDetail({
             busy={busy}
             actions={actions}
             secrets={(runbook.secrets ?? []).filter(
-              (secret) => secret.step === step.position,
+              (secret) => String(secret.step) === stepLabel(step),
             )}
+            agentLabel={runbook.agentLabel ?? runbook.createdBy}
+            canSendToAgent={Boolean(runbook.canSendToAgent)}
           />
         ))}
       </div>

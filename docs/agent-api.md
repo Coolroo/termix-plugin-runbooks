@@ -5,7 +5,7 @@ order: 1
 
 # Agent API and MCP
 
-An agent talks to Runbooks with a **Runbooks token**, over plain REST or over MCP. Both do the same things: list hosts, propose runbooks and steps, change steps that have not run, and read runbooks with every run and its output. Neither can run, skip or complete a step.
+An agent talks to Runbooks with a **Runbooks token**, over plain REST or over MCP. Both do the same things: list hosts, propose runbooks and steps, change steps that have not run, and read runbooks with every run and its output. Neither can run, skip or reopen a step. The only step an agent can end is its own: a step with `owner: "agent"` (see [Agent steps](#agent-steps)).
 
 ## Tokens
 
@@ -35,19 +35,22 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 
 ## REST
 
-| Method and path               | What it does                                                      |
-| ----------------------------- | ----------------------------------------------------------------- |
-| `GET /hosts`                  | Hosts ticked for the token: `id`, `name`, `address`, `folder`     |
-| `GET /runbooks?status=open`   | Runbooks with progress; `status` is `open`, `done` or `abandoned` |
-| `POST /runbooks`              | Propose a runbook with steps (201)                                |
-| `GET /runbooks/{id}`          | One runbook: steps, notes, every run and its output, newest first |
-| `PATCH /runbooks/{id}`        | Change `title`, `summary`, `values` (the whole set) or `status`   |
-| `POST /runbooks/{id}/steps`   | Add `steps`, at the end or at a 1-based `position` (201)          |
-| `POST /runbooks/{id}/reorder` | `{ "stepIds": [...] }` with every step once                       |
-| `GET /runbooks/{id}/values`   | Effective values and where each came from                         |
-| `PATCH /steps/{id}`           | Change a step that has not run; only the given fields change      |
-| `DELETE /steps/{id}`          | Remove a step that has not run                                    |
-| `POST /mcp`                   | MCP (below)                                                       |
+| Method and path                 | What it does                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| `GET /hosts`                    | Hosts ticked for the token: `id`, `name`, `address`, `folder`                      |
+| `GET /runbooks?status=open`     | Runbooks with progress; `status` is `open`, `done` or `abandoned`                  |
+| `POST /runbooks`                | Propose a runbook with steps (201)                                                 |
+| `GET /runbooks/{id}`            | One runbook: steps, notes, every run and its output, newest first                  |
+| `PATCH /runbooks/{id}`          | Change `title`, `summary`, `values` (the whole set), `status`, `owner` or `notify` |
+| `POST /runbooks/{id}/steps`     | Add `steps`, at the end or at a 1-based `position` (201)                           |
+| `POST /runbooks/{id}/reorder`   | `{ "stepIds": [...] }` with every step once, without amendments                    |
+| `GET /runbooks/{id}/values`     | Effective values and where each came from                                          |
+| `PATCH /steps/{id}`             | Change a step that has not run; only the given fields change                       |
+| `DELETE /steps/{id}`            | Remove a step that has not run                                                     |
+| `POST /steps/{id}/complete`     | End an agent step: `{ outcome, note?, output? }`                                   |
+| `POST /steps/{id}/amend`        | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)     |
+| `GET /events?since=0&limit=100` | Events of the token's runbooks, oldest first; see [Events](#events)                |
+| `POST /mcp`                     | MCP (below)                                                                        |
 
 ### A link for the person
 
@@ -57,23 +60,145 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 
 ### A step
 
-| Field                      | Type            | What it is                                                                                         |
-| -------------------------- | --------------- | -------------------------------------------------------------------------------------------------- |
-| `title`                    | string          | Required. Up to 200 characters.                                                                    |
-| `body`                     | markdown        | What to do and why, shown before the command.                                                      |
-| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only).                                  |
-| `command`                  | string or null  | The shell command. Needs `hostId`.                                                                 |
-| `expect`                   | markdown        | What the person should see when it works.                                                          |
-| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.         |
-| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                   |
-| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                 |
-| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                        |
-| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).        |
-| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                               |
-| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).        |
-| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets). |
+| Field                      | Type            | What it is                                                                                                  |
+| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `title`                    | string          | Required. Up to 200 characters.                                                                             |
+| `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                     |
+| `body`                     | markdown        | What to do and why, shown before the command.                                                               |
+| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                    |
+| `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                             |
+| `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix). |
+| `expect`                   | markdown        | What the person should see when it works.                                                                   |
+| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                  |
+| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                            |
+| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                          |
+| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                                 |
+| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).                 |
+| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                                        |
+| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).                 |
+| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets).          |
 
-A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Add a new step instead.
+A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Amend it instead (see [Amendments](#amendments)).
+
+### Amendments
+
+To fix a step, or to add a step between two steps, amend it in place. Do not add the fix at the end, and do not insert steps that renumber the rest.
+
+```bash
+curl -sS -H "Authorization: Bearer $RUNBOOKS_TOKEN" -H "Content-Type: application/json" \
+  -X POST "$BASE/steps/42/amend" \
+  -d '{ "kind": "replace", "reason": "The unit is app.service, not app.",
+        "step": { "title": "Restart the app", "hostId": 3, "command": "systemctl restart app.service" } }'
+```
+
+| Field    | What it is                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------------- |
+| `kind`   | `replace`: a fixed version of the step. `substep`: an extra step after it.                     |
+| `reason` | Required, one line, up to 500 characters. The person sees "Amended by <token name>: <reason>". |
+| `step`   | The new step, with the same fields and checks as a new step (see [A step](#a-step)).           |
+
+- The new step keeps the step's number and gets the next letter: the first amendment of step 3 is **3a**, the next **3b**, in the order they were made. No other step moves or gets a new number. Steps are in the order (number, letter).
+- `replace` is for a step that did not end done: pending, failed or skipped. The old step's `status` becomes `replaced`. It keeps its runs, the person sees it folded as "Replaced by 3a" and can open it, and it counts as ended: it does not block a later step, and it cannot run, be marked or be skipped. The new step shows the old command struck through above the new one. A replaced step whose output the person hid gives a fixed version with hidden output too.
+- `substep` works on a step in any state, also a done step.
+- An amendment can be amended: replace 3a, and the fixed version is 3b.
+- A later step names an amendment in `stdin` by its label as text: `{ "from": "step", "step": "3a", "stream": "stdout" }`. Numbers (`3` or `"3"`) still name step 3.
+- Every guard of a new step applies: the hosts of the token, the shape rules, secret reads, and the limit of 200 steps. The person runs it with the same Run confirm, repeat guard and host check.
+- Refused: 404 for a step the token does not see, 409 `closed` when the runbook is not open, 409 `running` while a run of the step is running or waits for pasted output, 409 `done` for `replace` on a step that ended done (use `substep`), and 409 `replaced` for `replace` on a step that was already replaced (amend its replacement; `replacedBy` says which).
+- It answers with the whole runbook. Each step has `label` (`"3"` or `"3a"`), `suffix`, `amendment` (`{ kind, reason, by, stepId, stepLabel, oldCommand }` or `null`) and `replacedBy` (`{ id, label }` on a replaced step, otherwise `null`).
+- It records an `amended` event (see [Events](#events)).
+
+With amendments, `POST /runbooks/{id}/steps` with `position` and `reorder` count steps, not amendments: an amendment moves with its step. `DELETE /steps/{id}` removes a sub-step that has not run (the letters after it stay); a step that has amendments, and a fixed version (`replace`), stay.
+
+The person can still **Skip** a fixed version. **Reopen** on a replaced step works only when its fixed version was skipped and never ran; the step is then pending again. Otherwise Reopen is refused with 409 `replaced`.
+
+### Outside Termix
+
+Some commands do not run in a shell on a Termix host: PowerShell on a Windows PC, a browser console, another app. Give such a step `command` and `where`, and no `hostId`, instead of a code block in `body`:
+
+```json
+{
+  "title": "Check the Windows build",
+  "where": "Windows PC, PowerShell as admin",
+  "command": "Get-ComputerInfo -Property OsBuildNumber",
+  "checks": [{ "type": "matches", "pattern": "OsBuildNumber\\s*:\\s*26100" }]
+}
+```
+
+- The person sees "Run outside Termix: <where>", the command with its values filled in, and a **Copy** button (off while a value is missing). There is no Run and no Send to terminal (409 `outside`): Termix never runs it.
+- The person pastes the output and marks the step **Done** or **Failed**. Checks (not `exitCode`) and `captures` read the pasted output; a failed check makes the step failed. It records a run with `mode: "outside"`, the command as the person copied it, and the output as `pastedOutput`.
+- Refused with 400: `where` without `command`, `where` with `hostId`, `stdin`, `secretCaptures`, `exitCode` checks, and `where` on an agent step. A command with no `hostId` and no `where` is refused too.
+- The repeat guard and the command hash do not apply. Done and Failed are bound to the step's revision: a step that changed since the person saw it is refused with 409 `stale`.
+
+Every fenced code block in a step's `body` and `expect` also gets a Copy button; inline code does not.
+
+### Who a runbook belongs to
+
+Set `owner` on a runbook when you create it (`POST /runbooks`, `create_runbook`) or later (`PATCH`, `update_runbook`):
+
+| Field   | Up to          | What it is                                                                                   |
+| ------- | -------------- | -------------------------------------------------------------------------------------------- |
+| `task`  | 64 characters  | The task the runbook is for, such as `T-42` or `ops/T-7`                                     |
+| `agent` | 200 characters | An address of your session that a notification receiver understands; Runbooks never reads it |
+| `label` | 80 characters  | Your name as the person sees it                                                              |
+
+All three are optional; `null` clears the owner. The person sees "Agent: <label> · task <task>" under the runbook's title, with the token's name when there is no label. Notifications carry the owner, so a receiver knows which session to wake (see [Notifications](notifications.md)).
+
+### Agent steps
+
+Some steps are work for the agent between the person's steps: read a dashboard, change a file in a repository, wait for a pipeline. Give such a step `"owner": "agent"`.
+
+- The person sees **Waiting for the agent** with your label instead of Run, Send to terminal or Done. They can only **Skip** it (with a reason) or **Reopen** it. Termix never runs it: Run and Send to terminal are refused with 409 `agent-step`.
+- Its `command` is optional and only says what you will run. It needs no `hostId`; when it has one, the host must be one of the token's.
+- It cannot have `captures`, `secretCaptures`, `stdin` or a wait timer (400). Its checks test the output you hand in, so `exitCode` checks are refused and `contains` or `matches` read that one output, whatever `stream` says.
+
+When it is your turn, that is when every earlier step ended (done, failed or skipped), end the step:
+
+```bash
+curl -sS -H "Authorization: Bearer $RUNBOOKS_TOKEN" -H "Content-Type: application/json" \
+  -X POST "$BASE/steps/41/complete" \
+  -d '{ "outcome": "done", "note": "The error rate is back under 0.1 %.", "output": "error_rate 0.0004\n" }'
+```
+
+| Field     | What it is                                                |
+| --------- | --------------------------------------------------------- |
+| `outcome` | Required: `done` or `failed`                              |
+| `note`    | What you did, up to 2000 characters. The person reads it. |
+| `output`  | What you got, up to 64 KB. The step's checks test it.     |
+
+It records a run with `mode: "agent"`, your token's name as `userId`, the note and the output (as `stdout`). With `outcome: "done"` a failed check makes the step failed. It is refused with 403 `person-step` for a person's step, 409 `order` while an earlier step is still pending, 409 `ended` for a step that already ended (only a person can reopen it) and 409 `closed` when the runbook is not open. A later step can read your output as its standard input with `{ "from": "step", "step": N, "stream": "stdout" }`.
+
+### Events
+
+Runbooks records what happens to a runbook that its agent may want to hear about:
+
+| Type           | When                                                                                                   | `reason`                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `agent-turn`   | An agent step became the next step: a step ended, was skipped or reopened, or the runbook was reopened |                                                                 |
+| `step-failed`  | A step ended failed, also when a check failed                                                          | `exit`, `check`, `stopped`, `interrupted`, `secret` or `manual` |
+| `runbook-done` | The runbook was marked done or abandoned                                                               | `done` or `abandoned`                                           |
+| `sent`         | The person pressed **Send to agent** on a step, maybe with a note                                      |                                                                 |
+| `step-done`    | A step ended done. Recorded only when the runbook's `notify` lists it                                  |                                                                 |
+| `amended`      | An agent amended a step; `stepId` is the new step. Not delivered unless `notify` lists it              | `replace` or `substep`                                          |
+
+`reason` for `step-failed`: `exit` (the command exited non-zero, timed out or could not connect), `check` (a check failed), `stopped` (a person pressed Stop), `interrupted` (Termix or Runbooks restarted while it ran), `secret` (a secret capture found nothing or could not be stored) and `manual` (a person marked it failed, or the agent ended its step with `outcome: "failed"`).
+
+Creating or changing a runbook or its steps is not an event, and neither is a note, hiding output, or starting a run. `agent-turn` is recorded once per change that makes an agent step next, not when you create a runbook whose first step is yours.
+
+`GET /runbooks/{id}` lists the runbook's latest 100 events, newest first, as `events`:
+
+```json
+"events": [
+  { "id": 91, "type": "sent", "reason": null, "stepId": 41, "stepPosition": 3, "stepLabel": "3",
+    "note": "The graph looks odd after 10:05, check it", "createdBy": "alice",
+    "createdAt": "2026-11-09T10:07:00.000Z", "deliveredAt": "2026-11-09T10:07:01.000Z" }
+]
+```
+
+`stepLabel` is `"3a"` for an amendment, with `stepPosition` 3. `GET /events?since=<id>&limit=<n>` (MCP `list_events`) lists the events of every runbook the token sees, oldest first, after the event id `since` (default 0), at most `limit` (default 100, up to 500). Each event also has `runbookId` and `openPath`. The answer is `{ "events": [...], "next": 91 }`: call again with `since` set to `next`. Use it to poll, or to catch up after a missed notification.
+
+#### notify
+
+`notify` on a runbook lists the event types that the [notification webhook](notifications.md) delivers for it. The default is `["agent-turn", "step-failed", "runbook-done", "sent"]`; add `"step-done"` to hear about every step, and `"amended"` to hear about amendments. `sent` is always delivered. Set it on create or with `PATCH`; `null` puts the default back. `GET /runbooks/{id}` shows the list in force.
 
 ### Values and placeholders
 
@@ -264,7 +389,7 @@ A run in the answer looks like this:
 }
 ```
 
-`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted) or `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
+`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
 
 While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. Agents cannot stop a run.
 
@@ -284,6 +409,9 @@ While a command runs, its run has `status: "running"` and `running: true`, `stdo
 | `remove_step`    | Remove a step that has not run                  |
 | `reorder_steps`  | New step order                                  |
 | `get_values`     | Effective values                                |
+| `complete_step`  | End an agent step when it is the agent's turn   |
+| `amend_step`     | Amend a step with a fixed version or a sub-step |
+| `list_events`    | Events of the token's runbooks after an id      |
 
 A tool error (a refused change) comes back as a result with `isError: true` and the reason, so the agent can read it and try something else.
 
@@ -327,3 +455,4 @@ Good habits for the prompt:
 - Ask it to put names, paths and versions in values, so you can read them in one place.
 - Ask it to hide output that could hold secrets.
 - Ask it to pass secrets and earlier output with `stdin` and `secretCaptures`, never by putting them in a command, so you do not copy them from step to step.
+- Ask it to set `owner` with its task, and to make its own work agent steps (`"owner": "agent"`) instead of steps that say "tell the agent". With notifications on, the agent hears when it is its turn; without them it can poll `list_events`.

@@ -8,6 +8,7 @@
 import type { RunRow, Store } from "./store.js";
 import { now } from "./store.js";
 import type { StreamName } from "./stream-exec.js";
+import { SYSTEM, type Events } from "./events.js";
 
 export const FLUSH_MS = 2000;
 export const INTERRUPTED = "interrupted: Termix restarted while it ran";
@@ -222,9 +223,13 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
 
 /**
  * Runs left in `running` by a Termix that stopped: nothing will finish them,
- * so they fail, keeping the output that was written, and so do their steps.
+ * so they fail, keeping the output that was written, and so do their steps
+ * (a step-failed event each, reason "interrupted").
  */
-export async function sweepInterrupted(store: Store): Promise<number> {
+export async function sweepInterrupted(
+  store: Store,
+  events?: Events,
+): Promise<number> {
   const left = await store.listRuns({ status: "running" });
   if (left.length === 0) return 0;
   const touched = new Set<number>();
@@ -236,11 +241,16 @@ export async function sweepInterrupted(store: Store): Promise<number> {
     });
     const step = await store.getStep(run.stepId);
     if (step) {
-      await store.updateStep(step.id, {
-        status: "failed",
-        skipReason: null,
-        endedAt: now(),
-      });
+      const fail = async () => {
+        await store.updateStep(step.id, {
+          status: "failed",
+          skipReason: null,
+          endedAt: now(),
+        });
+        await events?.stepEnded(step, "failed", "interrupted", SYSTEM);
+      };
+      if (events) await events.around(step.runbookId, SYSTEM, fail);
+      else await fail();
       touched.add(step.runbookId);
     }
   }

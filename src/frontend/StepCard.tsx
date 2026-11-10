@@ -9,6 +9,7 @@ import {
 } from "@termix-ssh/plugin-sdk/ui";
 import { describeCheck } from "../shared/checks";
 import { Markdown } from "./Markdown";
+import { CopyButton } from "./CopyButton";
 import type {
   Check,
   CheckResult,
@@ -29,7 +30,18 @@ export interface StepActions {
   saveNote: (step: Step, note: string) => void;
   setHidden: (step: Step, hidden: boolean) => void;
   /** Records a step with no command as done or failed, with a note. */
-  manual: (step: Step, outcome: "done" | "failed", note: string) => void;
+  /**
+   * Marks a step with no command done or failed; for a step run outside
+   * Termix (1.4.0), with the output the person pasted.
+   */
+  manual: (
+    step: Step,
+    outcome: "done" | "failed",
+    note: string,
+    output?: string,
+  ) => void;
+  /** Asks for a note and sends the step to the runbook's agent (1.4.0). */
+  sendToAgent: (step: Step) => void;
   complete: (
     run: Run,
     pasted: string,
@@ -120,7 +132,45 @@ const STATUS_TONE = {
   done: "success",
   failed: "destructive",
   skipped: "warning",
+  replaced: "muted",
 } as const;
+
+/** "3", or "3a" for an amendment (1.4.0). */
+export function stepLabel(step: { position: number; label?: string }): string {
+  return step.label ?? String(step.position);
+}
+
+/**
+ * How an agent amended this step: "Amended by <agent>: <reason>", and for
+ * a fixed version, the command it replaces, struck through.
+ */
+function AmendmentNote({ step }: { step: Step }) {
+  const { t } = useTranslation();
+  const amendment = step.amendment;
+  if (!amendment) return null;
+  return (
+    <div className="mt-2 text-xs" data-amendment={amendment.kind}>
+      <p className="text-muted-foreground">
+        {t(
+          amendment.kind === "replace" ? "amend.replaces" : "amend.substepOf",
+          { label: amendment.stepLabel ?? "?" },
+        )}
+      </p>
+      <p className="mt-0.5" data-amend-reason>
+        {t("amend.by", { agent: amendment.by, reason: amendment.reason })}
+      </p>
+      {amendment.kind === "replace" && amendment.oldCommand !== null && (
+        <pre
+          className="mt-1 overflow-x-auto border border-border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-all text-muted-foreground"
+          aria-label={t("amend.oldCommand")}
+          data-old-command
+        >
+          <del>{amendment.oldCommand}</del>
+        </pre>
+      )}
+    </div>
+  );
+}
 
 export function formatTime(iso: string | null): string {
   if (!iso) return "";
@@ -290,26 +340,6 @@ function LiveRun({ run }: { run: Run }) {
   );
 }
 
-function CopyButton({ text }: { text: string }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="xs"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1200);
-        });
-      }}
-    >
-      {copied ? t("step.copied") : t("step.copy")}
-    </Button>
-  );
-}
-
 function Output({ label, text }: { label: string; text: string | null }) {
   if (!text) return null;
   return (
@@ -354,9 +384,17 @@ function RunDetails({
               ? run.status === "done"
                 ? "run.manualDone"
                 : "run.manualFailed"
-              : run.mode === "exec"
-                ? "run.byExec"
-                : "run.byTerminal",
+              : run.mode === "outside"
+                ? run.status === "done"
+                  ? "run.outsideDone"
+                  : "run.outsideFailed"
+                : run.mode === "agent"
+                  ? run.status === "done"
+                    ? "run.agentDone"
+                    : "run.agentFailed"
+                  : run.mode === "exec"
+                    ? "run.byExec"
+                    : "run.byTerminal",
             {
               user: run.userId,
               time: formatTime(run.startedAt),
@@ -382,7 +420,7 @@ function RunDetails({
           </span>
         ) : null}
       </div>
-      {run.mode !== "manual" && (
+      {run.mode !== "manual" && run.mode !== "agent" && (
         <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
           $ {run.command}
         </pre>
@@ -477,6 +515,8 @@ export function StepCard({
   busy,
   actions,
   secrets = [],
+  agentLabel = "",
+  canSendToAgent = false,
 }: {
   step: Step;
   isNext: boolean;
@@ -485,6 +525,10 @@ export function StepCard({
   actions: StepActions;
   /** The secrets this step captures, and whether each is stored now. */
   secrets?: SecretState[];
+  /** Who the runbook belongs to, for an agent step. */
+  agentLabel?: string;
+  /** Agent notifications are on and the runbook has an owner. */
+  canSendToAgent?: boolean;
 }) {
   const { t } = useTranslation();
   const [note, setNote] = useState(step.ownerNote);
@@ -492,12 +536,16 @@ export function StepCard({
   const [skipping, setSkipping] = useState(false);
   const [reason, setReason] = useState("");
   const [showEarlier, setShowEarlier] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [outsideOutput, setOutsideOutput] = useState("");
+  const replaced = step.status === "replaced";
 
   // Agent edits and polls must not wipe a note being typed.
   useEffect(() => {
     if (!editingNote) setNote(step.ownerNote);
   }, [step.ownerNote, editingNote]);
 
+  const agentStep = step.owner === "agent";
   const [latest, ...earlier] = step.runs;
   const running = step.runs.some((run) => run.running);
   const waitLeft = useWaitRemaining(step.wait);
@@ -509,6 +557,7 @@ export function StepCard({
       : [];
   const runnable =
     !running &&
+    !replaced &&
     runbookOpen &&
     step.hostId !== null &&
     step.resolvedCommand !== null &&
@@ -524,32 +573,164 @@ export function StepCard({
     ? t("stdin.useRun", { source: describeStdin(t, stdin.source) })
     : null;
 
+  const header = (
+    <header className="flex flex-wrap items-center gap-2">
+      <span className="font-mono text-xs text-muted-foreground" data-label>
+        {stepLabel(step)}.
+      </span>
+      <h3
+        className={cn(
+          "text-sm font-semibold",
+          replaced && "text-muted-foreground",
+        )}
+      >
+        {step.title}
+      </h3>
+      <ListBadge tone={STATUS_TONE[step.status] ?? "muted"}>
+        {t(`step.status.${step.status}`)}
+      </ListBadge>
+      {step.amendment && (
+        <ListBadge tone="warning">{t("amend.badge")}</ListBadge>
+      )}
+      {isNext && <ListBadge tone="brand">{t("step.next")}</ListBadge>}
+      {agentStep && (
+        <span data-agent-step>
+          <ListBadge tone="muted">{t("step.agentBadge")}</ListBadge>
+        </span>
+      )}
+      {step.hideOutputFromAgents && (
+        <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
+      )}
+    </header>
+  );
+
+  const replacedLine = replaced && (
+    <div
+      className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+      data-replaced-by={step.replacedBy?.label ?? ""}
+    >
+      <span>
+        {step.replacedBy
+          ? t("amend.replacedBy", { label: step.replacedBy.label })
+          : t("amend.replaced")}
+      </span>
+      <button
+        type="button"
+        className="underline"
+        aria-expanded={expanded}
+        data-replaced-toggle
+        onClick={() => setExpanded((open) => !open)}
+      >
+        {expanded ? t("amend.hide") : t("amend.show")}
+      </button>
+    </div>
+  );
+
+  // A replaced step stays in the history, folded until the person opens it.
+  if (replaced && !expanded) {
+    return (
+      <section
+        className="border border-dashed border-border p-3 opacity-80"
+        data-step={step.id}
+        data-collapsed
+      >
+        {header}
+        {replacedLine}
+      </section>
+    );
+  }
+
   return (
     <section
       className={cn(
         "border border-border p-3",
         isNext && "border-accent-brand",
+        replaced && "border-dashed",
       )}
       data-step={step.id}
       aria-current={isNext ? "step" : undefined}
     >
-      <header className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs text-muted-foreground">
-          {step.position}.
-        </span>
-        <h3 className="text-sm font-semibold">{step.title}</h3>
-        <ListBadge tone={STATUS_TONE[step.status]}>
-          {t(`step.status.${step.status}`)}
-        </ListBadge>
-        {isNext && <ListBadge tone="brand">{t("step.next")}</ListBadge>}
-        {step.hideOutputFromAgents && (
-          <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
-        )}
-      </header>
+      {header}
+      {replacedLine}
+      <AmendmentNote step={step} />
 
-      <Markdown source={step.body} className="mt-2" />
+      <Markdown source={step.body} className="mt-2" copyCode />
 
-      {step.hostId !== null && (
+      {agentStep && step.command !== null && (
+        <div className="mt-2" data-agent-command>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            {step.hostName
+              ? t("step.agentCommandOn", { host: step.hostName })
+              : t("step.agentCommand")}
+          </div>
+          <pre className="mt-1 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all">
+            {step.resolvedCommand ?? step.command}
+          </pre>
+        </div>
+      )}
+
+      {!agentStep && step.where && step.command !== null && (
+        <div className="mt-2" data-outside>
+          <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span data-outside-where>
+              {t("outside.where", { where: step.where })}
+            </span>
+            <CopyButton
+              text={step.resolvedCommand ?? step.command}
+              disabled={step.missing.length > 0}
+              title={
+                step.missing.length > 0
+                  ? t("step.missing", { names: step.missing.join(", ") })
+                  : undefined
+              }
+            />
+          </div>
+          <pre className="mt-1 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all">
+            {step.resolvedCommand ?? step.command}
+          </pre>
+          {step.missing.length > 0 && (
+            <p className="mt-1 text-xs text-destructive">
+              {t("step.missing", { names: step.missing.join(", ") })}
+            </p>
+          )}
+          {runbookOpen && !replaced && step.status === "pending" && (
+            <div className="mt-2 flex flex-col gap-2" data-outside-paste>
+              <Textarea
+                value={outsideOutput}
+                onChange={(event) => setOutsideOutput(event.target.value)}
+                placeholder={t("outside.pastePlaceholder")}
+                aria-label={t("outside.pastePlaceholder")}
+                className="min-h-20 font-mono text-xs"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  data-outside-mark="done"
+                  disabled={busy || step.missing.length > 0}
+                  onClick={() =>
+                    actions.manual(step, "done", note, outsideOutput)
+                  }
+                >
+                  {t("step.done")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-outside-mark="failed"
+                  disabled={busy || step.missing.length > 0}
+                  onClick={() =>
+                    actions.manual(step, "failed", note, outsideOutput)
+                  }
+                >
+                  {t("step.failed")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!agentStep && step.hostId !== null && (
         <div className="mt-2">
           <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
             <span>
@@ -605,7 +786,7 @@ export function StepCard({
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
             {t("step.expect")}
           </div>
-          <Markdown source={step.expect} />
+          <Markdown source={step.expect} copyCode />
         </div>
       )}
 
@@ -648,7 +829,7 @@ export function StepCard({
           {!wait.previousEnded
             ? t("wait.later", {
                 time: formatWait(wait.seconds),
-                position: wait.previous.position,
+                position: wait.previous.label ?? wait.previous.position,
               })
             : notYet
               ? t("wait.running", { time: formatDuration(waitLeft + 999) })
@@ -665,9 +846,9 @@ export function StepCard({
         </p>
       )}
 
-      {runbookOpen && (
+      {(runbookOpen || canSendToAgent) && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {running && (
+          {runbookOpen && running && (
             <Button
               size="sm"
               variant="destructive"
@@ -677,32 +858,48 @@ export function StepCard({
               {t("step.stop")}
             </Button>
           )}
-          {step.hostId !== null && step.command !== null && (
-            <>
-              <Button
-                size="sm"
-                variant={notYet ? "outline" : "default"}
-                className={cn(notYet && "opacity-60")}
-                data-not-yet={notYet || undefined}
-                disabled={!runnable || busy || blocked}
-                onClick={() => actions.run(step, notYet ? waitLeft : 0)}
-              >
-                {t("step.run")}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className={cn(notYet && "opacity-60")}
-                data-not-yet={notYet || undefined}
-                disabled={!runnable || busy || blocked || Boolean(sendRefused)}
-                title={sendRefused ?? undefined}
-                onClick={() => actions.send(step, notYet ? waitLeft : 0)}
-              >
-                {t("step.send")}
-              </Button>
-            </>
+          {runbookOpen && agentStep && step.status === "pending" && (
+            <span
+              className="self-center text-xs text-muted-foreground"
+              data-agent-waiting
+            >
+              {t("step.agentWaiting", { label: agentLabel })}
+            </span>
           )}
-          {step.hostId === null &&
+          {runbookOpen &&
+            !agentStep &&
+            !replaced &&
+            step.hostId !== null &&
+            step.command !== null && (
+              <>
+                <Button
+                  size="sm"
+                  variant={notYet ? "outline" : "default"}
+                  className={cn(notYet && "opacity-60")}
+                  data-not-yet={notYet || undefined}
+                  disabled={!runnable || busy || blocked}
+                  onClick={() => actions.run(step, notYet ? waitLeft : 0)}
+                >
+                  {t("step.run")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={cn(notYet && "opacity-60")}
+                  data-not-yet={notYet || undefined}
+                  disabled={
+                    !runnable || busy || blocked || Boolean(sendRefused)
+                  }
+                  title={sendRefused ?? undefined}
+                  onClick={() => actions.send(step, notYet ? waitLeft : 0)}
+                >
+                  {t("step.send")}
+                </Button>
+              </>
+            )}
+          {runbookOpen &&
+            !agentStep &&
+            step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (
               <>
@@ -725,35 +922,51 @@ export function StepCard({
                 </Button>
               </>
             )}
-          {step.status === "pending" ? (
+          {runbookOpen &&
+            (step.status === "pending" ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setSkipping(true)}
+              >
+                {t("step.skip")}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => actions.reopen(step)}
+              >
+                {t("step.reopen")}
+              </Button>
+            ))}
+          {runbookOpen && (
             <Button
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => setSkipping(true)}
+              onClick={() =>
+                actions.setHidden(step, !step.hideOutputFromAgents)
+              }
             >
-              {t("step.skip")}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => actions.reopen(step)}
-            >
-              {t("step.reopen")}
+              {step.hideOutputFromAgents
+                ? t("step.showToAgents")
+                : t("step.hideFromAgents")}
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => actions.setHidden(step, !step.hideOutputFromAgents)}
-          >
-            {step.hideOutputFromAgents
-              ? t("step.showToAgents")
-              : t("step.hideFromAgents")}
-          </Button>
+          {canSendToAgent && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-send-to-agent
+              disabled={busy}
+              onClick={() => actions.sendToAgent(step)}
+            >
+              {t("step.sendToAgent")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -791,6 +1004,28 @@ export function StepCard({
             </Button>
           </div>
         </div>
+      )}
+
+      {(step.sent ?? []).length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1 text-xs" data-sent-history>
+          {(step.sent ?? []).map((sent) => (
+            <li
+              key={sent.id}
+              className="border-l-2 border-border pl-3 text-muted-foreground"
+              data-sent={sent.id}
+            >
+              {t(sent.note ? "sendAgent.historyNote" : "sendAgent.history", {
+                user: sent.createdBy,
+                time: formatTime(sent.createdAt),
+              })}
+              {sent.note && (
+                <p className="mt-0.5 whitespace-pre-wrap text-foreground">
+                  {sent.note}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       {latest && (

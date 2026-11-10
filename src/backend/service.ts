@@ -5,10 +5,13 @@
  */
 
 import type {
+  EventRow,
   NewStep,
   RunRow,
+  RunbookOwner,
   RunbookRow,
   RunbookStatus,
+  StepOwner,
   StepRow,
   Store,
 } from "./store.js";
@@ -33,6 +36,14 @@ import {
   stdinProblem,
   type StdinSource,
 } from "./stdin.js";
+import {
+  compareSteps,
+  isBefore,
+  parseStepRef,
+  stepLabel,
+  stepRef,
+  type StepNumber,
+} from "../shared/steps.js";
 
 /** A step as an author writes it: stdin names an earlier step by position. */
 export type AuthorStep = Omit<NewStep, "stdin"> & {
@@ -56,7 +67,16 @@ export const LIMITS = {
   waitMin: 1,
   waitMax: 86_400,
   waitReason: 500,
+  ownerTask: 64,
+  ownerAgent: 200,
+  ownerLabel: 80,
+  agentNote: 2_000,
+  agentOutputBytes: 65_536,
+  amendReason: 500,
+  where: 80,
 };
+
+export const STEP_OWNERS: StepOwner[] = ["person", "agent"];
 
 export class InputError extends Error {
   constructor(
@@ -105,6 +125,39 @@ export function parseValues(value: unknown): Values {
   return { ...(value as Values) };
 }
 
+/**
+ * Who a runbook belongs to: { task?, agent?, label? }, each a short string.
+ * Null (or an object with nothing in it) clears it.
+ */
+export function parseOwner(value: unknown): RunbookOwner | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new InputError(
+      "owner must be an object { task, agent, label } or null",
+    );
+  }
+  const raw = value as Record<string, unknown>;
+  const limits = {
+    task: LIMITS.ownerTask,
+    agent: LIMITS.ownerAgent,
+    label: LIMITS.ownerLabel,
+  } as const;
+  for (const key of Object.keys(raw)) {
+    if (!(key in limits)) throw new InputError(`unknown owner field "${key}"`);
+  }
+  const out: RunbookOwner = {};
+  for (const key of Object.keys(limits) as Array<keyof typeof limits>) {
+    const field = raw[key];
+    if (field === undefined || field === null) continue;
+    const given = text(field, `owner.${key}`, limits[key]).trim();
+    if (/[\u0000-\u001f\u007f]/.test(given)) {
+      throw new InputError(`owner.${key} must not contain control characters`);
+    }
+    if (given) out[key] = given;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function parseStatus(value: unknown): RunbookStatus {
   if (!RUNBOOK_STATUSES.includes(value as RunbookStatus)) {
     throw new InputError(
@@ -140,6 +193,8 @@ export function parseStepInput(
     "waitReason",
     "stdin",
     "secretCaptures",
+    "owner",
+    "where",
   ]);
   for (const key of Object.keys(raw)) {
     if (!known.has(key)) throw new InputError(`unknown step field "${key}"`);
@@ -149,6 +204,13 @@ export function parseStepInput(
     !options.partial || Object.prototype.hasOwnProperty.call(raw, key);
 
   if (has("title")) out.title = parseTitle(raw.title);
+  if (has("owner")) {
+    const owner = raw.owner ?? "person";
+    if (!STEP_OWNERS.includes(owner as StepOwner)) {
+      throw new InputError('owner must be "person" or "agent"');
+    }
+    out.owner = owner as StepOwner;
+  }
   if (has("body")) out.body = text(raw.body, "body", LIMITS.body);
   if (has("expect")) out.expect = text(raw.expect, "expect", LIMITS.expect);
   if (has("hostId")) {
@@ -168,6 +230,18 @@ export function parseStepInput(
       else if (value.includes("\0")) {
         throw new InputError("command must not contain NUL characters");
       } else out.command = value;
+    }
+  }
+  if (has("where")) {
+    const where = raw.where;
+    if (where === null || where === undefined || where === "") {
+      out.where = null;
+    } else {
+      const value = text(where, "where", LIMITS.where).trim();
+      if (/[\u0000-\u001f\u007f]/.test(value)) {
+        throw new InputError("where must be one line");
+      }
+      out.where = value === "" ? null : value;
     }
   }
   if (has("captures")) {
@@ -282,6 +356,7 @@ export function secretCapturesProblem(input: unknown): string | null {
 export function secretReadsProblem(
   steps: Array<{
     position: number;
+    suffix?: string | null;
     title?: string;
     stdin: { from: string; name?: string } | null;
     secretCaptures: Capture[];
@@ -292,11 +367,11 @@ export function secretReadsProblem(
     if (!stdin || stdin.from !== "secret" || stdin.name === undefined) continue;
     const captured = steps.some(
       (other) =>
-        other.position < step.position &&
+        isBefore(other, step) &&
         other.secretCaptures.some((capture) => capture.name === stdin.name),
     );
     if (!captured) {
-      return `step ${step.position} reads secret ${stdin.name}, which no earlier step captures (secretCaptures)`;
+      return `step ${stepLabel(step)} reads secret ${stdin.name}, which no earlier step captures (secretCaptures)`;
     }
   }
   return null;
@@ -318,6 +393,8 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
     waitAfterPreviousSeconds: parsed.waitAfterPreviousSeconds ?? null,
     waitReason: parsed.waitReason ?? null,
     stdin: parsed.stdin ?? null,
+    owner: parsed.owner ?? "person",
+    where: parsed.where ?? null,
   };
   checkStepShape(step);
   return step;
@@ -325,7 +402,9 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
 
 /**
  * A command needs a host to run on, captures and checks need a command, and
- * a value check names one of the step's captures.
+ * a value check names one of the step's captures. An agent step is never run
+ * by Termix: its command only says what the agent will run, and its checks
+ * test the output the agent hands in.
  */
 export function checkStepShape(step: {
   hostId: number | null;
@@ -336,7 +415,22 @@ export function checkStepShape(step: {
   waitReason?: string | null;
   stdin?: unknown;
   secretCaptures?: Capture[];
+  owner?: StepOwner;
+  where?: string | null;
 }): void {
+  if (step.owner === "agent") {
+    if (step.where) {
+      throw new InputError(
+        "where is for a person's step: an agent step's command needs no host",
+      );
+    }
+    checkAgentStepShape(step);
+    return;
+  }
+  if (step.where) {
+    checkOutsideStepShape(step);
+    return;
+  }
   if ((step.secretCaptures ?? []).length > 0 && step.command === null) {
     throw new InputError(
       "secretCaptures need a command whose output they read",
@@ -346,7 +440,9 @@ export function checkStepShape(step: {
     throw new InputError("waitReason needs waitAfterPreviousSeconds");
   }
   if (step.command !== null && step.hostId === null) {
-    throw new InputError("a step with a command needs a hostId");
+    throw new InputError(
+      "a step with a command needs a hostId, or where for a command the person runs outside Termix",
+    );
   }
   if (step.stdin && step.command === null) {
     throw new InputError("stdin needs a command that reads it");
@@ -362,6 +458,79 @@ export function checkStepShape(step: {
     checks,
     step.captures.map((capture) => capture.name),
   );
+  if (problem) throw new InputError(problem);
+}
+
+/**
+ * A person step run outside Termix (1.4.0): a command, no host, and where.
+ * Termix never runs it, so nothing that only a Run gives works: standard
+ * input, secret captures and exit codes.
+ */
+function checkOutsideStepShape(
+  step: Parameters<typeof checkStepShape>[0],
+): void {
+  if (step.command === null) {
+    throw new InputError("where needs a command the person runs there");
+  }
+  if (step.hostId !== null) {
+    throw new InputError(
+      "a step with where runs outside Termix: leave out hostId",
+    );
+  }
+  if (step.stdin) {
+    throw new InputError(
+      "a step run outside Termix cannot have stdin: Termix never runs it",
+    );
+  }
+  if ((step.secretCaptures ?? []).length > 0) {
+    throw new InputError(
+      "a step run outside Termix cannot have secretCaptures: the pasted output is not kept as a secret",
+    );
+  }
+  if (step.waitReason && !step.waitAfterPreviousSeconds) {
+    throw new InputError("waitReason needs waitAfterPreviousSeconds");
+  }
+  const checks = step.checks ?? [];
+  if (checks.some((check) => check.type === "exitCode")) {
+    throw new InputError(
+      "a step run outside Termix has no exit code: use contains, notContains, matches, notMatches or value checks on the pasted output",
+    );
+  }
+  const problem = checksProblem(
+    checks,
+    step.captures.map((capture) => capture.name),
+  );
+  if (problem) throw new InputError(problem);
+}
+
+function checkAgentStepShape(step: Parameters<typeof checkStepShape>[0]): void {
+  if (step.captures.length > 0) {
+    throw new InputError(
+      "an agent step cannot have captures: Termix never runs it, so it has no output to capture from",
+    );
+  }
+  if ((step.secretCaptures ?? []).length > 0) {
+    throw new InputError(
+      "an agent step cannot have secretCaptures: Termix never runs it",
+    );
+  }
+  if (step.stdin) {
+    throw new InputError(
+      "an agent step cannot have stdin: Termix never runs it",
+    );
+  }
+  if (step.waitAfterPreviousSeconds || step.waitReason) {
+    throw new InputError(
+      "an agent step cannot have a wait timer: the agent completes it when it is its turn",
+    );
+  }
+  const checks = step.checks ?? [];
+  if (checks.some((check) => check.type === "exitCode")) {
+    throw new InputError(
+      "an agent step has no exit code: use contains, notContains, matches or notMatches checks on its output",
+    );
+  }
+  const problem = checksProblem(checks, []);
   if (problem) throw new InputError(problem);
 }
 
@@ -440,10 +609,29 @@ export function resolveStep(
   };
 }
 
-/** A step's stdin source as views show it: earlier steps by position. */
+/**
+ * A step's stdin source as views show it: an earlier step by its position,
+ * or by its label ("3a") when it is an amendment.
+ */
 export function stepStdin(step: StepRow, steps: StepRow[]): StdinSource | null {
-  const positions = new Map(steps.map((other) => [other.id, other.position]));
-  return showStdin(step.stdin, (id) => positions.get(id) ?? null);
+  const refs = new Map(steps.map((other) => [other.id, stepRef(other)]));
+  return showStdin(step.stdin, (id) => refs.get(id) ?? null);
+}
+
+/** The step a reference such as 3 or "3a" names, if there is one. */
+export function findStep<T extends StepNumber>(
+  steps: T[],
+  ref: unknown,
+): T | null {
+  const wanted = parseStepRef(ref);
+  if (!wanted) return null;
+  return (
+    steps.find(
+      (other) =>
+        other.position === wanted.position &&
+        (other.suffix ?? null) === wanted.suffix,
+    ) ?? null
+  );
 }
 
 export type StdinText = { text: string } | { problem: string };
@@ -461,8 +649,8 @@ export function stdinText(
 ): StdinText | null {
   let text: string;
   if (source.from === "step") {
-    const from = steps.find((other) => other.position === source.step);
-    if (!from || from.position >= step.position) {
+    const from = findStep(steps, source.step);
+    if (!from || !isBefore(from, step)) {
       return { problem: `step ${source.step} is not an earlier step` };
     }
     const latest = [...(runsByStep.get(from.id) ?? [])]
@@ -511,7 +699,7 @@ export interface StdinView {
 
 export interface WaitState {
   /** The step before this one, whose end starts the timer. */
-  previous: { id: number; position: number; title: string };
+  previous: { id: number; position: number; label: string; title: string };
   seconds: number;
   reason: string | null;
   /** Whether the previous step has ended; no timer runs before it has. */
@@ -523,10 +711,11 @@ export interface WaitState {
 }
 
 /**
- * The wait a step asks for after the step before it (by position). The
- * timer starts when that step last ended: its latest run finished, or it was
- * marked done or skipped. A pending previous step has not ended. Null for a
- * step with no wait, or with no step before it.
+ * The wait a step asks for after the step before it (in the runbook's
+ * order). The timer starts when that step last ended: its latest run
+ * finished, or it was marked done or skipped. A pending previous step has
+ * not ended. A replaced step is not the step before: its replacement stands
+ * in its place. Null for a step with no wait, or with no step before it.
  */
 export function waitState(
   step: StepRow,
@@ -536,13 +725,14 @@ export function waitState(
 ): WaitState | null {
   if (!step.waitAfterPreviousSeconds) return null;
   const previous = steps
-    .filter((other) => other.position < step.position)
-    .sort((a, b) => b.position - a.position)[0];
+    .filter((other) => isBefore(other, step) && other.status !== "replaced")
+    .sort((a, b) => compareSteps(b, a))[0];
   if (!previous) return null;
   const base = {
     previous: {
       id: previous.id,
       position: previous.position,
+      label: stepLabel(previous),
       title: previous.title,
     },
     seconds: step.waitAfterPreviousSeconds,
@@ -622,8 +812,8 @@ export async function loadBundle(
 /** A secret a step captures, as the API, MCP and the page show it. */
 export interface SecretState {
   name: string;
-  /** The position of the step that captures it. */
-  step: number;
+  /** The step that captures it: its position, or its label ("3a"). */
+  step: number | string;
   /** Stored in OpenBao Secrets now: captured, not deleted, not expired. */
   set: boolean;
   expiresAt: string | null;
@@ -656,7 +846,7 @@ export function secretStates(
       );
       out.push({
         name: capture.name,
-        step: step.position,
+        step: stepRef(step),
         set,
         expiresAt: set ? entry!.expiresAt : null,
       });
@@ -679,8 +869,12 @@ export function secretsPending(runbook: RunbookRow, steps: StepRow[]): boolean {
 }
 
 export function progress(steps: StepRow[]) {
+  // A replaced step ended: its replacement does its work.
   const finished = steps.filter(
-    (step) => step.status === "done" || step.status === "skipped",
+    (step) =>
+      step.status === "done" ||
+      step.status === "skipped" ||
+      step.status === "replaced",
   ).length;
   return {
     done: finished,
@@ -708,6 +902,50 @@ export function runbookSummary(runbook: RunbookRow, steps: StepRow[]) {
     updatedAt: runbook.updatedAt,
     revision: runbook.revision,
     progress: progress(steps),
+    // Amendments that have not run yet (1.4.0): the list shows "amended".
+    amendedPending: steps.filter(
+      (step) => step.amendKind !== null && step.status === "pending",
+    ).length,
+  };
+}
+
+/**
+ * What a step shows of amendments (1.4.0): its label, the step it amends
+ * (with that step's command, for a fixed version), and the step that
+ * replaced it.
+ */
+export function amendmentView(step: StepRow, steps: StepRow[]) {
+  const parent =
+    step.amendsStepId === null
+      ? null
+      : (steps.find((other) => other.id === step.amendsStepId) ?? null);
+  const replacement =
+    step.status === "replaced"
+      ? ([...steps]
+          .reverse()
+          .find(
+            (other) =>
+              other.amendsStepId === step.id && other.amendKind === "replace",
+          ) ?? null)
+      : null;
+  return {
+    label: stepLabel(step),
+    amendment:
+      step.amendKind === null
+        ? null
+        : {
+            kind: step.amendKind,
+            reason: step.amendReason ?? "",
+            by: step.amendedBy ?? "",
+            stepId: step.amendsStepId,
+            stepLabel: parent ? stepLabel(parent) : null,
+            // A fixed version shows the command it replaces, struck through.
+            oldCommand:
+              step.amendKind === "replace" ? (parent?.command ?? null) : null,
+          },
+    replacedBy: replacement
+      ? { id: replacement.id, label: stepLabel(replacement) }
+      : null,
   };
 }
 
@@ -718,6 +956,28 @@ export interface ViewOptions {
   secretsAvailable?: boolean;
   /** Why a step that uses secrets cannot run without it. */
   noSecrets?: string;
+  /** Whether agent notifications are on (1.4.0). */
+  notifyEnabled?: boolean;
+  /** The runbook's "sent" events, newest first (1.4.0). */
+  sent?: EventRow[];
+}
+
+/**
+ * What the person sees of who a runbook belongs to: the owner's label, or
+ * the name of the token that made it.
+ */
+export function agentLabel(runbook: RunbookRow): string {
+  return runbook.owner?.label ?? runbook.createdBy;
+}
+
+/**
+ * An agent step's command with its values filled in, to show what the agent
+ * will run. Never a hash: nothing in Termix runs it.
+ */
+function agentCommand(step: StepRow, values: Values): ResolvedStep {
+  if (step.command === null) return { command: null, hash: null, missing: [] };
+  const resolved = resolve(step.command, values);
+  return { command: resolved.text, hash: null, missing: resolved.missing };
 }
 
 /** The whole runbook as the Termix UI shows it. */
@@ -757,13 +1017,24 @@ export function personView(
     values: runbook.values,
     effectiveValues: [...bundle.values.values()],
     nextStepId: next?.id ?? null,
+    owner: runbook.owner,
+    agentLabel: agentLabel(runbook),
+    notifyEnabled: Boolean(options.notifyEnabled),
+    // Send to agent needs notifications on and an agent to send to.
+    canSendToAgent: Boolean(options.notifyEnabled && runbook.owner),
     secretsAvailable: Boolean(options.secretsAvailable),
     secrets: secretStates(bundle),
     steps: steps.map((step) => {
       const source = stepStdin(step, steps);
-      const resolved = resolveStep(step, values, source);
+      // Termix runs neither an agent step nor a step run outside Termix:
+      // their command is shown resolved, without a hash.
+      const resolved =
+        step.owner === "agent" || step.where
+          ? agentCommand(step, values)
+          : resolveStep(step, values, source);
       return {
         ...step,
+        ...amendmentView(step, steps),
         stdin: source ? stdinView(step, source) : null,
         // A step that captures secrets cannot run without the service.
         secretsProblem:
@@ -776,6 +1047,15 @@ export function personView(
         missing: resolved.missing,
         wait: waitState(step, steps, runsByStep),
         runs: runsByStep.get(step.id) ?? [],
+        // Each time a person sent this step to the agent, with the note.
+        sent: (options.sent ?? [])
+          .filter((event) => event.stepId === step.id)
+          .map((event) => ({
+            id: event.id,
+            createdBy: event.createdBy,
+            createdAt: event.createdAt,
+            note: event.note,
+          })),
       };
     }),
   };
@@ -803,6 +1083,7 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
   return {
     ...runbookSummary(runbook, steps),
     openPath: openPath(runbook.id),
+    owner: runbook.owner,
     summary: runbook.summary,
     values: runbook.values,
     effectiveValues: values,
@@ -816,7 +1097,11 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
       return {
         id: step.id,
         position: step.position,
+        suffix: step.suffix,
+        ...amendmentView(step, steps),
         title: step.title,
+        owner: step.owner,
+        where: step.where,
         body: step.body,
         hostId: step.hostId,
         hostName: step.hostId === null ? null : hostName(step.hostId),

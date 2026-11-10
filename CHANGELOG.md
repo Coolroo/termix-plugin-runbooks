@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.4.0
+
+This update asks the admin to agree to two new capabilities: `network:outbound`, to send agent notifications to the webhook an admin sets, and `secrets:own`, to keep the webhook's signing secret sealed with Termix's installation key. Runbooks sends nothing until an admin turns notifications on.
+
+### Added
+
+- A runbook's owner. Agents set `owner: { task, agent, label }` on a runbook (create, `PATCH`, `create_runbook`, `update_runbook`): a task id (up to 64 characters), an address of the agent's session that a notification receiver understands (up to 200), and a label for the person (up to 80). The person sees "Agent: <label or token name> · task <task>" under the title.
+- Agent steps. A step with `owner: "agent"` is work the agent does itself. The person sees "Waiting for the agent" with the agent's label and can only Skip or Reopen it; Run, Send to terminal and Done are refused with 409 `agent-step`. Its command, if any, is shown as "What the agent will run" and needs no host. Captures, secret captures, standard input, wait timers and `exitCode` checks are refused on it (400).
+- `POST /agent/steps/{id}/complete` (MCP `complete_step`): `{ outcome: "done" | "failed", note?, output? }` (note up to 2000 characters, output up to 64 KB). Only for an agent step, once every earlier step ended; refused with 403 `person-step`, 409 `order`, 409 `ended` and 409 `closed`. It records a run in mode `agent` with the token's name, the note and the output, which the step's checks test. Audited.
+- Events: `agent-turn` (an agent step became the next step), `step-failed` (with `reason` `exit`, `check`, `stopped`, `interrupted`, `secret` or `manual`), `runbook-done` (`done` or `abandoned`), `sent` and `step-done` (only when the runbook's `notify` lists it). `GET /agent/runbooks/{id}` lists the latest 100 as `events`; `GET /agent/events?since=<id>&limit=<n>` (MCP `list_events`) pages through all of the token's.
+- `notify` on a runbook: the event types the webhook delivers for it, default `agent-turn`, `step-failed`, `runbook-done`, `sent`.
+- Agent notifications, off by default. Admin settings **Notify agents**, **Webhook address** (https only; http is refused) and **CA certificate (PEM)**, and a section with **Make a new signing secret** (32 random bytes, shown once, sealed) and **Test**. Each wanted event is POSTed once as JSON with ids and labels only (never output, a command or a note's text), with `X-Runbooks-Event` and `X-Runbooks-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Retries after 1, 5, 30 and 120 minutes, then it is given up. See [docs/notifications.md](docs/notifications.md), with a receiver that checks the signature.
+- Amendments. `POST /agent/steps/{id}/amend` (MCP `amend_step`): `{ kind: "replace" | "substep", reason, step }`. A fixed version (`replace`) of a step that did not end done, or an extra step (`substep`) after a step in any state, goes right after it as **3a**, **3b**: the new step keeps the step's position with a letter (`suffix`), and later steps keep their numbers. A replaced step gets status `replaced`, folds to "Replaced by 3a" with its runs, counts as ended and does not run, take a mark or a skip. The new step says "Amended by <token name>: <reason>" (reason up to 500 characters), and a fixed version shows the old command struck through. An amendment can be amended. Refused with 409 `closed`, `running`, `done` (replace on a done step) and `replaced`, and checked like a new step. A step's output hidden from agents stays hidden in its fixed version. Steps have `label`, `suffix`, `amendment` and `replacedBy`; the runbook list says "amended" while an amendment has not run (`amendedPending`).
+- Steps run outside Termix. A person step may have `command` and `where` (up to 80 characters, such as "Windows PC, PowerShell as admin") and no `hostId`. It shows "Run outside Termix: <where>", the resolved command and Copy (off while a value is missing), and no Run or Send to terminal (409 `outside`). The person pastes the output and marks it Done or Failed (`POST /steps/{id}/manual` with `output` and `revision`); checks and captures read the pasted output, and the run has `mode: "outside"`. `where` without a command, with a host, `stdin`, `secretCaptures` or `exitCode` checks is refused (400). Agent API, MCP and amendments take `where`.
+- A Copy button on every fenced code block in a step's text and its "You should see" text.
+- `stdin` names an amendment as `"3a"`; numbers still name steps.
+- Event `amended` (reason `replace` or `substep`, `stepId` the new step), delivered only when `notify` lists it. Events and webhook requests carry `stepLabel` besides `stepPosition`.
+- **Send to agent** on every step when notifications are on and the runbook has an owner: "Send step N to <agent>?" with an optional note of up to 500 characters. It records a `sent` event, always delivered, says "Sent to <agent>", and shows in the step's history.
+
+### Changed
+
+- `POST /agent/steps/{id}/complete` now exists: for a person's step it answers 403 instead of 404.
+- A step with a command and no host is refused with "a step with a command needs a hostId, or where for a command the person runs outside Termix".
+- Reopen of a replaced step works only when its fixed version was skipped and never ran; otherwise 409 `replaced`.
+- With amendments, `position` in add steps and `reorder` count steps, not amendments: an amendment moves with its step. A step with amendments, and a fixed version, cannot be removed.
+- An order refusal's `blocking` and a wait's `previous` also carry the step's `label`.
+
 ## 1.2.0
 
 ### Added

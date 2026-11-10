@@ -40,6 +40,12 @@ export const runbooks = defineTable(
     // were last deleted from OpenBao Secrets (1.2.0). Never the secrets.
     secretsStoredAt: timestamp(),
     secretsRemovedAt: timestamp(),
+    // JSON { task?, agent?, label? }: the agent and task the runbook belongs
+    // to, set by the agent (1.4.0). Null: no owner.
+    owner: text(),
+    // JSON array of the event types the agent wants delivered (1.4.0).
+    // Null: the default list.
+    notify: text(),
   },
   {
     indexes: [
@@ -64,7 +70,8 @@ export const steps = defineTable(
     // JSON array of { name, pattern }.
     captures: text().notNull(),
     hideOutputFromAgents: boolean().notNull(),
-    // pending | done | failed | skipped
+    // pending | done | failed | skipped | replaced (1.4.0: a fixed version
+    // of it was made; it counts as ended)
     status: varchar(16).notNull(),
     skipReason: text(),
     ownerNote: text().notNull(),
@@ -83,6 +90,23 @@ export const steps = defineTable(
     // JSON array of { name, pattern }: secrets a run takes from its output
     // and stores in OpenBao Secrets (1.2.0). Null: none.
     secretCaptures: text(),
+    // person | agent: who does the step (1.4.0). Null on older steps: person.
+    owner: varchar(16),
+    // Where a person runs a command outside Termix (1.4.0), such as
+    // "Windows PC, PowerShell as admin": a person step with a command and
+    // no host. Termix never runs it. Null: not such a step.
+    outsideWhere: varchar(255),
+    // Amendments (1.4.0). An amendment keeps its parent's position and gets
+    // a suffix (a, b, c: 3a, 3b), so later steps never renumber. Null on a
+    // step that is not an amendment.
+    suffix: varchar(8),
+    // The step it amends, and how: replace (a fixed version; the old step's
+    // status becomes "replaced") or substep (an extra step after it).
+    amendsStepId: integer(),
+    amendKind: varchar(16),
+    // Why, as the agent said it (up to 500 characters), and the token name.
+    amendReason: text(),
+    amendedBy: varchar(255),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -98,8 +122,11 @@ export const runs = defineTable(
     id: id(),
     stepId: integer().notNull(),
     runbookId: integer().notNull(),
-    // exec | terminal | manual (1.2.0: a step with no command marked done
-    // or failed by a person; host 0, empty command)
+    // exec | terminal | outside (1.4.0: a step run outside Termix, marked
+    // done or failed by a person with the pasted output; host 0) |
+    // manual (1.2.0: a step with no command marked done
+    // or failed by a person; host 0, empty command) | agent (1.4.0: an agent
+    // step the agent completed; host 0, userId is the token name)
     mode: varchar(16).notNull(),
     // running | awaiting-output | done | failed
     status: varchar(24).notNull(),
@@ -161,5 +188,66 @@ export const tokens = defineTable(
   {},
 );
 
+/*
+ * What happened to a runbook that an agent may want to hear about (1.4.0):
+ * agent-turn, step-failed, runbook-done, sent, step-done and (1.4.0)
+ * amended. Ids and labels
+ * only; a note is kept only on a "sent" event. The delivery columns say
+ * whether the webhook got it: nextAttemptAt is set while a delivery is due,
+ * and cleared when it was delivered or given up.
+ */
+export const events = defineTable(
+  "events",
+  {
+    id: id(),
+    runbookId: integer().notNull(),
+    // Null for an event about the whole runbook.
+    stepId: integer(),
+    // The runbook's createdByUserId: the agent API lists events by it.
+    ownerUserId: varchar(255).notNull(),
+    type: varchar(24).notNull(),
+    // step-failed: exit | check | stopped | interrupted | secret | manual;
+    // runbook-done: done | abandoned; amended (1.4.0): replace | substep.
+    // Null otherwise.
+    reason: varchar(24),
+    // The person's note on a "sent" event, up to 500 characters.
+    note: text(),
+    // A person's user id, a token name, or "termix".
+    createdBy: varchar(255).notNull(),
+    createdAt: timestamp().notNull(),
+    deliveredAt: timestamp(),
+    attempts: integer().notNull(),
+    nextAttemptAt: timestamp(),
+    // Why the last delivery failed: short, never a secret.
+    lastError: text(),
+  },
+  {
+    indexes: [
+      { name: "idx_p_runbooks_events_runbook", columns: ["runbookId"] },
+      { name: "idx_p_runbooks_events_owner", columns: ["ownerUserId"] },
+      { name: "idx_p_runbooks_events_due", columns: ["nextAttemptAt"] },
+    ],
+  },
+);
+
+/*
+ * Named values the plugin keeps for itself (1.4.0). "signing-secret": the
+ * key notifications are signed with, sealed with ctx.secrets.seal, so it is
+ * never in the database in the clear and delivery can read it without an
+ * acting user. updatedBy and updatedAt say who made it and when.
+ */
+export const state = defineTable(
+  "state",
+  {
+    id: id(),
+    name: varchar(64).notNull().unique(),
+    // Sealed. Never sent to a browser after the answer that made it.
+    value: text().notNull(),
+    updatedBy: varchar(255).notNull(),
+    updatedAt: timestamp().notNull(),
+  },
+  {},
+);
+
 // termix-plugin migrations reads this list.
-export const tables = [runbooks, steps, runs, tokens];
+export const tables = [runbooks, steps, runs, tokens, events, state];

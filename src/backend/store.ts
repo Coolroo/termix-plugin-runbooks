@@ -8,13 +8,17 @@ import {
   asc,
   desc,
   eq,
+  gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
+  lte,
   type SQL,
 } from "drizzle-orm";
 import type { PluginDatabase } from "@termix-ssh/plugin-sdk/backend";
 import {
+  events as eventsDef,
   runbooks as runbooksDef,
   runs as runsDef,
   steps as stepsDef,
@@ -23,6 +27,7 @@ import {
 import { parseJson, type Capture, type Values } from "./values.js";
 import type { Check, CheckResult } from "./checks.js";
 import type { RunStdin, StoredStdin } from "./stdin.js";
+import { compareSteps } from "../shared/steps.js";
 
 /** The secrets a run read or stored, by name. Never their values. */
 export interface RunSecrets {
@@ -38,7 +43,29 @@ type Table = any;
 type Drizzle = any;
 
 export type RunbookStatus = "open" | "done" | "abandoned";
-export type StepStatus = "pending" | "done" | "failed" | "skipped";
+export type StepOwner = "person" | "agent";
+
+/** The agent and task a runbook belongs to (1.4.0), as the agent set it. */
+export interface RunbookOwner {
+  /** A task id, such as "T-42". */
+  task?: string;
+  /** An address of the agent session that the receiver understands. */
+  agent?: string;
+  /** Shown to the person. */
+  label?: string;
+}
+/** "replaced" (1.4.0): an amendment replaced it; it counts as ended. */
+export type StepStatus = "pending" | "done" | "failed" | "skipped" | "replaced";
+export type AmendKind = "replace" | "substep";
+
+/** What makes a step an amendment (1.4.0). */
+export interface Amendment {
+  suffix: string;
+  amendsStepId: number;
+  amendKind: AmendKind;
+  amendReason: string;
+  amendedBy: string;
+}
 export type RunStatus = "running" | "awaiting-output" | "done" | "failed";
 
 export interface RunbookRow {
@@ -56,6 +83,27 @@ export interface RunbookRow {
   secretsStoredAt: string | null;
   /** When the runbook's secrets were last deleted (1.2.0). */
   secretsRemovedAt: string | null;
+  /** Who the runbook belongs to (1.4.0); null: nobody said. */
+  owner: RunbookOwner | null;
+  /** Event types the agent wants delivered (1.4.0); null: the default. */
+  notify: string[] | null;
+}
+
+/** Something that happened to a runbook (1.4.0). */
+export interface EventRow {
+  id: number;
+  runbookId: number;
+  stepId: number | null;
+  ownerUserId: string;
+  type: string;
+  reason: string | null;
+  note: string | null;
+  createdBy: string;
+  createdAt: string;
+  deliveredAt: string | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
 }
 
 export interface StepRow {
@@ -78,6 +126,17 @@ export interface StepRow {
   stdin: StoredStdin | null;
   /** Secrets a run takes from its output (1.2.0). */
   secretCaptures: Capture[];
+  /** Who does the step (1.4.0): a person runs it, an agent completes it. */
+  owner: StepOwner;
+  /** 1.4.0: where a person runs the command outside Termix; null if not. */
+  where: string | null;
+  /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
+  suffix: string | null;
+  /** 1.4.0: the step this one amends, how, why and by which token. */
+  amendsStepId: number | null;
+  amendKind: AmendKind | null;
+  amendReason: string | null;
+  amendedBy: string | null;
   status: StepStatus;
   skipReason: string | null;
   ownerNote: string;
@@ -91,9 +150,9 @@ export interface RunRow {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual";
+  mode: "exec" | "terminal" | "manual" | "agent" | "outside";
   status: RunStatus;
-  /** Null for a manual run: its step has no host. */
+  /** Null for a manual or agent run: Termix ran nothing on a host. */
   hostId: number | null;
   command: string;
   commandHash: string;
@@ -157,6 +216,31 @@ function toRunbook(row: Record<string, unknown>): RunbookRow {
     secretsStoredAt: (row.secretsStoredAt as string | null | undefined) ?? null,
     secretsRemovedAt:
       (row.secretsRemovedAt as string | null | undefined) ?? null,
+    owner: parseJson<RunbookOwner | null>(row.owner, null),
+    notify: parseJson<string[] | null>(row.notify, null),
+  };
+}
+
+function toEvent(row: Record<string, unknown>): EventRow {
+  const optional = (value: unknown) =>
+    value === null || value === undefined ? null : String(value);
+  return {
+    id: Number(row.id),
+    runbookId: Number(row.runbookId),
+    stepId:
+      row.stepId === null || row.stepId === undefined
+        ? null
+        : Number(row.stepId),
+    ownerUserId: String(row.ownerUserId),
+    type: String(row.type),
+    reason: optional(row.reason),
+    note: optional(row.note),
+    createdBy: String(row.createdBy),
+    createdAt: String(row.createdAt),
+    deliveredAt: optional(row.deliveredAt),
+    attempts: Number(row.attempts),
+    nextAttemptAt: optional(row.nextAttemptAt),
+    lastError: optional(row.lastError),
   };
 }
 
@@ -187,6 +271,19 @@ function toStep(row: Record<string, unknown>): StepRow {
     secretCaptures: parseJson<Capture[]>(row.secretCaptures, []),
     checks: parseJson<Check[]>(row.checks, []),
     stdin: parseJson<StoredStdin | null>(row.stdin, null),
+    owner: row.owner === "agent" ? "agent" : "person",
+    where: (row.outsideWhere as string | null | undefined) || null,
+    suffix: (row.suffix as string | null | undefined) || null,
+    amendsStepId:
+      row.amendsStepId === null || row.amendsStepId === undefined
+        ? null
+        : Number(row.amendsStepId),
+    amendKind:
+      row.amendKind === "replace" || row.amendKind === "substep"
+        ? row.amendKind
+        : null,
+    amendReason: (row.amendReason as string | null | undefined) ?? null,
+    amendedBy: (row.amendedBy as string | null | undefined) ?? null,
   };
 }
 
@@ -196,7 +293,10 @@ function toRun(row: Record<string, unknown>): RunRow {
     id: Number(row.id),
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
-    hostId: row.mode === "manual" ? null : Number(row.hostId),
+    hostId:
+      row.mode === "manual" || row.mode === "agent" || row.mode === "outside"
+        ? null
+        : Number(row.hostId),
     note: (row.note as string | null | undefined) ?? null,
     startedEarlySeconds:
       row.startedEarlySeconds === null || row.startedEarlySeconds === undefined
@@ -237,6 +337,8 @@ export interface NewStep {
   waitReason: string | null;
   stdin: StoredStdin | null;
   secretCaptures: Capture[];
+  owner: StepOwner;
+  where: string | null;
 }
 
 /** Columns the store keeps as JSON text. */
@@ -256,6 +358,7 @@ export async function createStore(db: PluginDatabase) {
   const steps: Table = await db.define(stepsDef);
   const runs: Table = await db.define(runsDef);
   const tokens: Table = await db.define(tokensDef);
+  const events: Table = await db.define(eventsDef);
   const client = (): Promise<Drizzle> => db.client<Drizzle>();
 
   /** Inserts one row and returns its id. MySQL has no RETURNING. */
@@ -313,13 +416,17 @@ export async function createStore(db: PluginDatabase) {
     values: Values;
     createdBy: string;
     createdByUserId: string;
+    owner?: RunbookOwner | null;
+    notify?: string[] | null;
   }): Promise<number> {
     const at = now();
     return insertId(runbooks, {
+      notify: input.notify ? JSON.stringify(input.notify) : null,
       title: input.title,
       summary: input.summary,
       status: "open",
       values: JSON.stringify(input.values),
+      owner: input.owner ? JSON.stringify(input.owner) : null,
       createdBy: input.createdBy,
       createdByUserId: input.createdByUserId,
       createdAt: at,
@@ -338,6 +445,8 @@ export async function createStore(db: PluginDatabase) {
       values: Values;
       secretsStoredAt: string;
       secretsRemovedAt: string;
+      owner: RunbookOwner | null;
+      notify: string[] | null;
     }> = {},
   ): Promise<void> {
     const current = await getRunbook(id);
@@ -356,6 +465,12 @@ export async function createStore(db: PluginDatabase) {
     if (patch.secretsRemovedAt !== undefined) {
       set.secretsRemovedAt = patch.secretsRemovedAt;
     }
+    if (patch.owner !== undefined) {
+      set.owner = patch.owner ? JSON.stringify(patch.owner) : null;
+    }
+    if (patch.notify !== undefined) {
+      set.notify = patch.notify ? JSON.stringify(patch.notify) : null;
+    }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
   }
 
@@ -367,7 +482,8 @@ export async function createStore(db: PluginDatabase) {
       .from(steps)
       .where(eq(steps.runbookId, runbookId))
       .orderBy(asc(steps.position), asc(steps.id));
-    return rows.map(toStep);
+    // Amendments share their parent's position: (position, suffix) orders.
+    return rows.map(toStep).sort(compareSteps);
   }
 
   async function getStep(id: number): Promise<StepRow | null> {
@@ -386,9 +502,15 @@ export async function createStore(db: PluginDatabase) {
     runbookId: number,
     position: number,
     step: NewStep,
+    amendment: Amendment | null = null,
   ): Promise<number> {
     const at = now();
     return insertId(steps, {
+      suffix: amendment?.suffix ?? null,
+      amendsStepId: amendment?.amendsStepId ?? null,
+      amendKind: amendment?.amendKind ?? null,
+      amendReason: amendment?.amendReason ?? null,
+      amendedBy: amendment?.amendedBy ?? null,
       runbookId,
       position,
       title: step.title,
@@ -409,6 +531,8 @@ export async function createStore(db: PluginDatabase) {
       secretCaptures: step.secretCaptures.length
         ? JSON.stringify(step.secretCaptures)
         : null,
+      owner: step.owner,
+      outsideWhere: step.where,
       endedAt: null,
       revision: 1,
       createdAt: at,
@@ -435,7 +559,8 @@ export async function createStore(db: PluginDatabase) {
     const set: Record<string, unknown> = { updatedAt: now() };
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue;
-      set[key] =
+      // The API's "where" is the column outsideWhere (WHERE is SQL).
+      set[key === "where" ? "outsideWhere" : key] =
         JSON_COLUMNS.has(key) && value !== null ? JSON.stringify(value) : value;
     }
     if (options.edit) set.revision = current.revision + 1;
@@ -653,8 +778,96 @@ export async function createStore(db: PluginDatabase) {
     return true;
   }
 
+  async function insertEvent(
+    input: Omit<
+      EventRow,
+      "id" | "deliveredAt" | "attempts" | "lastError" | "createdAt"
+    >,
+  ): Promise<number> {
+    return insertId(events, {
+      ...input,
+      createdAt: now(),
+      deliveredAt: null,
+      attempts: 0,
+      lastError: null,
+    });
+  }
+
+  async function getEvent(id: number): Promise<EventRow | null> {
+    if (!Number.isInteger(id)) return null;
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+    return rows[0] ? toEvent(rows[0]) : null;
+  }
+
+  /**
+   * Events of one runbook (newest first), or of one person's runbooks after
+   * an id (oldest first, for an agent that polls).
+   */
+  async function listEvents(filter: {
+    runbookId?: number;
+    ownerUserId?: string;
+    afterId?: number;
+    limit: number;
+    order: "newest" | "oldest";
+  }): Promise<EventRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(events.runbookId, filter.runbookId));
+    }
+    if (filter.ownerUserId !== undefined) {
+      conditions.push(eq(events.ownerUserId, filter.ownerUserId));
+    }
+    if (filter.afterId !== undefined) {
+      conditions.push(gt(events.id, filter.afterId));
+    }
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(filter.order === "newest" ? desc(events.id) : asc(events.id))
+      .limit(filter.limit);
+    return rows.map(toEvent);
+  }
+
+  /** Events whose delivery is due at `at`, oldest first. */
+  async function dueEvents(at: string, limit: number): Promise<EventRow[]> {
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(events)
+      .where(
+        and(isNotNull(events.nextAttemptAt), lte(events.nextAttemptAt, at)),
+      )
+      .orderBy(asc(events.id))
+      .limit(limit);
+    return rows.map(toEvent);
+  }
+
+  async function updateEvent(
+    id: number,
+    patch: Partial<
+      Pick<EventRow, "deliveredAt" | "attempts" | "nextAttemptAt" | "lastError">
+    >,
+  ): Promise<void> {
+    await (await client()).update(events).set(patch).where(eq(events.id, id));
+  }
+
   return {
     persist: (lazy = false) => db.persist(lazy ? { lazy: true } : undefined),
+    insertEvent,
+    getEvent,
+    listEvents,
+    dueEvents,
+    updateEvent,
     getRunbook,
     listRunbooks,
     createRunbook,

@@ -27,7 +27,7 @@ const WAIT_HELP =
 
 const STDIN_HELP =
   "A step may get its command's standard input (Run only; Send to terminal is refused for it) from one source: " +
-  '{"from":"step","step":2,"stream":"stdout"} (the latest finished run of an earlier step, by position; refused while it has none or its last run failed, unless you add "allowFailed":true), ' +
+  '{"from":"step","step":2,"stream":"stdout"} (the latest finished run of an earlier step, by number: 2, or "3a" for an amendment; refused while it has none or its last run failed, unless you add "allowFailed":true), ' +
   '{"from":"value","name":"build_id"} (a value, with one newline), ' +
   '{"from":"secret","name":"api_token"} (a secret an earlier step of this runbook captured with secretCaptures) or {"from":"secret","library":"shared/registry/password"} ("mine/<name>" or "shared/<name>" from the OpenBao Secrets library, read as the person who runs it). ' +
   'Example: step 1 "cat /etc/app/config.json", step 2 "jq .version" with stdin {"from":"step","step":1,"stream":"stdout"}. ' +
@@ -39,6 +39,46 @@ const SECRETS_HELP =
   'example: step 2 "vault token create -field=token" with secretCaptures [{"name":"api_token","pattern":"^(\\S+)$"}]; step 3 "docker login -u ci --password-stdin registry.example.com" with stdin {"from":"secret","name":"api_token"}. ' +
   "Secrets never appear in commands, and you never see a value: get_runbook lists secrets as {name, step, set, expiresAt}. It needs the OpenBao Secrets plugin, and the person who runs the step needs its Use secrets permission.";
 
+const AGENT_STEP_HELP =
+  'A step may be yours: owner "agent" (default "person"). The person sees "Waiting for the agent" on it and can only skip or reopen it; Termix never runs it. Its command, if any, only says what you will run (no hostId needed). When every earlier step ended (done, failed or skipped), do the work yourself, then call complete_step with outcome done or failed, a short note and the output you got; its checks (contains, notContains, matches, notMatches) test that output. An agent step cannot have captures, secretCaptures, stdin, a wait timer or exitCode checks. Use it for work you do between the person\'s steps, such as reading a dashboard or changing a file in a repository.';
+
+const AMEND_HELP =
+  'Amend a step in place instead of adding a fix at the end. kind "replace" makes a fixed version of a step that did not end done (pending, failed or skipped): the new step is 3a right after step 3, and step 3 shows "Replaced by 3a", keeps its runs and counts as ended. kind "substep" adds an extra step 3a (then 3b) after step 3 in any state. Later steps keep their numbers. An amendment can be amended too: replace 3a with 3b. reason (up to 500 characters) is shown on the new step. step has the fields of a new step and the same checks. Refused: a closed runbook (409), a step whose run is running (409 running), replace of a step that ended done (409 done: use substep) or was already replaced (409 replaced: amend its replacement). A later step names an amendment in stdin as "3a".';
+
+const WHERE_HELP =
+  'Where the person runs the command when it is not a shell on a Termix host, up to 80 characters: for example "Windows PC, PowerShell as admin" or "browser console on the admin page". A person step with command and where and no hostId shows "Run outside Termix: <where>", the command with its values filled in and a Copy button; Termix never runs it. The person pastes the output and marks the step done or failed; checks (not exitCode) and captures read the pasted output. Not with stdin or secretCaptures. Use it instead of a code block in body for a command that runs outside Termix.';
+
+const OWNER_SCHEMA = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  description:
+    "Who the runbook belongs to, shown to the person under its title: task (up to 64 characters, such as T-42), agent (up to 200, an address of your session that a notification receiver understands) and label (up to 80, your name as the person sees it). Null clears it.",
+  properties: {
+    task: { type: "string", maxLength: 64 },
+    agent: { type: "string", maxLength: 200 },
+    label: { type: "string", maxLength: 80 },
+  },
+};
+
+const EVENTS_HELP =
+  "Runbooks records events: agent-turn (one of your agent steps became the next step: every earlier step ended), step-failed (a step ended failed; reason exit, check, stopped, interrupted, secret or manual), runbook-done (reason done or abandoned), sent (the person pressed Send to agent on a step, maybe with a note) step-done (a step ended done; only when notify lists it) and amended (you amended a step: reason replace or substep; only when notify lists it). notify on a runbook lists the types the notification webhook delivers (default agent-turn, step-failed, runbook-done, sent; sent always goes). Events hold ids only: read the runbook for output and notes.";
+
+const NOTIFY_SCHEMA = {
+  type: ["array", "null"],
+  description: `Event types to deliver for this runbook. Null keeps the default. ${EVENTS_HELP}`,
+  items: {
+    type: "string",
+    enum: [
+      "agent-turn",
+      "step-failed",
+      "runbook-done",
+      "sent",
+      "step-done",
+      "amended",
+    ],
+  },
+};
+
 const STDIN_SCHEMA = {
   type: ["object", "null"],
   description: STDIN_HELP,
@@ -46,9 +86,9 @@ const STDIN_SCHEMA = {
   properties: {
     from: { type: "string", enum: ["step", "value", "secret"] },
     step: {
-      type: "integer",
-      minimum: 1,
-      description: "step: the position of an earlier step.",
+      type: ["integer", "string"],
+      description:
+        'step: the number of an earlier step: 2, or "3a" for an amendment.',
     },
     stream: { type: "string", enum: ["stdout", "stderr"] },
     allowFailed: {
@@ -108,6 +148,11 @@ const STEP_SCHEMA = {
   required: ["title"],
   properties: {
     title: { type: "string", description: "Short name of the step." },
+    owner: {
+      type: "string",
+      enum: ["person", "agent"],
+      description: AGENT_STEP_HELP,
+    },
     body: {
       type: "string",
       description: "Markdown shown before the command: why and what to check.",
@@ -115,7 +160,12 @@ const STEP_SCHEMA = {
     hostId: {
       type: ["integer", "null"],
       description:
-        "Host to run the command on, from list_hosts. Null or absent for a manual step (text only, no command).",
+        "Host to run the command on, from list_hosts. Null or absent for a manual step (text only, no command), and for a command the person runs outside Termix (set where).",
+    },
+    where: {
+      type: ["string", "null"],
+      maxLength: 80,
+      description: WHERE_HELP,
     },
     command: {
       type: ["string", "null"],
@@ -221,7 +271,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -231,13 +281,15 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["title"],
       properties: {
         title: { type: "string" },
+        owner: OWNER_SCHEMA,
+        notify: NOTIFY_SCHEMA,
         summary: {
           type: "string",
           description: "Markdown: what the runbook does and why.",
@@ -253,13 +305,15 @@ export const TOOLS = [
   },
   {
     name: "update_runbook",
-    description: `Change a runbook's title, summary, values or status (open, done, abandoned). Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. ${OPEN_LINK}`,
+    description: `Change a runbook's title, summary, values, status (open, done, abandoned) or owner. Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["runbookId"],
       properties: {
         runbookId: ID("The runbook id."),
+        owner: OWNER_SCHEMA,
+        notify: NOTIFY_SCHEMA,
         title: { type: "string" },
         summary: { type: "string" },
         values: { type: "object", additionalProperties: { type: "string" } },
@@ -287,7 +341,7 @@ export const TOOLS = [
   },
   {
     name: "update_step",
-    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): add a new step instead, also to change its checks. Only the given fields change; checks replaces the whole list. ${CHECKS_HELP} ${WAIT_HELP}`,
+    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): amend it with amend_step instead, also to change its checks. Only the given fields change; checks replaces the whole list. ${CHECKS_HELP} ${WAIT_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -299,8 +353,34 @@ export const TOOLS = [
     },
   },
   {
+    name: "amend_step",
+    description: `${AMEND_HELP} Returns the runbook as get_runbook does. ${CHECKS_HELP} ${STDIN_HELP}`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["stepId", "kind", "reason", "step"],
+      properties: {
+        stepId: ID("The step to amend."),
+        kind: {
+          type: "string",
+          enum: ["replace", "substep"],
+          description:
+            "replace: a fixed version of a step that did not end done. substep: an extra step after it.",
+        },
+        reason: {
+          type: "string",
+          maxLength: 500,
+          description:
+            "Why, in one line. The person sees it on the new step: Amended by <your token name>: <reason>.",
+        },
+        step: STEP_SCHEMA,
+      },
+    },
+  },
+  {
     name: "remove_step",
-    description: "Remove a step that has not run yet.",
+    description:
+      "Remove a step that has not run yet. A step with amendments, and a fixed version (kind replace), stay: amend them instead.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -311,7 +391,7 @@ export const TOOLS = [
   {
     name: "reorder_steps",
     description:
-      "Put the steps of an open runbook in a new order. List every step id once; steps that already ran keep their position.",
+      "Put the steps of an open runbook in a new order. List every step id once, without amendments (3a): they move with their step. Steps that already ran keep their position.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -319,6 +399,34 @@ export const TOOLS = [
       properties: {
         runbookId: ID("The runbook id."),
         stepIds: { type: "array", items: { type: "integer" } },
+      },
+    },
+  },
+  {
+    name: "list_events",
+    description: `List events of your runbooks, oldest first, after the event id since (default 0), at most limit (default 100, up to 500). Answers { events, next }: call again with since = next to read on. Each event has id, type, reason, runbookId, stepId, stepPosition, note (a sent event's note), createdBy, createdAt and openPath. get_runbook also lists a runbook's latest events, newest first. ${EVENTS_HELP}`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        since: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+      },
+    },
+  },
+  {
+    name: "complete_step",
+    description:
+      "End one of your own steps (owner \"agent\") when it is your turn: every earlier step ended (done, failed or skipped). outcome is done or failed; note (up to 2000 characters) says what you did; output (up to 64 KB) is what you got, and the step's checks test it, so a failed check makes the step failed. Refused for a person's step (403), before your turn (409 order), and for a step that already ended (409). The person sees the note and the output. Returns the runbook as get_runbook does.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["stepId", "outcome"],
+      properties: {
+        stepId: ID("The step id."),
+        outcome: { type: "string", enum: ["done", "failed"] },
+        note: { type: "string", maxLength: 2000 },
+        output: { type: "string" },
       },
     },
   },
@@ -390,6 +498,20 @@ export async function callTool(
       });
     case "get_values":
       return ops.getValues(caller, int(args, "runbookId"));
+    case "list_events":
+      return ops.listEvents(caller, { since: args.since, limit: args.limit });
+    case "amend_step":
+      return ops.amendStep(caller, int(args, "stepId"), {
+        kind: args.kind,
+        reason: args.reason,
+        step: args.step,
+      });
+    case "complete_step":
+      return ops.completeAgentStep(
+        caller,
+        int(args, "stepId"),
+        without(args, "stepId"),
+      );
     default:
       throw new UnknownTool(name);
   }
@@ -455,7 +577,7 @@ export async function handleMessage(
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "termix-runbooks", version: serverVersion },
         instructions:
-          "Runbooks in Termix. You propose runbooks and steps; a person runs each step after reading the exact command, and the output is stored. You can never run a step. Read get_runbook to see results. Give the person a link to each runbook you make: the Termix address followed by the runbook's openPath.",
+          "Runbooks in Termix. You propose runbooks and steps; a person runs each step after reading the exact command, and the output is stored. You can never run a person's step. Steps with owner agent are yours: do them when it is your turn and end them with complete_step. Read get_runbook to see results. To fix a step or add one between steps, amend it with amend_step instead of adding steps at the end. Give the person a link to each runbook you make: the Termix address followed by the runbook's openPath.",
       });
     }
     case "ping":

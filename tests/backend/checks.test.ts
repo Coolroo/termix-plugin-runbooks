@@ -315,7 +315,8 @@ describe("checks when a run ends", () => {
         token,
         {},
       );
-      expect(tried.status).toBe(404);
+      // complete exists for agent steps (1.4.0); a person's step is refused.
+      expect(tried.status).toBe(path === "complete" ? 403 : 404);
     }
     expect((await view(s, runbook.id)).steps[0].status).toBe("failed");
   });

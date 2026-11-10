@@ -9,7 +9,8 @@ Runbooks exists so that an agent can prepare work on your servers without being 
 
 ## Agents propose, people run
 
-- The agent routes (`/plugin-api/runbooks/agent/...`) can list hosts, write runbooks and steps, change steps that have not run, and read. There is no agent route that runs, sends, completes, skips or reopens a step, or writes a note.
+- The agent routes (`/plugin-api/runbooks/agent/...`) can list hosts, write runbooks and steps, change steps that have not run, and read. There is no agent route that runs, sends, skips or reopens a step, or writes a note.
+- An agent can end only its own steps (`owner: "agent"`), with `POST /agent/steps/{id}/complete`, once every earlier step ended. Termix runs nothing for such a step: Run and Send to terminal refuse it, and its command is only text. A person can skip or reopen it. The completion is audited with the token's name.
 - Those actions are person routes (`/plugin-api/runbooks/...`). Termix checks the login, the route checks the Use Runbooks permission, and a request without a signed-in user is refused.
 - A request made with a Termix API key (`tmx_...`) is refused on every route that acts: running, stopping, sending to a terminal, marking a run done or failed, skipping, reopening, notes, hiding output, runbook status and tokens. Reading is allowed. Approving a command takes a person in the Termix UI.
 
@@ -54,23 +55,35 @@ Runbooks keeps no secret of its own. Secrets go through the OpenBao Secrets plug
 - **Deleting.** When a person marks a runbook done or abandoned, Runbooks deletes its area prefix `runbooks/<id>/`. An agent that closes a runbook has no person to act as, so the secrets are deleted the next time a person with Use secrets opens the Runbooks tab. OpenBao Secrets deletes whatever is left when it expires.
 - **Audit.** Runs that read or store a secret are audited with the secret's name only ("read secret api_token", "stored secret api_token"), and so is each deletion. OpenBao Secrets audits each call with the area and the name.
 
+## Agent notifications
+
+Off until an admin turns them on (see [Agent notifications](notifications.md)).
+
+- **Ids and labels only.** A notification carries the event's id, type and reason, the runbook and step ids, the step's position, the runbook's owner as the agent set it, and a link path. Never output, a command, a value or the text of a note. Agents read those through the agent API with their own token, so hidden output stays hidden.
+- **Signed.** Each request has an HMAC-SHA256 signature over a timestamp and the body, with a 32-byte secret that Runbooks makes. The secret is shown to the admin once and kept sealed with Termix's installation key in Runbooks' own table, so delivery can sign without a signed-in person. A new secret replaces the old one at once. The secret is never sent to the browser again, never written to the audit log, and never in an error.
+- **Where to.** https only: an `http` address is refused when saved and when sent. Requests go through Termix's outbound guard (`ctx.fetch`): the webhook's own host is the only private address allowed, redirects are refused, each request stops after 10 seconds, and the certificate is always checked, against the admin's CA when one is set.
+- **Who.** Only an admin (Manage plugins) can see the settings, make a secret or send a test; a Termix API key cannot. Making a secret and each test are audited.
+- **What is kept.** Each event's delivery time, its number of attempts, and the last error in short, with the address's query string left out.
+
 ## Markdown
 
 Text from agents renders as Markdown without raw HTML and without images. Links open in a new tab without a referrer.
 
 ## Audit
 
-Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
+Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each agent step an agent ended, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
 
 ## Capabilities
 
-| Capability        | Why                                                                         |
-| ----------------- | --------------------------------------------------------------------------- |
-| `db:own`          | The runbooks, steps, runs and tokens tables                                 |
-| `network:serve`   | The routes under `/plugin-api/runbooks/`                                    |
-| `ui:surface`      | The Runbooks tab                                                            |
-| `hosts:read`      | Host names, the hosts offered for a token, and access checks                |
-| `ssh:connect`     | Run a step over SSH, and read whether a host takes SSH and has a stored key |
-| `credentials:use` | Use the host's stored login for that run                                    |
+| Capability         | Why                                                                         |
+| ------------------ | --------------------------------------------------------------------------- |
+| `db:own`           | The runbooks, steps, runs and tokens tables                                 |
+| `network:serve`    | The routes under `/plugin-api/runbooks/`                                    |
+| `ui:surface`       | The Runbooks tab                                                            |
+| `hosts:read`       | Host names, the hosts offered for a token, and access checks                |
+| `ssh:connect`      | Run a step over SSH, and read whether a host takes SSH and has a stored key |
+| `credentials:use`  | Use the host's stored login for that run                                    |
+| `network:outbound` | Send agent notifications to the admin's webhook (1.4.0); nothing else       |
+| `secrets:own`      | Seal the notification signing secret with Termix's installation key (1.4.0) |
 
 Runbooks also declares the service `openbao-secrets.store` (`^1.0.0`) as an optional requirement, for secrets. It needs no capability of its own.

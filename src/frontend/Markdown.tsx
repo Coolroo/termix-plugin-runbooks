@@ -1,19 +1,39 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@termix-ssh/plugin-sdk/ui";
+import { CopyButton } from "./CopyButton";
+
+/** The text of a syntax tree node, as a code block holds it. */
+interface TextNode {
+  type?: string;
+  value?: unknown;
+  children?: TextNode[];
+}
+function nodeText(node: TextNode | undefined): string {
+  if (!node) return "";
+  if (node.type === "text" && typeof node.value === "string") {
+    return node.value;
+  }
+  return (node.children ?? []).map(nodeText).join("");
+}
 
 /**
  * Markdown written by an agent. No raw HTML (react-markdown drops it unless
  * told otherwise), no images, and links open outside Termix without a
  * referrer, so a runbook cannot load anything or inject markup. Unsafe link
  * schemes are dropped by react-markdown's default URL check.
+ *
+ * With `copyCode` (1.4.0), each fenced code block gets a Copy button, as a
+ * step's command has. Inline code gets none.
  */
 export function Markdown({
   source,
   className,
+  copyCode = false,
 }: {
   source: string;
   className?: string;
+  copyCode?: boolean;
 }) {
   if (!source.trim()) return null;
   return (
@@ -28,11 +48,24 @@ export function Markdown({
         skipHtml
         disallowedElements={["img"]}
         components={{
-          pre: ({ children }) => (
-            <pre className="my-2 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs">
-              {children}
-            </pre>
-          ),
+          pre: ({ children, node }) => {
+            const block = (
+              <pre className="my-2 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs">
+                {children}
+              </pre>
+            );
+            if (!copyCode) return block;
+            // A fenced block ends in a newline that is not part of it.
+            const text = nodeText(node as TextNode).replace(/\n$/, "");
+            return (
+              <div className="relative" data-code-block>
+                {block}
+                <div className="absolute right-1 top-1">
+                  <CopyButton text={text} />
+                </div>
+              </div>
+            );
+          },
           code: ({ className: cls, children }) => (
             <code
               className={cn(

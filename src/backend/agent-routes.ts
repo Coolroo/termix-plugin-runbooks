@@ -247,6 +247,84 @@ export function createAgentRouter(
 
   /**
    * @openapi
+   * /plugin-api/runbooks/agent/steps/{id}/complete:
+   *   post:
+   *     summary: End an agent step, done or failed, with a note and output
+   *     description: >
+   *       Body { outcome: done|failed, note?, output? }. Only a step with
+   *       owner agent, once every earlier step ended. Records a run in mode
+   *       agent; the step's checks test the output.
+   *     tags: [Runbooks agent]
+   *     responses:
+   *       200: { description: The runbook }
+   *       403: { description: The step is for a person }
+   *       409: { description: Not its turn yet, already ended, or the runbook is closed }
+   */
+  router.post(
+    "/steps/:id/complete",
+    wrap(async (req, res) =>
+      ops.completeAgentStep(caller(res), idParam(req), req.body),
+    ),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/agent/steps/{id}/amend:
+   *   post:
+   *     summary: Amend a step in place with a fixed version or a sub-step
+   *     description: >
+   *       Body { kind: replace|substep, reason, step } (1.4.0). step has the
+   *       fields of a new step. The new step keeps the step's number with
+   *       the next letter (3a, 3b); no other step moves. replace marks the
+   *       old step "replaced": it keeps its runs and counts as ended.
+   *       Records an "amended" event.
+   *     tags: [Runbooks agent]
+   *     responses:
+   *       200: { description: The runbook }
+   *       400: { description: A bad kind, reason or step }
+   *       404: { description: Not found }
+   *       409: { description: Closed runbook, running step, or replace of a step that ended done or was already replaced }
+   */
+  router.post(
+    "/steps/:id/amend",
+    wrap(async (req, res) =>
+      ops.amendStep(caller(res), idParam(req), req.body),
+    ),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/agent/events:
+   *   get:
+   *     summary: Events of this token's runbooks, oldest first after an id
+   *     description: >
+   *       agent-turn, step-failed, runbook-done, sent, step-done and amended, with ids,
+   *       reasons and a sent event's note. For agents that poll, and for
+   *       receivers that missed a webhook. Answers { events, next }; pass
+   *       next as since to read on.
+   *     tags: [Runbooks agent]
+   *     parameters:
+   *       - in: query
+   *         name: since
+   *         schema: { type: integer, minimum: 0 }
+   *       - in: query
+   *         name: limit
+   *         schema: { type: integer, minimum: 1, maximum: 500 }
+   *     responses:
+   *       200: { description: The events }
+   */
+  router.get(
+    "/events",
+    wrap(async (req, res) =>
+      ops.listEvents(caller(res), {
+        since: req.query.since,
+        limit: req.query.limit,
+      }),
+    ),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/agent/mcp:
    *   post:
    *     summary: MCP over streamable HTTP (JSON-RPC 2.0, JSON answers)

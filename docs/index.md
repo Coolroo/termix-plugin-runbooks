@@ -12,6 +12,7 @@ The agent can never run anything. It only proposes and reads.
 4. Open **Runbooks** from the sidebar, press **Agent tokens**, and make a token for your agent. Tick the hosts it may propose commands for. Only SSH hosts are listed: a remote desktop host (RDP, VNC, a console) cannot run a command. The token is shown once: copy it into your agent's secret store.
 5. Point the agent at the API or the MCP endpoint. See [Agent API and MCP](agent-api.md).
 6. Optional, for secrets: install the OpenBao Secrets plugin and connect it to OpenBao. Give the people who run steps that use secrets its **Use secrets** permission. Without it, everything else works and steps that use secrets are refused. See [Secrets](#secrets).
+7. Optional, for agents that should hear about events: an admin turns on **Notify agents** in the plugin's settings, with a webhook address and a signing secret. See [Agent notifications](notifications.md).
 
 ## Run a runbook
 
@@ -67,6 +68,20 @@ It uses a connected terminal to the host when one is open, the one on screen fir
 
 A step with no command (text to read, or something to do by hand) has **Done** and **Failed** buttons instead of Run. Either one records a run with who, when, the outcome and your note from the step's **Notes** box, and the step becomes Done or Failed. Agents read it like any other run.
 
+### Steps outside Termix
+
+A step that says **Run outside Termix: <where>** is for a command that does not run on a Termix host, such as PowerShell on a Windows PC. Press **Copy**, run the command there, paste the output into the box, and press **Done** or **Failed**. The step's checks test the pasted output. Copy is off while a value in the command has no value yet. Code blocks in a step's text also have a Copy button.
+
+### Agent steps
+
+A step the agent does itself (read a dashboard, change a file, wait for a pipeline) is marked **Agent step** and says **Waiting for the agent** with the agent's name. It has no Run, Send to terminal or Done: Termix never runs it, and a command on it only says what the agent will run. When every step before it has ended, the agent ends it, done or failed, with a note and its output, which show in the step's history. You can **Skip** it (with a reason) or **Reopen** it.
+
+The line under the runbook's title says which agent it belongs to and its task, such as "Agent: Lead agent · task T-42".
+
+### Send to agent
+
+When an admin has turned on [agent notifications](notifications.md) and the runbook says which agent it belongs to, every step has **Send to agent**. It asks "Send step N to <agent>?" with an optional note of up to 500 characters, and tells the agent to look at that step. The step's history shows "Sent to the agent by <you>", with the note. Use it to point the agent at an output, or to ask for the next steps.
+
 ### Standard input
 
 A step can get its command's standard input from:
@@ -87,6 +102,12 @@ A step can capture a secret from its output, for example a token that a command 
 - The step lists each secret it captures: "stored in OpenBao until <time>" or "not stored".
 - When you mark the runbook **Done** or **Abandon** it, its secrets are deleted. When an agent closes it, they are deleted the next time someone with **Use secrets** opens the Runbooks tab. Anything left expires after 7 days.
 - Running such a step needs the OpenBao Secrets plugin, connected, and its **Use secrets** permission. Without them the step says "Install and connect the OpenBao Secrets plugin to use secrets" and does not run.
+
+### Amended steps
+
+An agent can fix a step, or add a step after it, in place. A fixed version of step 3 is **3a**, right after it, and step 3 folds to **Replaced by 3a**: open it to see its runs. A replaced step counts as ended and does not run again. An extra step after step 3 is also 3a (then 3b). Later steps keep their numbers. Each amended step says **Amended by <agent>: <reason>**, and a fixed version shows the old command struck through above the new one. Run it as any step: the same confirm, repeat guard and host check apply. The runbook list says **amended** while an amendment has not run.
+
+To go back to a replaced step, skip its fixed version first, then **Reopen** the replaced step. That works only while the fixed version never ran.
 
 ### Skip, reopen and hide
 
@@ -114,5 +135,6 @@ A command can use `{{name}}`. The value comes from the runbook's values: the one
 ## More
 
 - [Agent API and MCP](agent-api.md): the endpoints, the MCP tools, and how to have an agent write runbooks
+- [Agent notifications](notifications.md): the webhook, its payload and how to check its signature
 - [Security](security.md): what an agent can and cannot do, the checks on every run, and where secrets live
 - [FAQ and limits](faq.md)

@@ -4,11 +4,19 @@ export type { Check, CheckResult };
 
 export type RunbookStatus = "open" | "done" | "abandoned";
 
+/** Who a runbook belongs to, as the agent set it (1.4.0). */
+export interface RunbookOwner {
+  task?: string;
+  agent?: string;
+  label?: string;
+}
+
 /** Where a Run takes the command's standard input from (1.2.0). */
 export type StdinSource =
   | {
       from: "step";
-      step: number;
+      /** A position, or an amendment's label ("3a", 1.4.0). */
+      step: number | string;
       stream: "stdout" | "stderr";
       allowFailed?: boolean;
     }
@@ -19,7 +27,8 @@ export type StdinSource =
 /** A secret a step captures, as the server shows it: never its value. */
 export interface SecretState {
   name: string;
-  step: number;
+  /** The step that captures it: its position, or its label ("3a"). */
+  step: number | string;
   set: boolean;
   expiresAt: string | null;
 }
@@ -33,7 +42,21 @@ export interface StdinView {
   /** Why a Run would be refused now. */
   problem: string | null;
 }
-export type StepStatus = "pending" | "done" | "failed" | "skipped";
+/** "replaced" (1.4.0): an amendment replaced it; it counts as ended. */
+export type StepStatus = "pending" | "done" | "failed" | "skipped" | "replaced";
+
+/** How an agent amended a step (1.4.0), shown on the new step. */
+export interface StepAmendment {
+  kind: "replace" | "substep";
+  reason: string;
+  /** The token name of the agent. */
+  by: string;
+  /** The step it amends. */
+  stepId: number | null;
+  stepLabel: string | null;
+  /** For a fixed version: the command it replaces, shown struck through. */
+  oldCommand: string | null;
+}
 
 export interface Progress {
   done: number;
@@ -50,15 +73,17 @@ export interface RunbookSummary {
   updatedAt: string;
   revision: number;
   progress: Progress;
+  /** Amendments that have not run yet (1.4.0): the list shows "amended". */
+  amendedPending?: number;
 }
 
 export interface Run {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual";
+  mode: "exec" | "terminal" | "manual" | "agent" | "outside";
   status: "running" | "awaiting-output" | "done" | "failed";
-  /** Null for a manual run. */
+  /** Null for a manual or agent run. */
   hostId: number | null;
   command: string;
   commandHash: string;
@@ -98,9 +123,17 @@ export interface Run {
   } | null;
 }
 
+/** A "sent" event on a step: who sent it to the agent, when, the note. */
+export interface SentToAgent {
+  id: number;
+  createdBy: string;
+  createdAt: string;
+  note: string | null;
+}
+
 /** The wait a step asks for after the step before it, as the server saw it. */
 export interface StepWait {
-  previous: { id: number; position: number; title: string };
+  previous: { id: number; position: number; label?: string; title: string };
   seconds: number;
   reason: string | null;
   previousEnded: boolean;
@@ -112,6 +145,15 @@ export interface Step {
   id: number;
   runbookId: number;
   position: number;
+  /** 1.4.0: where the person runs the command outside Termix; null if not. */
+  where?: string | null;
+  /** 1.4.0: "3", or "3a" for an amendment. */
+  label?: string;
+  suffix?: string | null;
+  /** 1.4.0: how an agent amended a step; null when it is not an amendment. */
+  amendment?: StepAmendment | null;
+  /** 1.4.0: the step that replaced this one, while it is replaced. */
+  replacedBy?: { id: number; label: string } | null;
   title: string;
   body: string;
   hostId: number | null;
@@ -139,6 +181,10 @@ export interface Step {
   secretCaptures?: Array<{ name: string; pattern: string }>;
   /** Why a step that captures secrets cannot run now. */
   secretsProblem?: string | null;
+  /** Who does it: a person runs it, an agent completes it (1.4.0). */
+  owner?: "person" | "agent";
+  /** Each time a person sent it to the agent, newest first (1.4.0). */
+  sent?: SentToAgent[];
   revision: number;
   runs: Run[];
 }
@@ -156,6 +202,14 @@ export interface Runbook extends RunbookSummary {
   values: Record<string, string>;
   effectiveValues: EffectiveValue[];
   nextStepId: number | null;
+  /** Who the runbook belongs to; null when the agent did not say. */
+  owner?: RunbookOwner | null;
+  /** The owner's label, or the name of the token that made it. */
+  agentLabel?: string;
+  /** Whether agent notifications are on. */
+  notifyEnabled?: boolean;
+  /** Notifications are on and the runbook has an owner: Send to agent. */
+  canSendToAgent?: boolean;
   /** Whether the OpenBao Secrets service is there. */
   secretsAvailable?: boolean;
   /** Every secret the steps capture: never a value. */

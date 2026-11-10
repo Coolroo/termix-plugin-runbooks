@@ -3,12 +3,19 @@
  * standard input, from one source. An earlier step's output, a value, or a
  * secret; never typed into the command line.
  *
- * Authors name an earlier step by its position. Runbooks keeps the step's id
- * instead, so moving or inserting steps never points the input at another
- * step, and shows the position again in every view.
+ * Authors name an earlier step by its position, or an amendment by its
+ * label ("3a", 1.4.0). Runbooks keeps the step's id instead, so moving or
+ * inserting steps never points the input at another step, and shows the
+ * number again in every view.
  */
 
 import { VALUE_NAME } from "./values.js";
+import {
+  isBefore,
+  parseStepRef,
+  stepLabel,
+  type StepNumber,
+} from "../shared/steps.js";
 
 export const MAX_STDIN_BYTES = 256 * 1024;
 /** The Run confirm shows this much of a step or value input. */
@@ -17,9 +24,17 @@ export const MAX_SECRET_NAME = 64;
 
 export type StdinStream = "stdout" | "stderr";
 
-/** What an author writes, and what every view shows. */
+/**
+ * What an author writes, and what every view shows. `step` is a position
+ * (3) or, for an amendment, its label ("3a").
+ */
 export type StdinSource =
-  | { from: "step"; step: number; stream: StdinStream; allowFailed?: boolean }
+  | {
+      from: "step";
+      step: number | string;
+      stream: StdinStream;
+      allowFailed?: boolean;
+    }
   | { from: "value"; name: string }
   | { from: "secret"; name: string }
   | { from: "secret"; library: string };
@@ -80,8 +95,8 @@ export function stdinProblem(raw: unknown): string | null {
     case "step": {
       const unknown = allowed(["from", "step", "stream", "allowFailed"]);
       if (unknown) return unknown;
-      if (!Number.isInteger(source.step) || (source.step as number) < 1) {
-        return "stdin.step must be the position of an earlier step";
+      if (!parseStepRef(source.step)) {
+        return 'stdin.step must be the number of an earlier step, such as 2 or "3a"';
       }
       if (source.stream !== "stdout" && source.stream !== "stderr") {
         return "stdin.stream must be stdout or stderr";
@@ -125,9 +140,11 @@ export function stdinProblem(raw: unknown): string | null {
 export function normalizeStdin(raw: unknown): StdinSource {
   const source = raw as Record<string, unknown>;
   if (source.from === "step") {
+    // "3" and 3 are the same step: kept as a number, as before 1.4.0.
+    const ref = parseStepRef(source.step)!;
     return {
       from: "step",
-      step: source.step as number,
+      step: ref.suffix ? stepLabel(ref) : ref.position,
       stream: source.stream as StdinStream,
       ...(source.allowFailed === true ? { allowFailed: true } : {}),
     };
@@ -140,10 +157,10 @@ export function normalizeStdin(raw: unknown): StdinSource {
     : { from: "secret", library: source.library as string };
 }
 
-/** The stored form shown with positions, or null when the step is gone. */
+/** The stored form shown with step numbers, or null when the step is gone. */
 export function showStdin(
   stored: StoredStdin | null,
-  positionOf: (stepId: number) => number | null,
+  positionOf: (stepId: number) => number | string | null,
 ): StdinSource | null {
   if (!stored) return null;
   if (stored.from !== "step") return stored;
@@ -157,20 +174,29 @@ export function showStdin(
   };
 }
 
-/** The input with step positions turned into ids, or a problem. */
+/**
+ * The input with step numbers turned into ids, or a problem. `own` is the
+ * number of the step that reads it; `idOf` finds a step by its number.
+ */
 export function storeStdin(
   source: StdinSource | null,
-  ownPosition: number,
-  idAt: (position: number) => number | null,
+  own: StepNumber,
+  idOf: (ref: { position: number; suffix: string | null }) => number | null,
 ): StoredStdin | null {
   if (!source) return null;
   if (source.from !== "step") return source;
-  if (source.step >= ownPosition) {
+  const ref = parseStepRef(source.step);
+  if (!ref) {
+    throw new StdinPositionError(`stdin.step ${source.step} is not a step`);
+  }
+  if (!isBefore(ref, own)) {
     throw new StdinPositionError(
-      `stdin.step ${source.step} is not before this step (position ${ownPosition})`,
+      `stdin.step ${source.step} is not before this step (${
+        own.suffix ? `step ${stepLabel(own)}` : `position ${own.position}`
+      })`,
     );
   }
-  const stepId = idAt(source.step);
+  const stepId = idOf(ref);
   if (stepId === null) {
     throw new StdinPositionError(`stdin.step ${source.step} is not a step`);
   }

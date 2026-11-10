@@ -12,6 +12,7 @@ import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import {
   InputError,
   LIMITS,
+  amendmentView,
   loadBundle,
   parseStatus,
   personView,
@@ -34,13 +35,20 @@ import type {
 } from "./store.js";
 import { now } from "./store.js";
 import { newToken } from "./tokens.js";
-import { applyCaptures, findSecrets } from "./values.js";
+import { applyCaptures, findSecrets, resolve } from "./values.js";
 import { isSshHost } from "../shared/hosts.js";
+import { isBefore, stepLabel } from "../shared/steps.js";
 import type { LiveRuns } from "./live.js";
 import { streamExec, type ExecClient } from "./stream-exec.js";
-import { evaluateChecks, type CheckedRun } from "./checks.js";
+import { evaluateChecks, type CheckedRun, type CheckResult } from "./checks.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
+import {
+  MAX_SENT_NOTE,
+  SYSTEM,
+  type Events,
+  type FailReason,
+} from "./events.js";
 import {
   describeStdin,
   libraryRef,
@@ -56,6 +64,21 @@ export const MAX_TOKEN_HOSTS = 500;
 export const STOP_WAIT_MS = 5000;
 /** How long a failed delete of a closed runbook's secrets waits to retry. */
 export const REMOVE_RETRY_MS = 5 * 60 * 1000;
+/** Why a person cannot run, send or mark an agent step. */
+const AGENT_STEP =
+  "this step is for the agent: it completes it itself; you can Skip or Reopen it";
+/** Why a replaced step does not run (1.4.0). */
+function replacedProblem(step: StepRow, steps: StepRow[]): InputError {
+  const by = amendmentView(step, steps).replacedBy;
+  return new InputError(
+    `step ${stepLabel(step)} was replaced${by ? ` by ${by.label}` : ""}; run the new step instead`,
+    409,
+    { code: "replaced", replacedBy: by },
+  );
+}
+/** Why a step run outside Termix has no Run or Send (1.4.0). */
+const OUTSIDE_STEP =
+  "this step runs outside Termix: copy the command, run it there, then mark it Done or Failed with the output";
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
@@ -94,14 +117,25 @@ export function registerPersonRoutes(
   store: Store,
   live: LiveRuns,
   secrets: Secrets,
+  events: Events,
+  notify: { enabled: () => Promise<boolean> },
 ): void {
   const actor = () => ctx.currentActor() as string;
 
   /** The runbook as the page shows it. */
   async function showRunbook(bundle: RunbookBundle) {
+    const sent = (
+      await store.listEvents({
+        runbookId: bundle.runbook.id,
+        limit: 1000,
+        order: "newest",
+      })
+    ).filter((event) => event.type === "sent");
     return personView(bundle, await hostNamer(), {
       secretsAvailable: secrets.available(),
       noSecrets: NO_SECRETS,
+      notifyEnabled: await notify.enabled(),
+      sent,
     });
   }
 
@@ -321,8 +355,15 @@ export function registerPersonRoutes(
     bundle: RunbookBundle,
     input: Record<string, unknown>,
   ) {
+    if (step.owner === "agent") {
+      throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+    }
     if (bundle.runbook.status !== "open") {
       throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
+    }
+    if (step.status === "replaced") throw replacedProblem(step, bundle.steps);
+    if (step.where) {
+      throw new InputError(OUTSIDE_STEP, 409, { code: "outside" });
     }
     if (step.hostId === null || step.command === null) {
       throw new InputError("this step has no command to run", 400);
@@ -350,18 +391,20 @@ export function registerPersonRoutes(
       "; Runbooks runs commands over SSH only",
     );
     if (input.outOfOrder !== true) {
+      // A replaced step counts as ended: its status is not pending.
       const blocking = bundle.steps.filter(
-        (other) => other.position < step.position && other.status === "pending",
+        (other) => isBefore(other, step) && other.status === "pending",
       );
       if (blocking.length > 0) {
         throw new InputError(
-          `step ${blocking[0].position} (${blocking[0].title}) is still pending`,
+          `step ${stepLabel(blocking[0])} (${blocking[0].title}) is still pending`,
           409,
           {
             code: "order",
             blocking: blocking.map((other) => ({
               id: other.id,
               position: other.position,
+              label: stepLabel(other),
               title: other.title,
             })),
           },
@@ -374,7 +417,7 @@ export function registerPersonRoutes(
     if (waiting && input.waitAnyway !== true) {
       const remainingSeconds = Math.ceil(waiting.remainingMs / 1000);
       throw new InputError(
-        `the runbook says to wait ${remainingSeconds} s more after step ${waiting.previous.position}${
+        `the runbook says to wait ${remainingSeconds} s more after step ${waiting.previous.label}${
           waiting.reason ? ` (${waiting.reason})` : ""
         }`,
         409,
@@ -489,7 +532,7 @@ export function registerPersonRoutes(
       req,
       "runbooks_step_wait_skipped",
       step,
-      `runbook ${step.runbookId} step ${step.position} started ${seconds} s before its wait was over`,
+      `runbook ${step.runbookId} step ${stepLabel(step)} started ${seconds} s before its wait was over`,
       true,
     );
   }
@@ -510,6 +553,10 @@ export function registerPersonRoutes(
       checked?: CheckedRun;
       /** Secrets the step read: replaced in everything the run keeps. */
       used?: SecretText[];
+      /** Who ended it, for the events. */
+      by?: string;
+      /** Why it failed, when `outcome` is failed. */
+      reason?: FailReason;
     } = {},
   ): Promise<{ final: "done" | "failed"; stored: string[] }> {
     const used = options.used ?? [];
@@ -579,38 +626,53 @@ export function registerPersonRoutes(
     const kept = (text: string | null | undefined) =>
       text === undefined ? undefined : redact(text, hide);
     const usedNames = used.map((secret) => secret.name);
-    await store.updateRun(runId, {
-      ...patch,
-      stdout: kept(patch.stdout),
-      stderr: kept(patch.stderr),
-      pastedOutput: kept(patch.pastedOutput),
-      status: final,
-      finishedAt: at,
-      captured:
-        final === "done"
-          ? Object.fromEntries(
-              Object.entries(captures.values).map(([name, value]) => [
-                name,
-                redact(value, hide),
-              ]),
-            )
-          : {},
-      checks: results,
-      error: errors ? redact(errors, hide) : null,
-      ...(usedNames.length || stored.length
-        ? { secrets: { used: usedNames, captured: stored } }
-        : {}),
+    const reason: FailReason | null =
+      final === "done"
+        ? null
+        : outcome === "failed"
+          ? (options.reason ?? "exit")
+          : results && !results.every((check) => check.ok)
+            ? "check"
+            : "secret";
+    const by = options.by ?? ctx.currentActor() ?? SYSTEM;
+    await events.around(step.runbookId, by, async () => {
+      await store.updateRun(runId, {
+        ...patch,
+        stdout: kept(patch.stdout),
+        stderr: kept(patch.stderr),
+        pastedOutput: kept(patch.pastedOutput),
+        status: final,
+        finishedAt: at,
+        captured:
+          final === "done"
+            ? Object.fromEntries(
+                Object.entries(captures.values).map(([name, value]) => [
+                  name,
+                  redact(value, hide),
+                ]),
+              )
+            : {},
+        checks: results,
+        error: errors ? redact(errors, hide) : null,
+        ...(usedNames.length || stored.length
+          ? { secrets: { used: usedNames, captured: stored } }
+          : {}),
+      });
+      // A step replaced while its run was being written keeps "replaced".
+      const replaced = (await store.getStep(step.id))?.status === "replaced";
+      await store.updateStep(
+        step.id,
+        replaced
+          ? { endedAt: at }
+          : { status: final, skipReason: null, endedAt: at },
+      );
+      await events.stepEnded(step, final, reason, by);
+      await store.touchRunbook(
+        step.runbookId,
+        stored.length ? { secretsStoredAt: at } : {},
+      );
+      await store.persist();
     });
-    await store.updateStep(step.id, {
-      status: final,
-      skipReason: null,
-      endedAt: at,
-    });
-    await store.touchRunbook(
-      step.runbookId,
-      stored.length ? { secretsStoredAt: at } : {},
-    );
-    await store.persist();
     return { final, stored: stored.map((secret) => secret.name) };
   }
 
@@ -752,9 +814,14 @@ export function registerPersonRoutes(
     ...act,
     wrap(async (req) => {
       const id = idParam(req);
-      await bundleFor(id);
-      await store.touchRunbook(id, { status: parseStatus(body(req).status) });
-      await store.persist();
+      const before = (await bundleFor(id)).runbook;
+      const status = parseStatus(body(req).status);
+      await events.around(id, actor(), async () => {
+        await store.touchRunbook(id, { status });
+        const after = (await store.getRunbook(id))!;
+        await events.statusChanged(after, before.status, actor());
+        await store.persist();
+      });
       const closed = await bundleFor(id);
       // Done or abandoned: the secrets it captured are deleted now.
       await removeSecrets(req, closed.runbook, closed.steps, true);
@@ -839,6 +906,7 @@ export function registerPersonRoutes(
           runId,
           step,
           {
+            by: actor(),
             hostId: target.hostId,
             command: target.command,
             stdin: input?.bytes,
@@ -864,6 +932,8 @@ export function registerPersonRoutes(
     runId: number,
     step: StepRow,
     target: {
+      /** The person who pressed Run. */
+      by: string;
       hostId: number;
       command: string;
       /** Written to the command's standard input, then ended. */
@@ -874,7 +944,7 @@ export function registerPersonRoutes(
     release: () => void,
   ): Promise<void> {
     const record = live.get(runId)!;
-    const where = `runbook ${step.runbookId} step ${step.position} on host ${target.hostId}${
+    const where = `runbook ${step.runbookId} step ${stepLabel(step)} on host ${target.hostId}${
       target.used.length
         ? `, read secret ${target.used.map((secret) => secret.name).join(", ")}`
         : ""
@@ -940,7 +1010,15 @@ export function registerPersonRoutes(
               ? `stopped by ${record.stoppedBy}`
               : (record.interrupted ?? message),
           },
-          { used: target.used },
+          {
+            used: target.used,
+            by: target.by,
+            reason: record.stoppedBy
+              ? "stopped"
+              : record.interrupted
+                ? "interrupted"
+                : "exit",
+          },
         );
         await audit(req, "runbooks_step_run", step, where, false, message);
         return;
@@ -976,6 +1054,12 @@ export function registerPersonRoutes(
             pastedOutput: null,
           },
           used: target.used,
+          by: target.by,
+          reason: stopped
+            ? "stopped"
+            : record.interrupted
+              ? "interrupted"
+              : "exit",
         },
       );
       const ok = outcome.final === "done";
@@ -1040,7 +1124,7 @@ export function registerPersonRoutes(
           req,
           "runbooks_step_stop",
           step,
-          `runbook ${step.runbookId} step ${step.position} run ${record.runId} stopped`,
+          `runbook ${step.runbookId} step ${stepLabel(step)} run ${record.runId} stopped`,
           true,
         );
       }
@@ -1072,6 +1156,9 @@ export function registerPersonRoutes(
     wrap(async (req) =>
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
+        if (step.owner === "agent") {
+          throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+        }
         const stdin = stepStdin(step, bundle.steps);
         if (stdin) {
           throw new InputError(
@@ -1108,7 +1195,7 @@ export function registerPersonRoutes(
           req,
           "runbooks_step_terminal",
           step,
-          `runbook ${step.runbookId} step ${step.position} sent to a terminal on host ${target.hostId}`,
+          `runbook ${step.runbookId} step ${stepLabel(step)} sent to a terminal on host ${target.hostId}`,
           true,
         );
         return store.getRun(runId);
@@ -1176,13 +1263,15 @@ export function registerPersonRoutes(
                   pastedOutput: pasted,
                 }
               : undefined,
+          by: actor(),
+          reason: "manual",
         },
       );
       await audit(
         req,
         "runbooks_step_complete",
         step,
-        `runbook ${step.runbookId} step ${step.position} marked ${outcome}${
+        `runbook ${step.runbookId} step ${stepLabel(step)} marked ${outcome}${
           final !== outcome ? ", checks failed" : ""
         }${storedNote(stored)}`,
         true,
@@ -1195,14 +1284,19 @@ export function registerPersonRoutes(
    * @openapi
    * /plugin-api/runbooks/steps/{id}/manual:
    *   post:
-   *     summary: Mark a step with no command done or failed
+   *     summary: Mark a step with no command, or one run outside Termix, done or failed
    *     description: >
    *       Body { outcome: done|failed, note? }. Records a run in mode manual
    *       with who, when, the outcome and the note. Refused with 400 for a
-   *       step that has a command. A person only.
+   *       step that Termix runs. A step run outside Termix (1.4.0) also
+   *       takes { revision, output? }: the revision the person saw (409
+   *       stale otherwise) and the pasted output, which its checks test
+   *       and its captures read; it records a run in mode outside with the
+   *       resolved command. A person only.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The runbook }
+   *       409: { description: Stale, missing values, or a closed runbook }
    */
   router.post(
     "/steps/:id/manual",
@@ -1210,10 +1304,17 @@ export function registerPersonRoutes(
     wrap(async (req) =>
       claimed(idParam(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
+        if (step.owner === "agent") {
+          throw new InputError(AGENT_STEP, 409, { code: "agent-step" });
+        }
         if (bundle.runbook.status !== "open") {
           throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
         }
-        if (step.hostId !== null || step.command !== null) {
+        if (step.status === "replaced") {
+          throw replacedProblem(step, bundle.steps);
+        }
+        const outside = Boolean(step.where);
+        if (!outside && (step.hostId !== null || step.command !== null)) {
           throw new InputError(
             "this step has a command: use Run or Send to terminal",
           );
@@ -1229,39 +1330,101 @@ export function registerPersonRoutes(
             `note must be text of at most ${LIMITS.ownerNote} characters`,
           );
         }
+        // A step run outside Termix: the command the person copied, the
+        // output they pasted, and the revision they saw.
+        let command = "";
+        let pasted: string | null = null;
+        let results: CheckResult[] | null = null;
+        let captured: Record<string, string> = {};
+        let final: "done" | "failed" = outcome;
+        if (outside) {
+          if (input.revision !== step.revision) {
+            throw new InputError("the step changed; reload", 409, {
+              code: "stale",
+            });
+          }
+          const resolved = resolve(step.command!, valuesObject(bundle.values));
+          if (resolved.missing.length > 0) {
+            throw new InputError(
+              `values missing: ${resolved.missing.join(", ")}`,
+              409,
+              { code: "missing-values", missing: resolved.missing },
+            );
+          }
+          command = resolved.text;
+          const output = input.output ?? "";
+          if (
+            typeof output !== "string" ||
+            Buffer.byteLength(output) > MAX_OUTPUT_BYTES
+          ) {
+            throw new InputError(
+              `output must be text of at most ${MAX_OUTPUT_BYTES / 1024} KB`,
+            );
+          }
+          pasted = output === "" ? null : output;
+          const captures = applyCaptures(step.captures, output);
+          results =
+            step.checks.length > 0
+              ? evaluateChecks(
+                  step.checks,
+                  {
+                    mode: "terminal",
+                    exitCode: null,
+                    stdout: null,
+                    stderr: null,
+                    pastedOutput: output,
+                  },
+                  captures.values,
+                )
+              : null;
+          if ((results ?? []).some((check) => !check.ok)) final = "failed";
+          if (final === "done") captured = captures.values;
+        }
         const at = now();
-        await store.insertRun({
-          stepId: step.id,
-          runbookId: step.runbookId,
-          mode: "manual",
-          status: outcome,
-          hostId: null,
-          command: "",
-          commandHash: "",
-          userId: actor(),
-          startedAt: at,
-          finishedAt: at,
-          exitCode: null,
-          stdout: null,
-          stderr: null,
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          note: note.trim() === "" ? null : note,
+        await events.around(step.runbookId, actor(), async () => {
+          await store.insertRun({
+            stepId: step.id,
+            runbookId: step.runbookId,
+            mode: outside ? "outside" : "manual",
+            status: final,
+            hostId: null,
+            command,
+            commandHash: "",
+            userId: actor(),
+            startedAt: at,
+            finishedAt: at,
+            exitCode: null,
+            stdout: null,
+            stderr: null,
+            truncated: false,
+            timedOut: false,
+            pastedOutput: pasted,
+            error: null,
+            note: note.trim() === "" ? null : note,
+            checks: results,
+            captured,
+          });
+          await store.updateStep(step.id, {
+            status: final,
+            skipReason: null,
+            endedAt: at,
+          });
+          await events.stepEnded(
+            step,
+            final,
+            outcome === "done" ? "check" : "manual",
+            actor(),
+          );
+          await store.touchRunbook(step.runbookId);
+          await store.persist();
         });
-        await store.updateStep(step.id, {
-          status: outcome,
-          skipReason: null,
-          endedAt: at,
-        });
-        await store.touchRunbook(step.runbookId);
-        await store.persist();
         await audit(
           req,
           "runbooks_step_manual",
           step,
-          `runbook ${step.runbookId} step ${step.position} marked ${outcome} by hand`,
+          `runbook ${step.runbookId} step ${stepLabel(step)} marked ${final} by hand${
+            outside ? " (run outside Termix)" : ""
+          }`,
           true,
         );
         return showRunbook(await bundleFor(step.runbookId));
@@ -1282,18 +1445,24 @@ export function registerPersonRoutes(
     "/steps/:id/skip",
     ...act,
     wrap(async (req) => {
-      const { step } = await stepContext(idParam(req));
+      const { step, bundle } = await stepContext(idParam(req));
+      // Skip the replacement instead: a replaced step already ended.
+      if (step.status === "replaced") {
+        throw replacedProblem(step, bundle.steps);
+      }
       const reason = body(req).reason ?? "";
       if (typeof reason !== "string" || reason.length > LIMITS.ownerNote) {
         throw new InputError("reason must be short text");
       }
-      await store.updateStep(step.id, {
-        status: "skipped",
-        skipReason: reason,
-        endedAt: now(),
+      await events.around(step.runbookId, actor(), async () => {
+        await store.updateStep(step.id, {
+          status: "skipped",
+          skipReason: reason,
+          endedAt: now(),
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
       });
-      await store.touchRunbook(step.runbookId);
-      await store.persist();
       await audit(req, "runbooks_step_skip", step, reason.slice(0, 500), true);
       return showRunbook(await bundleFor(step.runbookId));
     }),
@@ -1304,22 +1473,48 @@ export function registerPersonRoutes(
    * /plugin-api/runbooks/steps/{id}/reopen:
    *   post:
    *     summary: Put a step back to pending; its runs are kept
+   *     description: >
+   *       A replaced step (1.4.0) reopens only when its replacement was
+   *       skipped and never ran; otherwise 409 with code replaced.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The runbook }
+   *       409: { description: A replaced step whose replacement is live }
    */
   router.post(
     "/steps/:id/reopen",
     ...act,
     wrap(async (req) => {
-      const { step } = await stepContext(idParam(req));
-      await store.updateStep(step.id, {
-        status: "pending",
-        skipReason: null,
-        endedAt: null,
+      const { step, bundle } = await stepContext(idParam(req));
+      if (step.status === "replaced") {
+        const by = amendmentView(step, bundle.steps).replacedBy;
+        const replacement = by
+          ? bundle.steps.find((other) => other.id === by.id)
+          : undefined;
+        const ran = Boolean(
+          replacement && bundle.runsByStep.get(replacement.id)?.length,
+        );
+        if (replacement && (replacement.status !== "skipped" || ran)) {
+          throw new InputError(
+            `step ${stepLabel(step)} was replaced by ${by!.label}${
+              ran
+                ? ", which already ran"
+                : "; skip it first to go back to this step"
+            }`,
+            409,
+            { code: "replaced", replacedBy: by },
+          );
+        }
+      }
+      await events.around(step.runbookId, actor(), async () => {
+        await store.updateStep(step.id, {
+          status: "pending",
+          skipReason: null,
+          endedAt: null,
+        });
+        await store.touchRunbook(step.runbookId);
+        await store.persist();
       });
-      await store.touchRunbook(step.runbookId);
-      await store.persist();
       return showRunbook(await bundleFor(step.runbookId));
     }),
   );
@@ -1348,6 +1543,67 @@ export function registerPersonRoutes(
       await store.touchRunbook(step.runbookId);
       await store.persist();
       return { ok: true };
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/send-to-agent:
+   *   post:
+   *     summary: Send a step to the runbook's agent, with an optional note
+   *     description: >
+   *       Body { note? } (up to 500 characters). Records a "sent" event,
+   *       which the notification webhook always delivers. Needs agent
+   *       notifications on and a runbook with an owner. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The runbook }
+   *       409: { description: Notifications are off, or the runbook has no owner }
+   */
+  router.post(
+    "/steps/:id/send-to-agent",
+    ...act,
+    wrap(async (req) => {
+      const { step, bundle } = await stepContext(idParam(req));
+      const raw = body(req).note ?? "";
+      if (typeof raw !== "string" || raw.length > MAX_SENT_NOTE) {
+        throw new InputError(
+          `note must be text of at most ${MAX_SENT_NOTE} characters`,
+        );
+      }
+      if (!(await notify.enabled())) {
+        throw new InputError(
+          "agent notifications are off; an admin turns them on in the plugin's settings",
+          409,
+          { code: "notify-off" },
+        );
+      }
+      if (!bundle.runbook.owner) {
+        throw new InputError(
+          "this runbook does not say which agent it belongs to",
+          409,
+          { code: "no-owner" },
+        );
+      }
+      const note = raw.trim() ? raw : null;
+      await events.record({
+        runbook: bundle.runbook,
+        stepId: step.id,
+        type: "sent",
+        note,
+        by: actor(),
+      });
+      await store.persist();
+      await audit(
+        req,
+        "runbooks_step_sent",
+        step,
+        `runbook ${step.runbookId} step ${stepLabel(step)} sent to the agent${
+          note ? ", with a note" : ""
+        }`,
+        true,
+      );
+      return showRunbook(await bundleFor(step.runbookId));
     }),
   );
 

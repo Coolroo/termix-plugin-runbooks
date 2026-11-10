@@ -20,7 +20,8 @@
     "empty": "No runbooks yet.",
     "emptyHint": "An agent with a Runbooks token proposes them; they show up here.",
     "meta": "{{done}}/{{total}} done · by {{author}} · {{time}}",
-    "failed": "{{count}} failed"
+    "failed": "{{count}} failed",
+    "amended": "amended"
   },
   "runbook": {
     "status": {
@@ -31,7 +32,9 @@
     "markDone": "Mark done",
     "abandon": "Abandon",
     "reopen": "Reopen",
-    "noSteps": "This runbook has no steps yet."
+    "noSteps": "This runbook has no steps yet.",
+    "agent": "Agent: {{label}}",
+    "agentTask": "Agent: {{label}} · task {{task}}"
   },
   "values": {
     "title": "Values",
@@ -43,7 +46,8 @@
       "pending": "Pending",
       "done": "Done",
       "failed": "Failed",
-      "skipped": "Skipped"
+      "skipped": "Skipped",
+      "replaced": "Replaced"
     },
     "next": "Next",
     "hidden": "Hidden from agents",
@@ -65,7 +69,22 @@
     "showToAgents": "Show output to agents",
     "notes": "Notes",
     "notesPlaceholder": "Notes for this step. Saved when you leave the box; agents can read them.",
-    "stop": "Stop"
+    "stop": "Stop",
+    "agentBadge": "Agent step",
+    "agentWaiting": "Waiting for the agent ({{label}})",
+    "agentCommand": "What the agent will run",
+    "agentCommandOn": "What the agent will run on {{host}}",
+    "sendToAgent": "Send to agent"
+  },
+  "sendAgent": {
+    "title": "Send step {{position}} to {{label}}?",
+    "hint": "The agent is told to look at this step. It reads your note in Runbooks; the notice itself carries no output or note.",
+    "notePlaceholder": "Note for the agent (optional)",
+    "count": "{{count}}/{{max}}",
+    "send": "Send",
+    "sent": "Sent to {{label}}",
+    "history": "Sent to the agent by {{user}} at {{time}}",
+    "historyNote": "Sent to the agent by {{user}} at {{time}}, with a note:"
   },
   "run": {
     "confirmTitle": "Run step {{position}}?",
@@ -77,7 +96,11 @@
     "byExec": "Run by {{user}} at {{time}}",
     "byTerminal": "Sent to a terminal by {{user}} at {{time}}",
     "manualDone": "Marked done by {{user}} at {{time}}",
+    "outsideDone": "Run outside Termix, marked done by {{user}} at {{time}}",
+    "outsideFailed": "Run outside Termix, marked failed by {{user}} at {{time}}",
     "manualFailed": "Marked failed by {{user}} at {{time}}",
+    "agentDone": "Done by the agent {{user}} at {{time}}",
+    "agentFailed": "Marked failed by the agent {{user}} at {{time}}",
     "note": "Note: {{note}}",
     "startedEarly": "started {{time}} early",
     "pasteFirst": "Paste the output first: at least one line.",
@@ -150,6 +173,42 @@
   "common": {
     "cancel": "Cancel"
   },
+  "settings": {
+    "notifyEnabled": {
+      "label": "Notify agents",
+      "description": "Send runbook events (an agent's turn, a failed step, a runbook done, Send to agent) to a webhook, so agents hear about them. Events carry ids only, never output or commands."
+    },
+    "notifyUrl": {
+      "label": "Webhook address",
+      "description": "The https address of the receiver that wakes your agents. http is refused.",
+      "placeholder": "https://agents.example.com/runbooks"
+    },
+    "notifyCaPem": {
+      "label": "CA certificate (PEM)",
+      "description": "Trust only this CA for the receiver. Leave it empty to use the server's normal trust store."
+    }
+  },
+  "notify": {
+    "title": "Signing secret",
+    "description": "Each notification is signed with this secret (HMAC-SHA256), so the receiver can tell it came from Runbooks. It is shown once.",
+    "notRunning": "Start Runbooks to manage its signing secret.",
+    "set": "Made {{time}} by {{who}}.",
+    "none": "No signing secret yet: notifications are not sent until you make one.",
+    "make": "Make a new signing secret",
+    "replaceTitle": "Make a new signing secret?",
+    "replaceHint": "The old secret stops working at once. Put the new one in your receiver.",
+    "replace": "Make new secret",
+    "once": "Signing secret. Copy it into your receiver now: it is not shown again.",
+    "copy": "Copy",
+    "hide": "Done",
+    "test": "Test",
+    "saveFirst": "Save the settings first. The test uses the saved address.",
+    "testOk": "Test sent: the receiver answered HTTP {{status}}.",
+    "testStatus": "Test not accepted: the receiver answered HTTP {{status}}.",
+    "testFailed": "Test failed: {{error}}",
+    "problem": "Not ready: {{problem}}",
+    "error": "Could not load the notification settings."
+  },
   "link": {
     "opening": "Opening the runbook…",
     "notFound": "Runbook {{id}} does not exist or is not available to you."
@@ -200,5 +259,20 @@
     "runUsed": "Read secret: {{names}}",
     "runStored": "Stored secret: {{names}}",
     "confirm": "Captures secret {{names}}: kept in OpenBao for 7 days, never shown."
+  },
+  "outside": {
+    "where": "Run outside Termix: {{where}}",
+    "pastePlaceholder": "Paste the output here, then mark the step done or failed."
+  },
+  "amend": {
+    "badge": "Amended",
+    "replaces": "Fixed version of step {{label}}",
+    "substepOf": "Extra step after step {{label}}",
+    "by": "Amended by {{agent}}: {{reason}}",
+    "oldCommand": "The command it replaces",
+    "replacedBy": "Replaced by {{label}}",
+    "replaced": "Replaced",
+    "show": "Show the replaced step",
+    "hide": "Hide"
   }
 }

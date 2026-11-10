@@ -5,6 +5,7 @@ import {
   takePendingRunbook,
 } from "./deep-link";
 import { createRunbooksTab, RunbooksIcon } from "./RunbooksTab";
+import { NotifySetting } from "./NotifySetting";
 
 export const TAB_ID = "runbooks";
 
@@ -25,6 +26,8 @@ export function activate(app: TermixApp): void {
     standalone: createRunbookLink(app),
     standaloneViews: [RUNBOOK_VIEW],
   });
+  // The signing secret and Test button of agent notifications (1.4.0).
+  app.registerSettingsComponent("notify-secret", NotifySetting);
   // A runbook link went through the full-screen view to the app: open the
   // Runbooks tab on it once the shell has its tabs back.
   app.tabs.onReady(() => {

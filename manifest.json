@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -20,7 +20,12 @@
     "Values with {{name}} placeholders, filled by the author or captured from output",
     "Outputs can be hidden from agents step by step",
     "Standard input from an earlier step's output, a value or a secret",
-    "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown"
+    "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown",
+    "Agent steps: work the agent does itself between the person's steps, ended through the API",
+    "Runbook events an agent can read or get as a signed webhook, off by default",
+    "Send to agent on any step, with a short note",
+    "Steps run outside Termix: the command with a Copy button, the pasted output checked",
+    "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers"
   ],
   "env": [],
   "engine": {
@@ -33,7 +38,9 @@
     "ui:surface",
     "hosts:read",
     "ssh:connect",
-    "credentials:use"
+    "credentials:use",
+    "network:outbound",
+    "secrets:own"
   ],
   "requires": [
     {
@@ -64,7 +71,39 @@
         "descriptionKey": "permissions.manageTokens.description",
         "defaultRoles": ["admin"]
       }
-    ]
+    ],
+    "settings": {
+      "admin": [
+        {
+          "key": "notifyEnabled",
+          "type": "boolean",
+          "labelKey": "settings.notifyEnabled.label",
+          "descriptionKey": "settings.notifyEnabled.description",
+          "default": false
+        },
+        {
+          "key": "notifyUrl",
+          "type": "string",
+          "labelKey": "settings.notifyUrl.label",
+          "descriptionKey": "settings.notifyUrl.description",
+          "placeholderKey": "settings.notifyUrl.placeholder",
+          "requires": "notifyEnabled"
+        },
+        {
+          "key": "notifyCaPem",
+          "type": "textarea",
+          "labelKey": "settings.notifyCaPem.label",
+          "descriptionKey": "settings.notifyCaPem.description",
+          "requires": "notifyEnabled"
+        },
+        {
+          "key": "notifySecret",
+          "type": "custom",
+          "component": "notify-secret",
+          "requires": "notifyEnabled"
+        }
+      ]
+    }
   },
   "locales": "locales",
   "platforms": ["linux", "win32", "darwin"],

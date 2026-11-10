@@ -32,6 +32,12 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Standard input from an earlier step's output, a value or a secret, so nobody copies output from one command to the next
 - Secrets a step captures, kept in OpenBao through the OpenBao Secrets plugin for 7 days, never shown and never given to agents
 - Done and Failed for steps with no command
+- Steps run outside Termix (a Windows PC, a browser console): the command with a Copy button, and the pasted output checked
+- A Copy button on every code block in a step
+- Agent steps: work the agent does itself between your steps, shown as "Waiting for the agent"
+- Events an agent reads (its turn, a failed step, a runbook done), and an optional signed webhook that tells it at once
+- Send to agent on any step, with a short note
+- Amendments: an agent fixes a step (3a replaces 3) or adds one after it, in place, with its reason, and later steps keep their numbers
 
 <br />
 
@@ -39,6 +45,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 
 - [Setup and use](docs/index.md)
 - [Agent API and MCP](docs/agent-api.md), with curl examples, an MCP client config, and how to prompt an agent to write runbooks
+- [Agent notifications](docs/notifications.md): a signed webhook that tells agents when it is their turn
 - [Security](docs/security.md)
 - [FAQ and limits](docs/faq.md)
 
