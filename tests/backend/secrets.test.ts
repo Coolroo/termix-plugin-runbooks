@@ -354,10 +354,10 @@ describe("what agents may write", () => {
         { ...useToken, stdin: { from: "secret", name: "other" } },
       ]),
     ).toBe(
-      "step 2 reads secret other, which no earlier step captures (secretCaptures)",
+      "step 2 reads secret other, which no earlier step captures (secretCaptures), makes (generate) or asks for (ask)",
     );
     expect(await error([useToken, makeToken])).toBe(
-      "step 1 reads secret api_token, which no earlier step captures (secretCaptures)",
+      "step 1 reads secret api_token, which no earlier step captures (secretCaptures), makes (generate) or asks for (ask)",
     );
     // The step that captures it cannot go while a later step reads it.
     const runbook = await agentRunbook(s, token, {
@@ -370,5 +370,146 @@ describe("what agents may write", () => {
       token,
     );
     expect(removed.status).toBe(409);
+  });
+});
+
+describe("checks see the output with its secrets hidden (1.4.1)", () => {
+  const withChecks = (checks: unknown[], extra: Record<string, unknown> = {}) =>
+    setup([{ ...makeToken, checks, ...extra }, useToken]);
+
+  it("passes a check for [secret:name] on a step that captures that secret", async () => {
+    const { s, runbook } = await withChecks([
+      { type: "contains", text: "token: [secret:api_token]" },
+      { type: "matches", pattern: "^token: \\[secret:api_token\\]$" },
+    ]);
+    s.setExec(prints(`created\ntoken: ${TOKEN}\n`));
+    const ran = await runStep(s, runbook.id, runbook.steps[0].id);
+    expect(ran.body.status).toBe("done");
+    expect(ran.body.checks.map((check: { ok: boolean }) => check.ok)).toEqual([
+      true,
+      true,
+    ]);
+    expect(
+      s.secrets!.data.get(`plugin:runbooks|runbooks/${runbook.id}/api_token`)
+        ?.value,
+    ).toBe(TOKEN);
+    expect(everything(s)).not.toContain(TOKEN);
+  });
+
+  it("fails a check that names part of the real value, whatever the value", async () => {
+    // The same checks on two values: one that holds the guessed text and
+    // one that does not. The answer must not tell them apart.
+    const outcomes: unknown[] = [];
+    for (const value of ["tk-9f8e7d6c5b4a", "zz-0000000000"]) {
+      const { s, runbook } = await withChecks([
+        { type: "contains", text: "token: tk-9" },
+        { type: "matches", pattern: "token: tk-[0-9a-f]+" },
+        { type: "notContains", text: "tk-9f" },
+      ]);
+      s.setExec(prints(`token: ${value}\n`));
+      const ran = await runStep(s, runbook.id, runbook.steps[0].id);
+      outcomes.push({
+        status: ran.body.status,
+        checks: ran.body.checks,
+      });
+      expect(ran.body.status).toBe("failed");
+      expect(ran.body.checks.map((check: { ok: boolean }) => check.ok)).toEqual(
+        [false, false, true],
+      );
+      // A failed step keeps no secret.
+      expect(s.secrets!.data.size).toBe(0);
+      expect(everything(s)).not.toContain(value);
+      await s.close();
+      server = null;
+    }
+    expect(outcomes[0]).toEqual(outcomes[1]);
+  });
+
+  it("tests a check on a capture that holds a secret against the hidden form", async () => {
+    const { s, runbook } = await withChecks(
+      [
+        { type: "value", name: "line", equals: "token: [secret:api_token]" },
+        { type: "value", name: "line", matches: "^token: \\[secret:" },
+      ],
+      { captures: [{ name: "line", pattern: "^(token: .*)$" }] },
+    );
+    s.setExec(prints(`token: ${TOKEN}\n`));
+    const ran = await runStep(s, runbook.id, runbook.steps[0].id);
+    expect(ran.body.status).toBe("done");
+    expect(ran.body.captured).toEqual({ line: "token: [secret:api_token]" });
+    expect(everything(s)).not.toContain(TOKEN);
+  });
+
+  it("refuses a value check that names the real value of a captured secret", async () => {
+    const { s, runbook } = await withChecks(
+      [{ type: "value", name: "line", equals: `token: ${TOKEN}` }],
+      { captures: [{ name: "line", pattern: "^(token: .*)$" }] },
+    );
+    s.setExec(prints(`token: ${TOKEN}\n`));
+    const ran = await runStep(s, runbook.id, runbook.steps[0].id);
+    expect(ran.body.status).toBe("failed");
+    expect(s.secrets!.data.size).toBe(0);
+  });
+
+  it("hides a secret the step reads before its checks", async () => {
+    const { s, runbook } = await setup([
+      makeToken,
+      {
+        ...useToken,
+        checks: [
+          { type: "contains", text: "using [secret:api_token]" },
+          { type: "notContains", text: TOKEN.slice(0, 6) },
+        ],
+      },
+    ]);
+    s.setExec(prints(`token: ${TOKEN}\n`));
+    await runStep(s, runbook.id, runbook.steps[0].id);
+    s.setExec(prints(`using ${TOKEN}\n`));
+    const used = await runStep(s, runbook.id, runbook.steps[1].id);
+    expect(used.body.status).toBe("done");
+    expect(used.body.checks.every((check: { ok: boolean }) => check.ok)).toBe(
+      true,
+    );
+  });
+
+  it("checks the pasted output of a terminal run with its secrets hidden", async () => {
+    const { s, runbook } = await withChecks([
+      { type: "contains", text: "token: [secret:api_token]" },
+    ]);
+    const sent = await runStep(
+      s,
+      runbook.id,
+      runbook.steps[0].id,
+      {},
+      "terminal",
+    );
+    const done = await s.person("POST", `/runs/${sent.body.id}/complete`, {
+      pastedOutput: `token: ${TOKEN}\n`,
+      outcome: "done",
+    });
+    expect(done.body.status).toBe("done");
+    expect(done.body.checks[0].ok).toBe(true);
+    expect(everything(s)).not.toContain(TOKEN);
+  });
+
+  it("leaves output with no secret as it is", async () => {
+    const { s, runbook } = await setup([
+      {
+        title: "Plain",
+        hostId: 1,
+        command: "status",
+        captures: [{ name: "state", pattern: "state: (\\S+)" }],
+        checks: [
+          { type: "contains", text: "state: up" },
+          { type: "value", name: "state", equals: "up" },
+          { type: "notContains", text: "[secret:" },
+        ],
+      },
+    ]);
+    s.setExec(prints("state: up\n"));
+    const ran = await runStep(s, runbook.id, runbook.steps[0].id);
+    expect(ran.body.status).toBe("done");
+    expect(ran.body.stdout).toBe("state: up\n");
+    expect(ran.body.captured).toEqual({ state: "up" });
   });
 });

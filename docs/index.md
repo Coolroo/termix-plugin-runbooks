@@ -16,11 +16,29 @@ The agent can never run anything. It only proposes and reads.
 
 ## Run a runbook
 
-Open **Runbooks** from the sidebar. Open runbooks come first, with their progress and author.
+Open **Runbooks** from the sidebar. Open runbooks come first, with their progress, their author and the kind of their next step (a colored dot, an icon and a name).
 
 An agent can also give you a link to a runbook, like `https://<your Termix address>/?view=runbook&id=12`. It opens Termix with the Runbooks tab on that runbook, after you sign in if you were signed out.
 
-A runbook shows its summary, its values and its steps in order. The next pending step has an orange border. Each step shows:
+A runbook shows its summary, its values and its steps in order. Each step shows its kind, so you see at a glance who does it and how (1.4.1):
+
+| Kind           | When                                                             | Color     | Icon          | Label              |
+| -------------- | ---------------------------------------------------------------- | --------- | ------------- | ------------------ |
+| Run here       | a command and a host                                             | green     | Play          | Run on <host>      |
+| Lead's step    | the agent does it                                                | cool blue | Bot           | <agent>'s step     |
+| Outside Termix | a command and where to run it                                    | amber     | External link | Run outside Termix |
+| In an app      | no command: you click through a page or check something by eye   | violet    | Mouse pointer | Do it yourself     |
+| Finish         | the last step, with no command, whose title starts with "Finish" | neutral   | Flag          | Finish             |
+
+Two chips can go on any kind: **Secret** (a lock: the step captures a secret or reads one on its standard input) and **Wait** (a clock: the step has a wait timer).
+
+The next pending step, marked **Next**, has a 2 px border and a soft glow in its kind's color. The pending steps after it have a thin stripe in their kind's color on the left; done steps have the stripe dimmed. A failed step has a red stripe and the red **Failed** badge, whatever its kind. Replaced and skipped steps are grey. Color is never the only sign: every kind has its icon and its label too.
+
+### Step colors
+
+An admin can change the color of each kind in the plugin's settings (**Settings**, **Runbooks**, **Step colors**), and each person can set their own under **Your step colors**, which win over the admin's. A color is `#rgb` or `#rrggbb`; anything else is refused when you save. Leave a color empty for the built-in one, which suits light and dark themes. One color drives the kind's border, glow, stripe and dot. Failed stays red.
+
+Each step shows:
 
 - what to do and why, written by the agent
 - the host and the exact command, with every `{{value}}` already filled in, and a Copy button
@@ -102,6 +120,17 @@ A step can capture a secret from its output, for example a token that a command 
 - The step lists each secret it captures: "stored in OpenBao until <time>" or "not stored".
 - When you mark the runbook **Done** or **Abandon** it, its secrets are deleted. When an agent closes it, they are deleted the next time someone with **Use secrets** opens the Runbooks tab. Anything left expires after 7 days.
 - Running such a step needs the OpenBao Secrets plugin, connected, and its **Use secrets** permission. Without them the step says "Install and connect the OpenBao Secrets plugin to use secrets" and does not run.
+
+### Make a secret and Ask for a secret
+
+Two kinds of step put a secret in place without anyone seeing it (1.4.2):
+
+- **Make a secret** says what it makes, such as "Make secret db_password: 32 letters and digits", and where it goes. Click **Make it**: Termix makes a new random value on the server and stores it. Nobody sees it, you included.
+- **Ask for a secret** is for a value another site shows you once, such as an API token. Type or paste it into the field: it shows while you type, and **Hide** draws it as dots. Click **Save**. If the step gives a pattern, a value that does not match is refused. The value is sent once and never shown again.
+
+The value goes to the runbook's own secrets (7 days, deleted when the runbook ends, like a captured secret), to your secrets or the shared ones in OpenBao Secrets, or to an app path that other programs read (with OpenBao Secrets 1.0.5 or later, where an admin allows that path). Later steps get it on their standard input, and every later output shows `[secret:<name>]` instead of it. The step's run says "Made secret db_password" or "Saved secret api_token", never the value. Only a person can make or save one: agents never can.
+
+Without the OpenBao Secrets plugin, or while it is not connected, the step says **Do it by hand**: for Make a secret, what to make in a password manager (such as 32 letters and digits), then where to save it in OpenBao or Vault (the KV engine, the path and the field, each with Copy). Mark the step **Done** when you have. A later step that reads the secret says where to get it.
 
 ### Amended steps
 

@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -25,7 +25,8 @@
     "Runbook events an agent can read or get as a signed webhook, off by default",
     "Send to agent on any step, with a short note",
     "Steps run outside Termix: the command with a Copy button, the pasted output checked",
-    "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers"
+    "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
+    "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed"
   ],
   "env": [],
   "engine": {
@@ -101,6 +102,30 @@
           "type": "custom",
           "component": "notify-secret",
           "requires": "notifyEnabled"
+        },
+        {
+          "key": "stepColorsEditor",
+          "type": "custom",
+          "component": "step-colors"
+        },
+        {
+          "key": "stepColors",
+          "type": "json",
+          "labelKey": "settings.stepColors.label",
+          "hidden": true
+        }
+      ],
+      "user": [
+        {
+          "key": "stepColorsEditor",
+          "type": "custom",
+          "component": "step-colors-user"
+        },
+        {
+          "key": "stepColors",
+          "type": "json",
+          "labelKey": "settings.stepColors.label",
+          "hidden": true
         }
       ]
     }

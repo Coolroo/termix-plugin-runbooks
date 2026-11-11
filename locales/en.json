@@ -21,7 +21,8 @@
     "emptyHint": "An agent with a Runbooks token proposes them; they show up here.",
     "meta": "{{done}}/{{total}} done · by {{author}} · {{time}}",
     "failed": "{{count}} failed",
-    "amended": "amended"
+    "amended": "amended",
+    "next": "Next: {{kind}}"
   },
   "runbook": {
     "status": {
@@ -123,7 +124,9 @@
     "elapsed": "Running for {{time}}",
     "silent": "No output for {{seconds}}s",
     "noOutputYet": "No output yet.",
-    "exitPlaceholder": "Exit code (optional)"
+    "exitPlaceholder": "Exit code (optional)",
+    "secretMade": "Made secret {{name}} by {{user}} at {{time}}",
+    "secretSaved": "Saved secret {{name}} by {{user}} at {{time}}"
   },
   "repeat": {
     "titleStep": "This step already ran. Run it again?",
@@ -186,6 +189,19 @@
     "notifyCaPem": {
       "label": "CA certificate (PEM)",
       "description": "Trust only this CA for the receiver. Leave it empty to use the server's normal trust store."
+    },
+    "colors": {
+      "title": "Step colors",
+      "description": "One color per kind of step: its border, glow, stripe and dot in the list. Leave a color empty for the built-in one, which suits light and dark themes. Icons and labels always show too.",
+      "userDescription": "Your own step colors. They replace the admin's for you. Leave a color empty for the admin's color or the built-in one.",
+      "pick": "Pick the color for {{kind}}",
+      "hex": "Color for {{kind}}, as #rrggbb",
+      "default": "Default",
+      "reset": "Reset",
+      "userTitle": "Your step colors"
+    },
+    "stepColors": {
+      "label": "Step colors"
     }
   },
   "notify": {
@@ -274,5 +290,77 @@
     "replaced": "Replaced",
     "show": "Show the replaced step",
     "hide": "Hide"
+  },
+  "kind": {
+    "run": "Run on {{host}}",
+    "lead": "{{label}}'s step",
+    "agent": "Agent",
+    "outside": "Run outside Termix",
+    "app": "Do it yourself",
+    "finish": "Finish",
+    "name": {
+      "run": "Run here",
+      "lead": "Lead's step",
+      "outside": "Outside Termix",
+      "app": "In an app",
+      "finish": "Finish",
+      "makeSecret": "Make a secret",
+      "askSecret": "Ask for a secret"
+    },
+    "mark": {
+      "secret": "Secret",
+      "wait": "Wait"
+    },
+    "makeSecret": "Make a secret",
+    "askSecret": "Ask for a secret"
+  },
+  "secretStep": {
+    "makeWhat": "Make secret {{name}}: {{what}}",
+    "askWhat": "Ask for secret {{name}}: {{label}}",
+    "goesTo": "Goes to {{where}}.",
+    "makeHint": "Termix makes the value on the server and stores it. Nobody sees it, you included; later steps get it on their standard input.",
+    "make": "Make it",
+    "askHint": "Sent once, then never shown again. Later steps get it on their standard input.",
+    "save": "Save",
+    "pattern": "It must match: {{pattern}}",
+    "show": "Show",
+    "hide": "Hide",
+    "made": "Made secret {{name}}",
+    "saved": "Saved secret {{name}}",
+    "storedUntil": "Secret {{name}} is stored until {{time}}.",
+    "notStored": "Secret {{name}} is not stored now: it expired or was deleted.",
+    "repeatMake": "Step made secret {{name}} already. Make a new value?",
+    "repeatSave": "Step saved secret {{name}} already. Save a new value?",
+    "makeAgain": "Make a new value",
+    "saveAgain": "Save a new value",
+    "orderAnyway": "Do it out of order",
+    "orderHint": "Not done yet: {{steps}}. Do this step anyway?",
+    "readByHand": "Secret {{name}} is kept by hand now. Get it from OpenBao or Vault:",
+    "readByHandStep": "Secret {{name}} is kept by hand now (step {{step}}). Get it from OpenBao or Vault:",
+    "format": {
+      "alnum": "{{count}} letters and digits (A-Z, a-z, 0-9)",
+      "hex": "{{count}} hex digits (0-9, a-f)",
+      "base64url": "{{count}} characters of A-Z, a-z, 0-9, - and _",
+      "words": "a passphrase of {{count}} words from the EFF long word list, joined by -",
+      "pin": "{{count}} digits"
+    },
+    "store": {
+      "runbook": "the runbook's secrets for 7 days (deleted when the runbook ends)",
+      "mine": "your secrets in OpenBao Secrets: {{path}}",
+      "shared": "the shared secrets in OpenBao Secrets: {{path}}",
+      "expires_one": "for {{count}} day",
+      "expires_other": "for {{count}} days",
+      "app": "app path {{app}}, field {{field}}"
+    },
+    "byHand": {
+      "title": "Do it by hand",
+      "generate": "In a password manager, generate {{what}}.",
+      "get": "Get the {{label}}.",
+      "save": "In OpenBao or Vault, save it here:",
+      "done": "Then mark this step Done.",
+      "engine": "KV engine",
+      "path": "Path",
+      "field": "Field"
+    }
   }
 }

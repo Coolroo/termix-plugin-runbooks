@@ -15,6 +15,7 @@ import { createStore } from "./store.js";
 import { createStateStore } from "./state.js";
 import { createNotifier, validateSettings, type Notifier } from "./notifier.js";
 import { registerAdminRoutes } from "./admin-routes.js";
+import { validateColors } from "../shared/step-kinds.js";
 
 /** Requests a minute one address may make to the agent routes (core's limit). */
 const PUBLIC_RATE_LIMIT = 600;
@@ -30,7 +31,12 @@ export async function activate(ctx: PluginContext) {
   const notifier = createNotifier(ctx, store, state);
   activeNotifier = notifier;
   events.setDelivery(notifier);
-  ctx.settings.onValidate("admin", (values) => validateSettings(values));
+  ctx.settings.onValidate("admin", (values) => ({
+    ...validateSettings(values),
+    ...validateColors(values),
+  }));
+  // Step colors (1.4.1): a person's own colors override the admin's.
+  ctx.settings.onValidate("user", (values) => validateColors(values));
   // Runs a stopped Termix left running never finish: fail them first.
   await sweepInterrupted(store, events);
   const live = createLiveRuns(store);

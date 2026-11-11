@@ -194,6 +194,11 @@ describe("Mark done on a terminal run", () => {
     const done = () =>
       within(card(2)).getByText(locales.run.markDone).closest("button")!;
     expect(done().disabled).toBe(true);
+    expect(done().title).toBe(locales.run.pasteFirst);
+    // Said in words too, for a phone, where a title never shows (1.4.1).
+    expect(card(2).querySelector("[data-paste-first]")!.textContent).toBe(
+      locales.run.pasteFirst,
+    );
     const box = within(card(2)).getByPlaceholderText(
       locales.run.pastePlaceholder,
     );
@@ -201,6 +206,7 @@ describe("Mark done on a terminal run", () => {
     expect(done().disabled).toBe(true);
     fireEvent.change(box, { target: { value: "up 3 days\n" } });
     expect(done().disabled).toBe(false);
+    expect(card(2).querySelector("[data-paste-first]")).toBeNull();
     expect(
       within(card(2)).getByText(locales.run.markFailed).closest("button")!
         .disabled,

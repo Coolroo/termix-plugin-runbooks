@@ -107,6 +107,13 @@ export const steps = defineTable(
     // Why, as the agent said it (up to 500 characters), and the token name.
     amendReason: text(),
     amendedBy: varchar(255),
+    // JSON { name, format, length, store }: a Make a secret step (1.4.2),
+    // whose value the server makes when a person clicks Make it. Null: not
+    // such a step. Never the value.
+    generate: text(),
+    // JSON { name, label, pattern, store }: an Ask for a secret step
+    // (1.4.2), whose value a person pastes once. Null: not such a step.
+    ask: text(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -122,7 +129,8 @@ export const runs = defineTable(
     id: id(),
     stepId: integer().notNull(),
     runbookId: integer().notNull(),
-    // exec | terminal | outside (1.4.0: a step run outside Termix, marked
+    // exec | terminal | secret (1.4.2: a person made or saved a secret
+    // step's value; host 0, empty command, never the value) | outside (1.4.0: a step run outside Termix, marked
     // done or failed by a person with the pasted output; host 0) |
     // manual (1.2.0: a step with no command marked done
     // or failed by a person; host 0, empty command) | agent (1.4.0: an agent

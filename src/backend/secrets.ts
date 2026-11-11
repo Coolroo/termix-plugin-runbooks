@@ -35,6 +35,39 @@ export interface SecretsStore {
   get(area: Area, name: string): Promise<string | null>;
   remove(area: Area, name: string): Promise<boolean>;
   removePrefix(area: Area, prefix: string): Promise<number>;
+  /** Names and times under a prefix, never a value. */
+  list?(
+    area: Area,
+    prefix?: string,
+  ): Promise<Array<{ name: string; expiresAt: string | null }>>;
+  /**
+   * OpenBao Secrets 1.0.5 (service 1.1.0): adds a new field at
+   * <app secrets folder>/<app>/<host>, never replacing one. Missing on
+   * older versions.
+   */
+  createAppField?(
+    caller: { plugin: string; key: string },
+    app: string,
+    host: string,
+    field: string,
+    value: string,
+  ): Promise<{
+    path: string;
+    field: string;
+    created: "secret" | "field";
+    version: number;
+  }>;
+}
+
+/** How long a "connected" answer from the service counts (1.4.2). */
+export const STATUS_TTL_MS = 30_000;
+
+/** Why an app field was refused, as a code the UI reads (1.4.2). */
+export function appRefusalCode(message: string): string {
+  if (/^creating app secrets is off/i.test(message)) return "app-store-off";
+  if (/is not in the allowed/i.test(message)) return "app-not-allowed";
+  if (/exists already/i.test(message)) return "exists";
+  return "secrets-error";
 }
 
 const AREA_KEY = /^[0-9a-f]{64}$/;
@@ -103,6 +136,9 @@ export function createSecrets(ctx: PluginContext) {
     return store;
   }
 
+  /** The last time the service said it is connected, for views (1.4.2). */
+  let connectedAt = 0;
+
   async function bind(store: SecretsStore): Promise<void> {
     if (!bound) {
       bound = (async () => {
@@ -148,6 +184,113 @@ export function createSecrets(ctx: PluginContext) {
     /** Refuses unless the service is there and connected. */
     async require(): Promise<void> {
       await connected();
+    },
+
+    /**
+     * Whether secret steps can use the service now (1.4.2): ready, or why
+     * not. A connected answer counts for 30 seconds, so a page that polls
+     * does not ask the service each time.
+     */
+    async readiness(): Promise<{ ready: boolean; reason: string | null }> {
+      if (!handle()) return { ready: false, reason: NO_SECRETS };
+      if (Date.now() - connectedAt < STATUS_TTL_MS) {
+        return { ready: true, reason: null };
+      }
+      try {
+        await connected();
+        connectedAt = Date.now();
+        return { ready: true, reason: null };
+      } catch (error) {
+        connectedAt = 0;
+        return {
+          ready: false,
+          reason: error instanceof Error ? error.message : NO_SECRETS,
+        };
+      }
+    },
+
+    /** Whether the service can create app secrets (OpenBao Secrets 1.0.5). */
+    appSecrets(): boolean {
+      const store = handle();
+      return Boolean(store && typeof store.createAppField === "function");
+    },
+
+    /**
+     * Stores a new library secret ("user" or "shared"), never replacing
+     * one: refused with code exists when the name is taken (1.4.2).
+     */
+    async createLibrary(
+      area: "user" | "shared",
+      name: string,
+      value: string,
+      options: { expiresAt: string | null; note: string },
+    ): Promise<void> {
+      const store = await connected();
+      try {
+        if (typeof store.list !== "function") {
+          throw new InputError(
+            "OpenBao Secrets cannot list secrets here, so Runbooks cannot check that the name is free",
+            409,
+            { code: "secrets-error" },
+          );
+        }
+        const taken = (await store.list(area, name)).some(
+          (entry) => entry.name === name,
+        );
+        if (taken) {
+          throw new InputError(
+            `${area === "user" ? "mine" : "shared"}/${name} exists already: Runbooks never replaces a library secret`,
+            409,
+            { code: "exists" },
+          );
+        }
+        await store.put(area, name, value, options);
+      } catch (error) {
+        throw refusal(error);
+      }
+    },
+
+    /** Adds a field to an app path (1.4.2), through createAppField. */
+    createAppField(
+      app: string,
+      host: string,
+      field: string,
+      value: string,
+    ): Promise<{ path: string }> {
+      return inArea(async (store, area) => {
+        if (typeof store.createAppField !== "function") {
+          throw new InputError(
+            "Saving to an app path needs OpenBao Secrets 1.0.5 or later, with the allowed app paths an admin sets there",
+            409,
+            { code: "app-store-unsupported" },
+          );
+        }
+        try {
+          const made = await store.createAppField(
+            area as { plugin: string; key: string },
+            app,
+            host,
+            field,
+            value,
+          );
+          return { path: made.path };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          // A refused area key goes back to inArea, which binds again.
+          if (/area key/i.test(message)) throw error;
+          const code = (error as { code?: unknown })?.code;
+          if (code === "EPLUGINSVCPERM" || /permission/i.test(message)) {
+            throw new InputError(
+              "you need the Use secrets and Create app secrets permissions of OpenBao Secrets to save to an app path",
+              403,
+              { code: "secrets-permission" },
+            );
+          }
+          throw new InputError(`OpenBao Secrets: ${message}`, 409, {
+            code: appRefusalCode(message),
+          });
+        }
+      });
     },
 
     /** A secret this runbook captured, or null. */

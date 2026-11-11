@@ -182,6 +182,43 @@ describe("steps run outside Termix", () => {
     ).toEqual(["check", "manual"]);
   });
 
+  it("refuse Done with checks and no pasted output, and allow Failed (1.4.1)", async () => {
+    const { s, runbook } = await setup([
+      {
+        title: "Checked",
+        command: "Get-Service app",
+        where: WHERE,
+        checks: [{ type: "notContains", text: "Stopped" }],
+      },
+      { title: "Unchecked", command: "Restart-Service app", where: WHERE },
+    ]);
+    const [checked, unchecked] = runbook.steps;
+    for (const output of [undefined, "", "  \n"]) {
+      const refused = await mark(s, checked.id, {
+        outcome: "done",
+        output,
+        revision: checked.revision,
+      });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toBe(
+        "paste at least one line of the output to mark the step done",
+      );
+    }
+    expect((await view(s, runbook.id)).steps[0].runs).toHaveLength(0);
+    const failed = await mark(s, checked.id, {
+      outcome: "failed",
+      revision: checked.revision,
+    });
+    expect(failed.status).toBe(200);
+    expect(failed.body.steps[0].status).toBe("failed");
+    // A step without checks is done on the person's word, as before.
+    const done = await mark(s, unchecked.id, {
+      outcome: "done",
+      revision: unchecked.revision,
+    });
+    expect(done.body.steps[1].status).toBe("done");
+  });
+
   it("refuse Done for a stale revision or missing values", async () => {
     const { s, token, runbook } = await setup([
       { title: "Use", command: "deploy {{tag}}", where: WHERE },

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  checkHidden,
   checksProblem,
   evaluateChecks,
   type Check,
@@ -414,5 +415,27 @@ describe("checks when a run ends", () => {
       outcome: "failed",
     });
     expect(marked.body).toMatchObject({ status: "failed", checks: null });
+  });
+});
+
+describe("checkHidden (1.4.1)", () => {
+  const checks: Check[] = [
+    { type: "contains", text: "id: [secret:key]" },
+    { type: "contains", text: "id: abc" },
+    { type: "value", name: "id", equals: "[secret:key]" },
+  ];
+  const run = exec({ stdout: "id: abc123\n", stderr: "" });
+
+  it("tests the checks and captured values with the secrets hidden", () => {
+    const results = checkHidden(checks, run, { id: "abc123" }, [
+      { name: "key", value: "abc123" },
+    ]);
+    expect(results.map((result) => result.ok)).toEqual([true, false, true]);
+  });
+
+  it("is evaluateChecks when there is nothing to hide", () => {
+    expect(checkHidden(checks, run, { id: "abc123" }, [])).toEqual(
+      evaluateChecks(checks, run, { id: "abc123" }),
+    );
   });
 });

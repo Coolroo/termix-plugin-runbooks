@@ -10,6 +10,7 @@
 import type { NextFunction, Request, Response, Router } from "express";
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import {
+  APP_STORE_NEEDS,
   InputError,
   LIMITS,
   amendmentView,
@@ -35,12 +36,17 @@ import type {
 } from "./store.js";
 import { now } from "./store.js";
 import { newToken } from "./tokens.js";
-import { applyCaptures, findSecrets, resolve } from "./values.js";
+import { applyCaptures, findSecrets, matchesWhole, resolve } from "./values.js";
 import { isSshHost } from "../shared/hosts.js";
 import { isBefore, stepLabel } from "../shared/steps.js";
+import {
+  COLORS_SETTING,
+  effectiveColors,
+  nextKind,
+} from "../shared/step-kinds.js";
 import type { LiveRuns } from "./live.js";
 import { streamExec, type ExecClient } from "./stream-exec.js";
-import { evaluateChecks, type CheckedRun, type CheckResult } from "./checks.js";
+import { checkHidden, type CheckedRun, type CheckResult } from "./checks.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { NO_SECRETS, SECRET_TTL_MS, type Secrets } from "./secrets.js";
 import {
@@ -50,6 +56,12 @@ import {
   type FailReason,
 } from "./events.js";
 import {
+  describeFormat,
+  describeStore,
+  MAX_ASKED_BYTES,
+} from "../shared/secret-steps.js";
+import { generateSecret } from "./generate.js";
+import {
   describeStdin,
   libraryRef,
   secretLabel,
@@ -58,6 +70,7 @@ import {
 } from "./stdin.js";
 
 export const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 export const MAX_OUTPUT_BYTES = 262_144;
 export const MAX_TOKEN_HOSTS = 500;
 /** How long Stop waits for the run to be written before it answers. */
@@ -81,6 +94,46 @@ const OUTSIDE_STEP =
   "this step runs outside Termix: copy the command, run it there, then mark it Done or Failed with the output";
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
+
+/**
+ * The value a person typed or pasted on an Ask for a secret step (1.4.2),
+ * trimmed, or a refusal. The refusal never holds the value.
+ */
+function askedValue(
+  raw: unknown,
+  pattern: string | null,
+  label: string,
+): string {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new InputError(`enter the ${label}`, 400, { code: "empty" });
+  }
+  const value = raw.trim();
+  if (Buffer.byteLength(value) > MAX_ASKED_BYTES) {
+    throw new InputError(
+      `the value is longer than ${MAX_ASKED_BYTES / 1024} KB`,
+      400,
+      { code: "too-long" },
+    );
+  }
+  if (value.includes("\0")) {
+    throw new InputError("the value must not contain NUL characters", 400, {
+      code: "pattern",
+    });
+  }
+  if (pattern !== null) {
+    const ok = matchesWhole(pattern, value);
+    if (ok !== true) {
+      throw new InputError(
+        ok === null
+          ? "the check of the value did not finish: ask the runbook's author for a simpler pattern"
+          : `this does not look like the ${label}: it does not match the pattern the runbook gives (${pattern})`,
+        400,
+        { code: "pattern" },
+      );
+    }
+  }
+  return value;
+}
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
@@ -131,11 +184,22 @@ export function registerPersonRoutes(
         order: "newest",
       })
     ).filter((event) => event.type === "sent");
+    // Secret steps (1.4.2) need the service connected, not only there.
+    const secretSteps = bundle.steps.some((step) => step.generate || step.ask);
+    const readiness = secretSteps ? await secrets.readiness() : null;
     return personView(bundle, await hostNamer(), {
       secretsAvailable: secrets.available(),
       noSecrets: NO_SECRETS,
       notifyEnabled: await notify.enabled(),
       sent,
+      ...(readiness
+        ? {
+            secretsReady: readiness.ready,
+            secretsReason: readiness.reason,
+            appSecrets: secrets.appSecrets(),
+          }
+        : {}),
+      userId: actor(),
     });
   }
 
@@ -521,6 +585,41 @@ export function registerPersonRoutes(
     return { bytes, record: { ...source, bytes: bytes.length }, secret };
   }
 
+  /**
+   * The values the runbook's secret steps made or saved (1.4.2), read back
+   * as the person, so every later output hides them as it hides a secret a
+   * step reads. A value the person cannot read, or an app field (never read
+   * back), is not hidden this way.
+   */
+  async function madeSecretTexts(
+    step: StepRow,
+    bundle: RunbookBundle,
+  ): Promise<SecretText[]> {
+    const out: SecretText[] = [];
+    if (!secrets.available()) return out;
+    for (const other of bundle.steps) {
+      const spec = other.generate ?? other.ask;
+      if (!spec || other.id === step.id || spec.store.to === "app") continue;
+      const made = (bundle.runsByStep.get(other.id) ?? []).some(
+        (run) => run.mode === "secret" && run.status === "done",
+      );
+      if (!made) continue;
+      try {
+        let value: string | null;
+        if (spec.store.to === "runbook") {
+          value = await secrets.getCaptured(step.runbookId, spec.name);
+        } else {
+          const ref = libraryRef(spec.store.library);
+          value = await secrets.getLibrary(ref.area, ref.name);
+        }
+        if (value) out.push({ name: spec.name, value });
+      } catch {
+        // Not readable for this person now: nothing to hide it with.
+      }
+    }
+    return out;
+  }
+
   /** Audits a start before the runbook's wait was over. */
   async function auditSkippedWait(
     req: Request,
@@ -553,6 +652,8 @@ export function registerPersonRoutes(
       checked?: CheckedRun;
       /** Secrets the step read: replaced in everything the run keeps. */
       used?: SecretText[];
+      /** Secrets earlier secret steps made (1.4.2): replaced, not "read". */
+      hidden?: SecretText[];
       /** Who ended it, for the events. */
       by?: string;
       /** Why it failed, when `outcome` is failed. */
@@ -560,23 +661,25 @@ export function registerPersonRoutes(
     } = {},
   ): Promise<{ final: "done" | "failed"; stored: string[] }> {
     const used = options.used ?? [];
+    // Secret values found in the output are replaced whatever the outcome;
+    // they are stored only from a run that ends done. They are found first,
+    // so the checks see the output with its secrets hidden (1.4.1).
+    const found = findSecrets(step.secretCaptures, output);
+    const hide: SecretText[] = [
+      ...used,
+      ...(options.hidden ?? []),
+      ...Object.entries(found.values).map(([name, value]) => ({ name, value })),
+    ];
     const captures = applyCaptures(step.captures, output);
     const results =
       options.checked && step.checks.length > 0
-        ? evaluateChecks(step.checks, options.checked, captures.values)
+        ? checkHidden(step.checks, options.checked, captures.values, hide)
         : null;
     let final: "done" | "failed" =
       outcome === "done" && (results ?? []).every((check) => check.ok)
         ? "done"
         : "failed";
     const problems: string[] = [];
-    // Secret values found in the output are replaced whatever the outcome;
-    // they are stored only from a run that ends done.
-    const found = findSecrets(step.secretCaptures, output);
-    const hide: SecretText[] = [
-      ...used,
-      ...Object.entries(found.values).map(([name, value]) => ({ name, value })),
-    ];
     const stored: Array<{ name: string; expiresAt: string }> = [];
     if (final === "done" && step.secretCaptures.length > 0) {
       if (found.missing.length > 0) {
@@ -766,15 +869,45 @@ export function registerPersonRoutes(
     ...use,
     wrap(async (req) => {
       const rows = await store.listRunbooks({});
-      const out: ReturnType<typeof runbookSummary>[] = [];
+      const out: Array<
+        ReturnType<typeof runbookSummary> & { nextKind: string | null }
+      > = [];
       for (const runbook of rows) {
         const steps = await store.listSteps(runbook.id);
         // A runbook an agent closed still has its secrets: delete them now.
         await removeSecrets(req, runbook, steps);
-        out.push(runbookSummary(runbook, steps));
+        // The kind of the next step (1.4.1): the list shows its color.
+        out.push({
+          ...runbookSummary(runbook, steps),
+          nextKind: nextKind(steps),
+        });
       }
       const order = { open: 0, done: 1, abandoned: 2 } as const;
       return out.sort((a, b) => order[a.status] - order[b.status]);
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/colors:
+   *   get:
+   *     summary: The step colors this person sees, by kind of step
+   *     description: >
+   *       { [kind id]: "#rrggbb" }: the person's own color, else the
+   *       admin's. A kind that is not there keeps its built-in color.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The colors }
+   */
+  router.get(
+    "/colors",
+    ...use,
+    wrap(async () => {
+      // Checked again on read: only a color ever reaches a style.
+      return effectiveColors(
+        await ctx.settings.get(COLORS_SETTING),
+        await ctx.settings.getUser(actor(), COLORS_SETTING),
+      );
     }),
   );
 
@@ -865,6 +998,7 @@ export function registerPersonRoutes(
         const input = target.stdin
           ? await readStdin(step, bundle, target.stdin)
           : null;
+        const hidden = await madeSecretTexts(step, bundle);
         await auditSkippedWait(req, step, target.skippedWait);
         const startedAt = now();
         const runId = await store.insertRun({
@@ -911,6 +1045,7 @@ export function registerPersonRoutes(
             command: target.command,
             stdin: input?.bytes,
             used: input?.secret ? [input.secret] : [],
+            hidden,
           },
           release,
         );
@@ -940,6 +1075,8 @@ export function registerPersonRoutes(
       stdin?: Buffer;
       /** Secrets the step reads: replaced in its output. */
       used: SecretText[];
+      /** Secrets earlier secret steps made (1.4.2): replaced in its output. */
+      hidden?: SecretText[];
     },
     release: () => void,
   ): Promise<void> {
@@ -950,9 +1087,10 @@ export function registerPersonRoutes(
         : ""
     }`;
     // A value split across two pieces of output is still replaced.
+    const hide = [...target.used, ...(target.hidden ?? [])];
     const redactors = {
-      stdout: createRedactor(target.used),
-      stderr: createRedactor(target.used),
+      stdout: createRedactor(hide),
+      stderr: createRedactor(hide),
     };
     // A secret this step captures is known only once the output is
     // complete, so its output is not shown or written before the end.
@@ -1012,6 +1150,7 @@ export function registerPersonRoutes(
           },
           {
             used: target.used,
+            hidden: target.hidden,
             by: target.by,
             reason: record.stoppedBy
               ? "stopped"
@@ -1054,6 +1193,7 @@ export function registerPersonRoutes(
             pastedOutput: null,
           },
           used: target.used,
+          hidden: target.hidden,
           by: target.by,
           reason: stopped
             ? "stopped"
@@ -1244,6 +1384,10 @@ export function registerPersonRoutes(
       }
       const step = await store.getStep(run.stepId);
       if (!step) throw new InputError("step not found", 404);
+      const hidden = await madeSecretTexts(
+        step,
+        await bundleFor(step.runbookId),
+      );
       const { final, stored } = await finishRun(
         run.id,
         step,
@@ -1265,6 +1409,7 @@ export function registerPersonRoutes(
               : undefined,
           by: actor(),
           reason: "manual",
+          hidden,
         },
       );
       await audit(
@@ -1361,11 +1506,33 @@ export function registerPersonRoutes(
               `output must be text of at most ${MAX_OUTPUT_BYTES / 1024} KB`,
             );
           }
-          pasted = output === "" ? null : output;
+          // Done on a step with checks needs the output they read (1.4.1),
+          // as a terminal run's Mark done does. Failed needs nothing.
+          if (
+            outcome === "done" &&
+            step.checks.length > 0 &&
+            output.trim() === ""
+          ) {
+            throw new InputError(
+              "paste at least one line of the output to mark the step done",
+            );
+          }
+          // An outside step cannot capture or read secrets today; the order
+          // is finishRun's anyway: find the secrets, then check the output
+          // with them hidden (1.4.1).
+          const found = findSecrets(step.secretCaptures, output);
+          const hide: SecretText[] = [
+            ...(await madeSecretTexts(step, bundle)),
+            ...Object.entries(found.values).map(([name, value]) => ({
+              name,
+              value,
+            })),
+          ];
+          pasted = output === "" ? null : redact(output, hide);
           const captures = applyCaptures(step.captures, output);
           results =
             step.checks.length > 0
-              ? evaluateChecks(
+              ? checkHidden(
                   step.checks,
                   {
                     mode: "terminal",
@@ -1375,10 +1542,18 @@ export function registerPersonRoutes(
                     pastedOutput: output,
                   },
                   captures.values,
+                  hide,
                 )
               : null;
           if ((results ?? []).some((check) => !check.ok)) final = "failed";
-          if (final === "done") captured = captures.values;
+          if (final === "done") {
+            captured = Object.fromEntries(
+              Object.entries(captures.values).map(([name, value]) => [
+                name,
+                redact(value, hide),
+              ]),
+            );
+          }
         }
         const at = now();
         await events.around(step.runbookId, actor(), async () => {
@@ -1425,6 +1600,220 @@ export function registerPersonRoutes(
           `runbook ${step.runbookId} step ${stepLabel(step)} marked ${final} by hand${
             outside ? " (run outside Termix)" : ""
           }`,
+          true,
+        );
+        return showRunbook(await bundleFor(step.runbookId));
+      }),
+    ),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/secret:
+   *   post:
+   *     summary: Make a secret step's value, or save the value a person pasted
+   *     description: >
+   *       1.4.2. Body { revision, value?, confirmRepeat?, outOfOrder?,
+   *       waitAnyway? }. On a Make a secret step (generate) the server makes
+   *       the value; on an Ask for a secret step (ask) the body's value is
+   *       the one the person typed or pasted, checked against the step's
+   *       pattern. The value goes to the step's store through OpenBao
+   *       Secrets and is never in the answer, a run, an event or the audit
+   *       log. A person only; refused for a Termix API key. 409 with code
+   *       stale, order, wait or repeat as for Run; no-secrets,
+   *       app-store-unsupported, app-store-off, app-not-allowed or exists
+   *       when the store cannot take it.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The runbook }
+   *       400: { description: Not a secret step, or a value that does not match }
+   *       409: { description: Stale, out of order, wait, repeat, or refused by the store }
+   */
+  router.post(
+    "/steps/:id/secret",
+    ...act,
+    wrap(async (req) =>
+      claimed(idParam(req), async (stepId) => {
+        const { step, bundle } = await stepContext(stepId);
+        const spec = step.generate ?? step.ask;
+        if (!spec) {
+          throw new InputError("this step makes or asks for no secret", 400, {
+            code: "not-secret-step",
+          });
+        }
+        if (bundle.runbook.status !== "open") {
+          throw new InputError(`this runbook is ${bundle.runbook.status}`, 409);
+        }
+        if (step.status === "replaced") {
+          throw replacedProblem(step, bundle.steps);
+        }
+        const input = body(req);
+        if (input.revision !== step.revision) {
+          throw new InputError("the step changed; reload", 409, {
+            code: "stale",
+          });
+        }
+        // An asked value is checked before anything else is asked about.
+        let value: string;
+        if (step.ask) {
+          value = askedValue(input.value, step.ask.pattern, step.ask.label);
+        } else {
+          value = "";
+        }
+        if (input.outOfOrder !== true) {
+          const blocking = bundle.steps.filter(
+            (other) => isBefore(other, step) && other.status === "pending",
+          );
+          if (blocking.length > 0) {
+            throw new InputError(
+              `step ${stepLabel(blocking[0])} (${blocking[0].title}) is still pending`,
+              409,
+              {
+                code: "order",
+                blocking: blocking.map((other) => ({
+                  id: other.id,
+                  position: other.position,
+                  label: stepLabel(other),
+                  title: other.title,
+                })),
+              },
+            );
+          }
+        }
+        const wait = waitState(step, bundle.steps, bundle.runsByStep);
+        const waiting = wait && wait.remainingMs > 0 ? wait : null;
+        if (waiting && input.waitAnyway !== true) {
+          const remainingSeconds = Math.ceil(waiting.remainingMs / 1000);
+          throw new InputError(
+            `the runbook says to wait ${remainingSeconds} s more after step ${waiting.previous.label}${
+              waiting.reason ? ` (${waiting.reason})` : ""
+            }`,
+            409,
+            {
+              code: "wait",
+              remainingSeconds,
+              reason: waiting.reason,
+              waitUntil: waiting.until,
+              previous: waiting.previous,
+            },
+          );
+        }
+        const earlier = bundle.runsByStep.get(step.id)?.[0];
+        if (step.status !== "pending" && input.confirmRepeat !== true) {
+          throw new InputError(
+            step.generate
+              ? `step ${stepLabel(step)} made secret ${spec.name} already`
+              : `step ${stepLabel(step)} saved secret ${spec.name} already`,
+            409,
+            {
+              code: "repeat",
+              repeat: earlier ? runSummary(earlier, true) : null,
+            },
+          );
+        }
+        // Made only now, after every question: it goes straight to its store.
+        if (step.generate) {
+          value = generateSecret(step.generate.format, step.generate.length);
+        }
+        const how = step.generate ? "made" : "saved";
+        const dest = spec.store;
+        let expiresAt: string | null = null;
+        let where: string | null = null;
+        if (dest.to === "runbook") {
+          await secrets.require();
+          expiresAt = new Date(Date.now() + SECRET_TTL_MS).toISOString();
+          await secrets.putCaptured(
+            step.runbookId,
+            spec.name,
+            value,
+            expiresAt,
+          );
+        } else if (dest.to === "library") {
+          const ref = libraryRef(dest.library);
+          expiresAt = dest.expires
+            ? new Date(Date.now() + dest.expires * DAY_MS).toISOString()
+            : null;
+          await secrets.createLibrary(ref.area, ref.name, value, {
+            expiresAt,
+            note: `From runbook ${step.runbookId} step ${stepLabel(step)}`,
+          });
+          where = dest.library;
+        } else {
+          if (!secrets.appSecrets()) {
+            await secrets.require();
+            throw new InputError(APP_STORE_NEEDS, 409, {
+              code: "app-store-unsupported",
+            });
+          }
+          await secrets.createAppField(dest.app, dest.host, dest.field, value);
+          where = `${dest.app}/${dest.host}#${dest.field}`;
+        }
+        value = "";
+        const at = now();
+        const made = {
+          name: spec.name,
+          how,
+          store: dest.to,
+          where,
+          expiresAt,
+        } as const;
+        await events.around(step.runbookId, actor(), async () => {
+          await store.insertRun({
+            stepId: step.id,
+            runbookId: step.runbookId,
+            mode: "secret",
+            status: "done",
+            hostId: null,
+            command: "",
+            commandHash: "",
+            userId: actor(),
+            startedAt: at,
+            finishedAt: at,
+            exitCode: null,
+            stdout: null,
+            stderr: null,
+            truncated: false,
+            timedOut: false,
+            pastedOutput: null,
+            error: null,
+            startedEarlySeconds: waiting
+              ? Math.ceil(waiting.remainingMs / 1000)
+              : null,
+            secrets: {
+              used: [],
+              captured:
+                dest.to === "runbook" && expiresAt
+                  ? [{ name: spec.name, expiresAt }]
+                  : [],
+              made,
+            },
+          });
+          await store.updateStep(step.id, {
+            status: "done",
+            skipReason: null,
+            endedAt: at,
+          });
+          await events.stepEnded(step, "done", null, actor());
+          await store.touchRunbook(
+            step.runbookId,
+            dest.to === "runbook" ? { secretsStoredAt: at } : {},
+          );
+          await store.persist();
+        });
+        await auditSkippedWait(
+          req,
+          step,
+          waiting ? Math.ceil(waiting.remainingMs / 1000) : null,
+        );
+        await audit(
+          req,
+          "runbooks_step_secret",
+          step,
+          `runbook ${step.runbookId} step ${stepLabel(step)} ${how} secret ${spec.name}${
+            step.generate
+              ? ` (${describeFormat(step.generate.format, step.generate.length)})`
+              : ""
+          } in ${describeStore(dest)}`,
           true,
         );
         return showRunbook(await bundleFor(step.runbookId));

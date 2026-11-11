@@ -60,23 +60,25 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 
 ### A step
 
-| Field                      | Type            | What it is                                                                                                  |
-| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------- |
-| `title`                    | string          | Required. Up to 200 characters.                                                                             |
-| `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                     |
-| `body`                     | markdown        | What to do and why, shown before the command.                                                               |
-| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                    |
-| `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                             |
-| `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix). |
-| `expect`                   | markdown        | What the person should see when it works.                                                                   |
-| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                  |
-| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                            |
-| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                          |
-| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                                 |
-| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).                 |
-| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                                        |
-| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).                 |
-| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets).          |
+| Field                      | Type            | What it is                                                                                                   |
+| -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `title`                    | string          | Required. Up to 200 characters.                                                                              |
+| `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                      |
+| `body`                     | markdown        | What to do and why, shown before the command.                                                                |
+| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                     |
+| `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                              |
+| `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix).  |
+| `expect`                   | markdown        | What the person should see when it works.                                                                    |
+| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                   |
+| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                             |
+| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                           |
+| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                                  |
+| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).                  |
+| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                                         |
+| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).                  |
+| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets).           |
+| `generate`                 | object or null  | A Make a secret step (1.4.2). See [Make a secret and Ask for a secret](#make-a-secret-and-ask-for-a-secret). |
+| `ask`                      | object or null  | An Ask for a secret step (1.4.2). See the same section.                                                      |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Amend it instead (see [Amendments](#amendments)).
 
@@ -125,7 +127,7 @@ Some commands do not run in a shell on a Termix host: PowerShell on a Windows PC
 ```
 
 - The person sees "Run outside Termix: <where>", the command with its values filled in, and a **Copy** button (off while a value is missing). There is no Run and no Send to terminal (409 `outside`): Termix never runs it.
-- The person pastes the output and marks the step **Done** or **Failed**. Checks (not `exitCode`) and `captures` read the pasted output; a failed check makes the step failed. It records a run with `mode: "outside"`, the command as the person copied it, and the output as `pastedOutput`.
+- The person pastes the output and marks the step **Done** or **Failed**. Checks (not `exitCode`) and `captures` read the pasted output; a failed check makes the step failed. On a step with checks, **Done** needs at least one line of pasted output (1.4.1; refused with 400 otherwise); **Failed** needs none. It records a run with `mode: "outside"`, the command as the person copied it, and the output as `pastedOutput`.
 - Refused with 400: `where` without `command`, `where` with `hostId`, `stdin`, `secretCaptures`, `exitCode` checks, and `where` on an agent step. A command with no `hostId` and no `where` is refused too.
 - The repeat guard and the command hash do not apply. Done and Failed are bound to the step's revision: a step that changed since the person saw it is refused with 409 `stale`.
 
@@ -218,6 +220,8 @@ A capture is a JavaScript regular expression, in multiline mode, with exactly on
 | `value`                   | `name` (a capture of this step), `equals` or `matches`         | the captured value equals `equals` or matches `matches`; with neither, that it was captured |
 
 `stream` is `stdout`, `stderr` or `any` (the default: either one). Every check may have a `label`, which the person sees instead of a generated description. A step may have at most 20 checks; a wrong one is refused with 400 and names it, such as `steps[0]: checks[1]: pattern is not a valid regular expression`. Checks need a command. A pattern stops after 250 ms and then counts as failed.
+
+Checks see the output with its secrets hidden (1.4.1), the same text the person sees: every secret the step captures or reads reads `[secret:<name>]`, in the output and in captured values. So test for `token: [secret:api_token]`, not for the token. A check that names part of a secret's real value never matches it, whatever the value is, so a check cannot tell you anything about a secret.
 
 For **Send to terminal**, checks are tested when the person presses **Mark done**: the pasted output is the only stream, whatever `stream` says, and an `exitCode` check fails with "no exit code" unless the person entered one. **Mark failed** records the person's verdict without testing.
 
@@ -322,6 +326,48 @@ You never get a value. A runbook in an answer lists its secrets by name:
 `set` is false before the step captured it, after it was deleted, and once it expired. Each run says which secrets it read and stored, by name: `"secrets": { "used": ["api_token"], "captured": [] }`.
 
 Secrets need the OpenBao Secrets plugin, connected to OpenBao, and the person who runs the step needs its **Use secrets** permission. Without the plugin, a step that captures or reads a secret is refused with 409 `no-secrets`, "Install and connect the OpenBao Secrets plugin to use secrets". A secret that is not there is refused with 409 `secret-missing`.
+
+### Make a secret and Ask for a secret
+
+Do not tell the person to make a password in a password manager, or to copy a token from another site into OpenBao. Give the step `generate` or `ask` instead (1.4.2). The person clicks **Make it** or **Save**, and the value goes straight to where `store` says. Nobody sees it again: not the page, not you, not an event, the audit log or any output.
+
+- **Make a secret**: `"generate": { "name": "db_password", "format": "alnum", "length": 32, "store": "runbook" }`. The server makes the value with `crypto.randomInt` for each character or word, so no character is likelier than another.
+- **Ask for a secret**: `"ask": { "name": "cf_token", "label": "Cloudflare API token", "pattern": "[A-Za-z0-9_-]{40}" }`. The person types or pastes the value once, into a field that shows it while it is typed and has a **Hide** button. The value is trimmed, and `pattern` (optional, a JavaScript regular expression of up to 300 characters) must match all of it.
+
+| `format`              | `length`                     | Default |
+| --------------------- | ---------------------------- | ------- |
+| `alnum` (the default) | 16 to 128 letters and digits | 32      |
+| `hex`                 | 16 to 128 hex digits         | 64      |
+| `base64url`           | 16 to 128 characters         | 43      |
+| `words`               | 4 to 12 words, joined by `-` | 6       |
+| `pin`                 | 4 to 12 digits               | 6       |
+
+`words` picks from the [EFF long word list](https://www.eff.org/dice): 7776 words, about 12.9 bits each.
+
+`store` says where the value goes:
+
+- `"runbook"` (the default): the runbook's own secrets, like [captured ones](#secrets), for 7 days and deleted when the runbook ends. A later step reads it with `"stdin": { "from": "secret", "name": "db_password" }`.
+- `{ "library": "mine/<path>" }` or `{ "library": "shared/<path>" }`, with an optional `"expires"` of 1 to 30 days: a new secret in the OpenBao Secrets library, the person's own or the shared one. Runbooks never replaces a secret that is there (409 `exists`). A later step reads it with `"stdin": { "from": "secret", "library": "mine/<path>" }`.
+- `{ "app": "<app>/<host>", "field": "<field>" }`: a new field at `<app secrets folder>/<app>/<host>`, where other programs read their secrets. It needs OpenBao Secrets 1.0.5 or later, an app path its admin allows, and the person's **Create app secrets** permission. A field is never replaced (409 `exists`) and never read back, so no later step can read it.
+
+A step with `generate` or `ask` is a person's step with no command. Refused with 400: `owner: "agent"`, `command`, `hostId`, `where`, `stdin`, `captures`, `secretCaptures`, `checks`, a step with both fields, and a bad `format`, `length`, `name`, `label`, `pattern` or `store`. A step that reads a secret by `name` needs an earlier step that captures it, or makes or asks for it with store `"runbook"`. You can never make, save or complete such a step: `complete_step` answers 403 `person-step`, and only a signed-in person's click runs it.
+
+Its run has `"mode": "secret"`, and `secrets.made` says `{ name, how: "made" | "saved", store, where, expiresAt }`, never the value. Every later output of the runbook shows the value as `[secret:<name>]`, in steps that read it and in steps that do not (except an app field, which Runbooks never reads back). The person route is `POST /plugin-api/runbooks/steps/{id}/secret`; it answers 409 with `code` `stale`, `order`, `wait` or `repeat` like Run, and `no-secrets`, `app-store-unsupported`, `app-store-off`, `app-not-allowed` or `exists` when the store cannot take the value.
+
+**By hand.** When OpenBao Secrets is not installed or not connected, or an app store meets an OpenBao Secrets older than 1.0.5, the step tells the person how to do it by hand. For Make a secret it gives the format and length to make in a password manager. Then it says where to save the value in OpenBao or Vault: KV engine `kv`, a path and a field (`runbooks/<runbook id>` and the secret's name for `"runbook"`; OpenBao Secrets' default folder `termix` for the library; the app secrets folder for an app). The person marks the step **Done**. A later step that reads the secret says where to get it, and does not run until OpenBao Secrets is connected.
+
+```json
+"steps": [
+  { "title": "Make the database password",
+    "generate": { "name": "db_password", "format": "alnum", "length": 32 } },
+  { "title": "Set it", "hostId": 3,
+    "command": "read -r PW && sudo -u postgres psql -c \"ALTER USER app PASSWORD '$PW'\"",
+    "stdin": { "from": "secret", "name": "db_password" } },
+  { "title": "Paste the Cloudflare token",
+    "ask": { "name": "cf_token", "label": "Cloudflare API token",
+             "store": { "app": "dns/web-1", "field": "cf_token" } } }
+]
+```
 
 ### Example
 
@@ -455,4 +501,5 @@ Good habits for the prompt:
 - Ask it to put names, paths and versions in values, so you can read them in one place.
 - Ask it to hide output that could hold secrets.
 - Ask it to pass secrets and earlier output with `stdin` and `secretCaptures`, never by putting them in a command, so you do not copy them from step to step.
+- Ask it to use Make a secret (`generate`) for a new password and Ask for a secret (`ask`) for a token another site shows, instead of steps that say "make a password" or "paste the token into OpenBao".
 - Ask it to set `owner` with its task, and to make its own work agent steps (`"owner": "agent"`) instead of steps that say "tell the agent". With notifications on, the agent hears when it is its turn; without them it can poll `list_events`.

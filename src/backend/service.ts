@@ -37,6 +37,18 @@ import {
   type StdinSource,
 } from "./stdin.js";
 import {
+  byHandPlace,
+  parseAsk,
+  parseGenerate,
+  secretStepKind,
+  showAsk,
+  showGenerate,
+  type AskSpec,
+  type ByHand,
+  type GenerateSpec,
+  type SecretStore,
+} from "../shared/secret-steps.js";
+import {
   compareSteps,
   isBefore,
   parseStepRef,
@@ -195,6 +207,8 @@ export function parseStepInput(
     "secretCaptures",
     "owner",
     "where",
+    "generate",
+    "ask",
   ]);
   for (const key of Object.keys(raw)) {
     if (!known.has(key)) throw new InputError(`unknown step field "${key}"`);
@@ -301,6 +315,27 @@ export function parseStepInput(
       out.stdin = normalizeStdin(raw.stdin);
     }
   }
+  if (has("generate")) {
+    if (raw.generate === null || raw.generate === undefined) {
+      out.generate = null;
+    } else {
+      try {
+        out.generate = parseGenerate(raw.generate);
+      } catch (error) {
+        throw new InputError((error as Error).message);
+      }
+    }
+  }
+  if (has("ask")) {
+    if (raw.ask === null || raw.ask === undefined) out.ask = null;
+    else {
+      try {
+        out.ask = parseAsk(raw.ask);
+      } catch (error) {
+        throw new InputError((error as Error).message);
+      }
+    }
+  }
   if (has("hideOutputFromAgents")) {
     const hide = raw.hideOutputFromAgents ?? false;
     if (typeof hide !== "boolean") {
@@ -360,6 +395,8 @@ export function secretReadsProblem(
     title?: string;
     stdin: { from: string; name?: string } | null;
     secretCaptures: Capture[];
+    generate?: GenerateSpec | null;
+    ask?: AskSpec | null;
   }>,
 ): string | null {
   for (const step of steps) {
@@ -368,13 +405,49 @@ export function secretReadsProblem(
     const captured = steps.some(
       (other) =>
         isBefore(other, step) &&
-        other.secretCaptures.some((capture) => capture.name === stdin.name),
+        runbookSecretNames(other).includes(stdin.name!),
     );
     if (!captured) {
-      return `step ${stepLabel(step)} reads secret ${stdin.name}, which no earlier step captures (secretCaptures)`;
+      const elsewhere = steps.find(
+        (other) =>
+          isBefore(other, step) &&
+          secretSpec(other)?.name === stdin.name &&
+          secretSpec(other)?.store.to !== "runbook",
+      );
+      if (elsewhere) {
+        const store = secretSpec(elsewhere)!.store;
+        return store.to === "library"
+          ? `step ${stepLabel(step)} reads secret ${stdin.name}, which step ${stepLabel(elsewhere)} keeps in the library: read it with {"from":"secret","library":"${store.library}"}`
+          : `step ${stepLabel(step)} reads secret ${stdin.name}, which step ${stepLabel(elsewhere)} saves to an app path: Runbooks cannot read it back`;
+      }
+      return `step ${stepLabel(step)} reads secret ${stdin.name}, which no earlier step captures (secretCaptures), makes (generate) or asks for (ask)`;
     }
   }
   return null;
+}
+
+/** A step's generate or ask field, whichever it has. */
+export function secretSpec(step: {
+  generate?: GenerateSpec | null;
+  ask?: AskSpec | null;
+}): GenerateSpec | AskSpec | null {
+  return step.generate ?? step.ask ?? null;
+}
+
+/**
+ * The secrets a step puts in the runbook's own secrets, by name: what its
+ * secretCaptures take, and what a Make a secret or Ask for a secret step
+ * with store "runbook" makes (1.4.2).
+ */
+export function runbookSecretNames(step: {
+  secretCaptures: Capture[];
+  generate?: GenerateSpec | null;
+  ask?: AskSpec | null;
+}): string[] {
+  const names = step.secretCaptures.map((capture) => capture.name);
+  const spec = secretSpec(step);
+  if (spec && spec.store.to === "runbook") names.push(spec.name);
+  return names;
 }
 
 /** A full new step, after parseStepInput without `partial`. */
@@ -395,6 +468,8 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
     stdin: parsed.stdin ?? null,
     owner: parsed.owner ?? "person",
     where: parsed.where ?? null,
+    generate: parsed.generate ?? null,
+    ask: parsed.ask ?? null,
   };
   checkStepShape(step);
   return step;
@@ -417,7 +492,13 @@ export function checkStepShape(step: {
   secretCaptures?: Capture[];
   owner?: StepOwner;
   where?: string | null;
+  generate?: GenerateSpec | null;
+  ask?: AskSpec | null;
 }): void {
+  if (step.generate || step.ask) {
+    checkSecretStepShape(step);
+    return;
+  }
   if (step.owner === "agent") {
     if (step.where) {
       throw new InputError(
@@ -501,6 +582,44 @@ function checkOutsideStepShape(
     step.captures.map((capture) => capture.name),
   );
   if (problem) throw new InputError(problem);
+}
+
+/**
+ * A Make a secret or Ask for a secret step (1.4.2): a person's step that
+ * runs no command. Only a person's click makes or saves its value.
+ */
+function checkSecretStepShape(
+  step: Parameters<typeof checkStepShape>[0],
+): void {
+  if (step.generate && step.ask) {
+    throw new InputError("a step has either generate or ask, not both");
+  }
+  const what = step.generate
+    ? "a Make a secret step"
+    : "an Ask for a secret step";
+  if (step.owner === "agent") {
+    throw new InputError(
+      `${what} is for a person: an agent can never make, see or save a secret`,
+    );
+  }
+  const extra: Array<[boolean, string]> = [
+    [step.command !== null, "command"],
+    [step.hostId !== null, "hostId"],
+    [Boolean(step.where), "where"],
+    [Boolean(step.stdin), "stdin"],
+    [step.captures.length > 0, "captures"],
+    [(step.secretCaptures ?? []).length > 0, "secretCaptures"],
+    [(step.checks ?? []).length > 0, "checks"],
+  ];
+  const found = extra.find(([present]) => present);
+  if (found) {
+    throw new InputError(
+      `${what} cannot have ${found[1]}: Termix runs no command for it`,
+    );
+  }
+  if (step.waitReason && !step.waitAfterPreviousSeconds) {
+    throw new InputError("waitReason needs waitAfterPreviousSeconds");
+  }
 }
 
 function checkAgentStepShape(step: Parameters<typeof checkStepShape>[0]): void {
@@ -695,6 +814,12 @@ export interface StdinView {
   preview: string | null;
   /** Why a Run would be refused now, if it would. */
   problem: string | null;
+  /**
+   * 1.4.2: where to get the secret by hand, when the step that makes it (or
+   * the library) is done by hand now: an engine, a path, a field, and the
+   * step that makes it.
+   */
+  byHand?: ByHand & { step: string | null };
 }
 
 export interface WaitState {
@@ -819,7 +944,10 @@ export interface SecretState {
   expiresAt: string | null;
 }
 
-/** Every secret the runbook's steps capture, by name: never a value. */
+/**
+ * Every secret the runbook's steps capture, or make or ask for into the
+ * runbook's own secrets (1.4.2), by name: never a value.
+ */
 export function secretStates(
   bundle: Pick<RunbookBundle, "runbook" | "steps" | "runsByStep">,
   at = Date.now(),
@@ -830,11 +958,11 @@ export function secretStates(
     const runs = [...(bundle.runsByStep.get(step.id) ?? [])].sort(
       (a, b) => b.id - a.id,
     );
-    for (const capture of step.secretCaptures) {
+    for (const name of runbookSecretNames(step)) {
       let entry: { name: string; expiresAt: string } | undefined;
       const run = runs.find((candidate) => {
         entry = candidate.secrets?.captured.find(
-          (stored) => stored.name === capture.name,
+          (stored) => stored.name === name,
         );
         return Boolean(entry);
       });
@@ -845,7 +973,7 @@ export function secretStates(
         entry && !removed && Date.parse(entry.expiresAt) > at,
       );
       out.push({
-        name: capture.name,
+        name,
         step: stepRef(step),
         set,
         expiresAt: set ? entry!.expiresAt : null,
@@ -860,7 +988,7 @@ export function secretStates(
  * capture secrets, and none were deleted since the last one was stored.
  */
 export function secretsPending(runbook: RunbookRow, steps: StepRow[]): boolean {
-  if (!steps.some((step) => step.secretCaptures.length > 0)) return false;
+  if (!steps.some((step) => runbookSecretNames(step).length > 0)) return false;
   if (!runbook.secretsRemovedAt) return true;
   return Boolean(
     runbook.secretsStoredAt &&
@@ -956,6 +1084,17 @@ export interface ViewOptions {
   secretsAvailable?: boolean;
   /** Why a step that uses secrets cannot run without it. */
   noSecrets?: string;
+  /**
+   * 1.4.2: whether OpenBao Secrets is there and connected now, for secret
+   * steps. Left out: as secretsAvailable.
+   */
+  secretsReady?: boolean;
+  /** 1.4.2: why secret steps are done by hand now, when they are. */
+  secretsReason?: string | null;
+  /** 1.4.2: whether the service can create app secrets (createAppField). */
+  appSecrets?: boolean;
+  /** 1.4.2: the person who reads the view, for by-hand library paths. */
+  userId?: string | null;
   /** Whether agent notifications are on (1.4.0). */
   notifyEnabled?: boolean;
   /** The runbook's "sent" events, newest first (1.4.0). */
@@ -980,6 +1119,106 @@ function agentCommand(step: StepRow, values: Values): ResolvedStep {
   return { command: resolved.text, hash: null, missing: resolved.missing };
 }
 
+/** Why an app path store is done by hand on an older OpenBao Secrets. */
+export const APP_STORE_NEEDS =
+  "Saving to an app path needs OpenBao Secrets 1.0.5 or later, with the allowed app paths an admin sets there";
+
+/** What a Make a secret or Ask for a secret step shows (1.4.2). */
+export interface SecretStepView {
+  kind: "generate" | "ask";
+  name: string;
+  /** ready: Make it or Save; by-hand: instructions and Done or Failed. */
+  mode: "ready" | "by-hand";
+  /** Why it is done by hand, when it is. */
+  reason: string | null;
+  /** Where the person keeps the value by hand, in OpenBao or Vault. */
+  byHand: ByHand;
+  /** For the runbook's secrets: whether it is stored now, and until when. */
+  set: boolean;
+  expiresAt: string | null;
+}
+
+/** Whether a store takes a value now, or the person does it by hand. */
+export function secretMode(
+  store: SecretStore,
+  options: ViewOptions,
+): { mode: "ready" | "by-hand"; reason: string | null } {
+  const ready = options.secretsReady ?? Boolean(options.secretsAvailable);
+  if (!ready) {
+    return {
+      mode: "by-hand",
+      reason: options.secretsReason ?? options.noSecrets ?? "no secrets",
+    };
+  }
+  if (store.to === "app" && !options.appSecrets) {
+    return { mode: "by-hand", reason: APP_STORE_NEEDS };
+  }
+  return { mode: "ready", reason: null };
+}
+
+/** A secret step's view, or null for any other step. */
+export function secretStepView(
+  step: StepRow,
+  options: ViewOptions,
+  states: SecretState[],
+): SecretStepView | null {
+  const kind = secretStepKind(step);
+  const spec = secretSpec(step);
+  if (!kind || !spec) return null;
+  const state = states.find(
+    (entry) => entry.name === spec.name && entry.step === stepRef(step),
+  );
+  return {
+    kind,
+    name: spec.name,
+    ...secretMode(spec.store, options),
+    byHand: byHandPlace(spec.store, spec.name, step.runbookId, options.userId),
+    set: Boolean(state?.set),
+    expiresAt: state?.expiresAt ?? null,
+  };
+}
+
+/**
+ * Where to get a secret a step reads by hand (1.4.2): when the secret step
+ * that makes it, or the library, is done by hand now. Null otherwise.
+ */
+function stdinByHand(
+  step: StepRow,
+  steps: StepRow[],
+  source: StdinSource,
+  options: ViewOptions,
+): (ByHand & { step: string | null }) | null {
+  if (source.from !== "secret") return null;
+  if ("library" in source) {
+    const store: SecretStore = {
+      to: "library",
+      library: source.library,
+      expires: null,
+    };
+    if (secretMode(store, options).mode === "ready") return null;
+    return {
+      ...byHandPlace(store, source.library, step.runbookId, options.userId),
+      step: null,
+    };
+  }
+  const maker = [...steps]
+    .reverse()
+    .find(
+      (other) =>
+        isBefore(other, step) &&
+        secretSpec(other)?.name === source.name &&
+        secretSpec(other)?.store.to === "runbook",
+    );
+  const spec = maker ? secretSpec(maker) : null;
+  if (!maker || !spec || secretMode(spec.store, options).mode === "ready") {
+    return null;
+  }
+  return {
+    ...byHandPlace(spec.store, spec.name, step.runbookId, options.userId),
+    step: stepLabel(maker),
+  };
+}
+
 /** The whole runbook as the Termix UI shows it. */
 export function personView(
   bundle: RunbookBundle,
@@ -989,9 +1228,11 @@ export function personView(
   const { runbook, steps, runsByStep } = bundle;
   const values = valuesObject(bundle.values);
   const next = steps.find((step) => step.status === "pending");
+  const states = secretStates(bundle);
   const stdinView = (step: StepRow, source: StdinSource): StdinView => {
     const found = stdinText(source, step, steps, runsByStep, values);
     if (!found) {
+      const byHand = stdinByHand(step, steps, source, options);
       return {
         source,
         bytes: null,
@@ -999,6 +1240,7 @@ export function personView(
         problem: options.secretsAvailable
           ? null
           : (options.noSecrets ?? "no secrets"),
+        ...(byHand ? { byHand } : {}),
       };
     }
     if ("problem" in found) {
@@ -1023,7 +1265,7 @@ export function personView(
     // Send to agent needs notifications on and an agent to send to.
     canSendToAgent: Boolean(options.notifyEnabled && runbook.owner),
     secretsAvailable: Boolean(options.secretsAvailable),
-    secrets: secretStates(bundle),
+    secrets: states,
     steps: steps.map((step) => {
       const source = stepStdin(step, steps);
       // Termix runs neither an agent step nor a step run outside Termix:
@@ -1035,6 +1277,9 @@ export function personView(
       return {
         ...step,
         ...amendmentView(step, steps),
+        generate: step.generate ? showGenerate(step.generate) : null,
+        ask: step.ask ? showAsk(step.ask) : null,
+        secretStep: secretStepView(step, options, states),
         stdin: source ? stdinView(step, source) : null,
         // A step that captures secrets cannot run without the service.
         secretsProblem:
@@ -1110,6 +1355,9 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         expect: step.expect,
         captures: step.captures,
         secretCaptures: step.secretCaptures,
+        // A secret step's field (1.4.2): never a value, which no agent gets.
+        generate: step.generate ? showGenerate(step.generate) : null,
+        ask: step.ask ? showAsk(step.ask) : null,
         checks: step.checks,
         hideOutputFromAgents: step.hideOutputFromAgents,
         status: step.status,

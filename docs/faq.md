@@ -63,7 +63,19 @@ In OpenBao, in Runbooks' own area of the OpenBao Secrets plugin, for 7 days. The
 
 ## Why does the output say [secret:api_token]?
 
-That is where a secret's value was. Runbooks replaces every secret a step captured or read, in all its output, before it keeps or shows it.
+That is where a secret's value was. Runbooks replaces every secret a step captured or read, in all its output, before it keeps or shows it. A secret that a Make a secret or Ask for a secret step put in the runbook's secrets or the library is replaced in every later output too.
+
+## A secret step says "Do it by hand"
+
+The OpenBao Secrets plugin is not installed or not connected, or the step saves to an app path and OpenBao Secrets is older than 1.0.5. Follow the steps it shows: make the value in a password manager (or get the token), save it in OpenBao or Vault at the engine, path and field shown, and mark the step **Done**. Once OpenBao Secrets is connected, the step shows **Make it** or **Save** again.
+
+## Can I see a secret I made?
+
+No. Make a secret makes the value on the server and stores it; nobody sees it. Read it where it was stored (OpenBao, the library in the Secrets tab, or the app path) if you need it, or let a later step read it on its standard input.
+
+## Why is Save refused with "this does not look like the …"?
+
+The step gives a pattern that the whole value must match, such as 40 letters and digits for a token. Check that you copied all of it, without extra text. Spaces and new lines at the start and end are trimmed.
 
 ## Why is there no output while a step runs?
 
@@ -72,6 +84,14 @@ The step captures a secret. Its value is known only when the output is complete,
 ## Why is Mark done greyed out?
 
 Paste the terminal output first: Mark done needs at least one line of it. If there is nothing to paste, use **Mark failed**, or Skip the step.
+
+## Why is Done greyed out on a step run outside Termix?
+
+The step has checks, and they read the output you paste. Paste at least one line of it first (1.4.1). If there is nothing to paste, press **Failed**, or Skip the step.
+
+## How do I change the step colors?
+
+In **Settings**, **Runbooks**: an admin sets **Step colors** for everyone, and each person can set **Your step colors** for themselves. Use `#rgb` or `#rrggbb`, or leave a color empty for the built-in one.
 
 ## How do I finish a step with no command?
 
@@ -108,7 +128,8 @@ Its fixed version is live. Skip the fixed version first, then reopen the replace
 - Live output: the page reads it every second while a command runs; Termix saves it to the database every 2 seconds, so a restart can lose the last 2 seconds of it.
 - Captures read the first 256 KB of output and stop after 250 ms each; so do secret captures, at most 10 per step.
 - Standard input: at most 256 KB.
-- Captured secrets expire after 7 days.
+- Captured secrets expire after 7 days, and so do made and asked secrets in the runbook's secrets. A library secret a step makes lives at most 30 days when it has `expires`, else until someone deletes it.
+- Make a secret: 16 to 128 characters (alnum, hex, base64url), 4 to 12 words or digits (words, pin). Ask for a secret: a value of up to 64 KB, a pattern of up to 300 characters, checked within 250 ms.
 - Jump hosts: the host key check covers the target host. Termix stores a jump host's key on first use without asking.
 - The hash that binds a run to what you saw covers the host id and the command, not the host's address or login. A host edited in Termix between loading the page and running still runs the shown command on the edited host.
 - Rate limits are kept in memory and reset when Termix restarts.

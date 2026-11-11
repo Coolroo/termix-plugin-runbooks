@@ -41,6 +41,50 @@ export interface StdinView {
   preview: string | null;
   /** Why a Run would be refused now. */
   problem: string | null;
+  /** 1.4.2: where to get the secret by hand, and the step that makes it. */
+  byHand?: ByHand & { step: string | null };
+}
+
+/** 1.4.2: where a made or asked value goes, as the author wrote it. */
+export type SecretStoreField =
+  | "runbook"
+  | { library: string; expires?: number }
+  | { app: string; field: string };
+
+/** 1.4.2: a Make a secret step's field. */
+export interface GenerateField {
+  name: string;
+  format: "alnum" | "hex" | "base64url" | "words" | "pin";
+  length: number;
+  store: SecretStoreField;
+}
+
+/** 1.4.2: an Ask for a secret step's field. */
+export interface AskField {
+  name: string;
+  label: string;
+  pattern?: string;
+  store: SecretStoreField;
+}
+
+/** 1.4.2: where a person keeps a value by hand, in OpenBao or Vault. */
+export interface ByHand {
+  engine: string;
+  path: string;
+  field: string;
+}
+
+/** 1.4.2: what a secret step shows: never a value. */
+export interface SecretStepView {
+  kind: "generate" | "ask";
+  name: string;
+  /** ready: Make it or Save; by-hand: instructions, then Done or Failed. */
+  mode: "ready" | "by-hand";
+  reason: string | null;
+  byHand: ByHand;
+  /** For the runbook's secrets: stored now, and until when. */
+  set: boolean;
+  expiresAt: string | null;
 }
 /** "replaced" (1.4.0): an amendment replaced it; it counts as ended. */
 export type StepStatus = "pending" | "done" | "failed" | "skipped" | "replaced";
@@ -75,13 +119,15 @@ export interface RunbookSummary {
   progress: Progress;
   /** Amendments that have not run yet (1.4.0): the list shows "amended". */
   amendedPending?: number;
+  /** The kind of the next step (1.4.1), null when none is pending. */
+  nextKind?: string | null;
 }
 
 export interface Run {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual" | "agent" | "outside";
+  mode: "exec" | "terminal" | "manual" | "agent" | "outside" | "secret";
   status: "running" | "awaiting-output" | "done" | "failed";
   /** Null for a manual or agent run. */
   hostId: number | null;
@@ -120,6 +166,14 @@ export interface Run {
   secrets?: {
     used: string[];
     captured: Array<{ name: string; expiresAt: string }>;
+    /** 1.4.2: the secret a secret step made or saved, never its value. */
+    made?: {
+      name: string;
+      how: "made" | "saved";
+      store: "runbook" | "library" | "app";
+      where: string | null;
+      expiresAt: string | null;
+    };
   } | null;
 }
 
@@ -183,6 +237,12 @@ export interface Step {
   secretsProblem?: string | null;
   /** Who does it: a person runs it, an agent completes it (1.4.0). */
   owner?: "person" | "agent";
+  /** 1.4.2: Make a secret; null on any other step. */
+  generate?: GenerateField | null;
+  /** 1.4.2: Ask for a secret; null on any other step. */
+  ask?: AskField | null;
+  /** 1.4.2: what a secret step shows; null on any other step. */
+  secretStep?: SecretStepView | null;
   /** Each time a person sent it to the agent, newest first (1.4.0). */
   sent?: SentToAgent[];
   revision: number;

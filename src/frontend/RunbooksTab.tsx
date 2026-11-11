@@ -48,6 +48,7 @@ import {
   waitForNewSession,
 } from "./terminal";
 import { TokensView } from "./TokensView";
+import { KindColorsProvider, NextKindDot } from "./kinds";
 import {
   errorBody,
   type Run,
@@ -323,6 +324,9 @@ function RunbookList({
                 <span data-amended-badge>
                   <ListBadge tone="warning">{t("list.amended")}</ListBadge>
                 </span>
+              )}
+              {row.status === "open" && row.nextKind && (
+                <NextKindDot kindId={row.nextKind} />
               )}
             </>
           }
@@ -617,7 +621,103 @@ function RunbookDetail({
     }
   };
 
+  /**
+   * Make it or Save on a secret step (1.4.2): asks about a repeat, the
+   * order and a wait as Run does, and sends again only on an explicit yes.
+   * The value goes once, in this request, and never comes back.
+   */
+  const secretAttempt = async (
+    step: Step,
+    value: string | undefined,
+    flags: Record<string, boolean> = {},
+  ): Promise<boolean> => {
+    const name = (step.generate ?? step.ask)?.name ?? "";
+    try {
+      const { data } = await api.post<Runbook>(`/steps/${step.id}/secret`, {
+        revision: step.revision,
+        ...(value !== undefined ? { value } : {}),
+        ...flags,
+      });
+      setRunbook(data);
+      toast.success(
+        t(step.generate ? "secretStep.made" : "secretStep.saved", { name }),
+      );
+      return true;
+    } catch (error) {
+      const { status, data } = errorBody(error);
+      const again = async (
+        title: string,
+        label: string,
+        flag: string,
+        description?: string,
+      ) =>
+        (await confirm({
+          title,
+          ...(description ? { description } : {}),
+          confirmLabel: label,
+          destructive: false,
+        }))
+          ? secretAttempt(step, value, { ...flags, [flag]: true })
+          : false;
+      if (status === 409 && data.code === "repeat") {
+        return again(
+          t(step.generate ? "secretStep.repeatMake" : "secretStep.repeatSave", {
+            name,
+          }),
+          t(step.generate ? "secretStep.makeAgain" : "secretStep.saveAgain"),
+          "confirmRepeat",
+        );
+      }
+      if (status === 409 && data.code === "wait") {
+        const time = formatDuration(
+          (Number(data.remainingSeconds) || 0) * 1000,
+        );
+        const reason = typeof data.reason === "string" ? data.reason : "";
+        return again(
+          t(reason ? "wait.earlyReason" : "wait.early", { time, reason }),
+          t("wait.anyway"),
+          "waitAnyway",
+        );
+      }
+      if (status === 409 && data.code === "order") {
+        const blocking =
+          (data.blocking as Array<{
+            position: number;
+            label?: string;
+            title: string;
+          }>) ?? [];
+        return again(
+          t("order.title"),
+          t("secretStep.orderAnyway"),
+          "outOfOrder",
+          t("secretStep.orderHint", {
+            steps: blocking
+              .map((b) => `${b.label ?? b.position}. ${b.title}`)
+              .join(", "),
+          }),
+        );
+      }
+      if (status === 409 && data.code === "stale") {
+        toast.error(t("error.stale"));
+        await load();
+        return false;
+      }
+      fail(error);
+      // The page may now show the steps to do it by hand.
+      if (status === 409) await load();
+      return false;
+    }
+  };
+
   const actions: StepActions = {
+    secret: (step, value) => {
+      busyRef.current = true;
+      setBusy(true);
+      return secretAttempt(step, value).finally(() => {
+        busyRef.current = false;
+        setBusy(false);
+      });
+    },
     run: (step, waitLeftMs = 0) =>
       void withBusy(async () => {
         // Early on a wait timer: one question, and it is about the wait.
@@ -958,11 +1058,12 @@ function RunbookDetail({
         <EmptyState title={t("runbook.noSteps")} />
       )}
       <div className="flex flex-col gap-3">
-        {runbook.steps.map((step) => (
+        {runbook.steps.map((step, index) => (
           <StepCard
             key={step.id}
             step={step}
             isNext={step.id === runbook.nextStepId}
+            last={index === runbook.steps.length - 1}
             runbookOpen={open}
             busy={busy}
             actions={actions}
@@ -1051,7 +1152,7 @@ export function createRunbooksTab(app: TermixApp) {
           ) : null
         }
       >
-        {body}
+        <KindColorsProvider active={isVisible}>{body}</KindColorsProvider>
       </PanelShell>
     );
   };

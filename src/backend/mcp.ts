@@ -20,7 +20,7 @@ const CHECKS_HELP =
   '{"type":"exitCode","equals":0} (Run only; a terminal run has an exit code only if the person entered one); ' +
   '{"type":"contains","text":"active (running)","stream":"stdout"} or notContains (stream stdout, stderr or any, default any; a terminal run has only its pasted output); ' +
   '{"type":"matches","pattern":"^Status: (ok|ready)$"} or notMatches (a JavaScript regular expression, multiline, with a time limit); ' +
-  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step.';
+  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step. Checks read the output with its secrets hidden, as the person sees it: test for "token: [secret:api_token]", never for part of a secret.';
 
 const WAIT_HELP =
   "A step may ask the person to wait after the step before it ended (its run finished, or it was marked done or skipped): waitAfterPreviousSeconds (1 to 86400) and an optional short waitReason. For example, restart a service in one step, then give the health-check step waitAfterPreviousSeconds 120 and waitReason 'let the service restart'. The person sees a countdown, and starting early takes an extra confirm. get_runbook shows waitUntil on a step while its timer runs.";
@@ -38,6 +38,49 @@ const SECRETS_HELP =
   "The secret's value is replaced by [secret:api_token] in the step's output everywhere, and its output is shown only once the run ends. A later step reads it as standard input: " +
   'example: step 2 "vault token create -field=token" with secretCaptures [{"name":"api_token","pattern":"^(\\S+)$"}]; step 3 "docker login -u ci --password-stdin registry.example.com" with stdin {"from":"secret","name":"api_token"}. ' +
   "Secrets never appear in commands, and you never see a value: get_runbook lists secrets as {name, step, set, expiresAt}. It needs the OpenBao Secrets plugin, and the person who runs the step needs its Use secrets permission.";
+
+const SECRET_STEPS_HELP =
+  "Make a secret and Ask for a secret steps (a person's step with no command): instead of telling the person to make a password or copy a token by hand, " +
+  'give the step generate {"name":"db_password","format":"alnum","length":32} (formats: alnum letters and digits 16-128, default 32; hex 16-128, default 64; base64url 16-128, default 43; words 4-12 words from the EFF long list joined by "-", default 6; pin 4-12 digits, default 6) ' +
+  'or ask {"name":"cf_token","label":"Cloudflare API token","pattern":"[A-Za-z0-9_-]{40}"} (the person types or pastes it once; pattern, optional, must match the whole value, trimmed). ' +
+  "The person clicks Make it or Save; the server makes or takes the value and stores it, and nobody sees it again: not the page, not you, not an event, the audit log or any output. " +
+  'Where it goes, store: "runbook" (default: the runbook\'s own secrets for 7 days, deleted when the runbook ends; a later step reads it with stdin {"from":"secret","name":"db_password"}), ' +
+  '{"library":"mine/<path>" or "shared/<path>","expires":<days 1-30, optional>} (the OpenBao Secrets library, never replacing a secret that exists; read it with stdin {"from":"secret","library":"mine/<path>"}), ' +
+  'or {"app":"<app>/<host>","field":"<field>"} (a new field at the app secrets folder OpenBao Secrets 1.0.5 writes for other programs, only for app paths its admin allows; never read back). ' +
+  "Later outputs hide the value as [secret:<name>]. The step's run says Made secret <name> or Saved secret <name>, never the value. You can never make, save or complete such a step: it is always the person's. Without OpenBao Secrets connected (or an app store it cannot reach), the person sees by-hand instructions instead (engine, path, field, and for generate the format and length to make with a password manager) and marks the step Done, and a later step that reads the secret says where to get it. " +
+  "Not with owner agent, command, hostId, where, stdin, captures, secretCaptures or checks; a step has generate or ask, not both.";
+
+const STORE_SCHEMA = {
+  description:
+    'Where the value goes: "runbook" (default), {"library":"mine/<path>"|"shared/<path>","expires":days} or {"app":"<app>/<host>","field":"<field>"}.',
+  oneOf: [
+    { type: "string", enum: ["runbook"] },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["library"],
+      properties: {
+        library: {
+          type: "string",
+          pattern: "^(mine|shared)/[A-Za-z0-9._/-]+$",
+        },
+        expires: { type: "integer", minimum: 1, maximum: 30 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["app", "field"],
+      properties: {
+        app: {
+          type: "string",
+          pattern: "^[A-Za-z0-9._-]{1,64}/[A-Za-z0-9._-]{1,64}$",
+        },
+        field: { type: "string", pattern: "^[A-Za-z0-9._-]{1,128}$" },
+      },
+    },
+  ],
+};
 
 const AGENT_STEP_HELP =
   'A step may be yours: owner "agent" (default "person"). The person sees "Waiting for the agent" on it and can only skip or reopen it; Termix never runs it. Its command, if any, only says what you will run (no hostId needed). When every earlier step ended (done, failed or skipped), do the work yourself, then call complete_step with outcome done or failed, a short note and the output you got; its checks (contains, notContains, matches, notMatches) test that output. An agent step cannot have captures, secretCaptures, stdin, a wait timer or exitCode checks. Use it for work you do between the person\'s steps, such as reading a dashboard or changing a file in a repository.';
@@ -220,6 +263,42 @@ const STEP_SCHEMA = {
         "Why to wait, shown with the countdown, such as 'let the service restart'. Needs waitAfterPreviousSeconds.",
     },
     stdin: STDIN_SCHEMA,
+    generate: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["name"],
+      description: `Make a secret (1.4.2). ${SECRET_STEPS_HELP}`,
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          maxLength: 64,
+        },
+        format: {
+          type: "string",
+          enum: ["alnum", "hex", "base64url", "words", "pin"],
+        },
+        length: { type: "integer", minimum: 4, maximum: 128 },
+        store: STORE_SCHEMA,
+      },
+    },
+    ask: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["name", "label"],
+      description:
+        "Ask for a secret (1.4.2): a value the person types or pastes once, such as an API token another site shows. See generate.",
+      properties: {
+        name: {
+          type: "string",
+          pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          maxLength: 64,
+        },
+        label: { type: "string", maxLength: 200 },
+        pattern: { type: "string", maxLength: 300 },
+        store: STORE_SCHEMA,
+      },
+    },
     secretCaptures: {
       type: "array",
       maxItems: 10,
@@ -271,7 +350,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -281,7 +360,7 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${SECRET_STEPS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,

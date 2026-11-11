@@ -28,11 +28,24 @@ import { parseJson, type Capture, type Values } from "./values.js";
 import type { Check, CheckResult } from "./checks.js";
 import type { RunStdin, StoredStdin } from "./stdin.js";
 import { compareSteps } from "../shared/steps.js";
+import type { AskSpec, GenerateSpec } from "../shared/secret-steps.js";
 
 /** The secrets a run read or stored, by name. Never their values. */
 export interface RunSecrets {
   used: string[];
   captured: Array<{ name: string; expiresAt: string }>;
+  /**
+   * The secret a Make a secret or Ask for a secret step made or saved
+   * (1.4.2): its name, how, and where it went. Never the value.
+   */
+  made?: {
+    name: string;
+    how: "made" | "saved";
+    store: "runbook" | "library" | "app";
+    /** "mine/db", "web/host-1#token"; null for the runbook's secrets. */
+    where: string | null;
+    expiresAt: string | null;
+  };
 }
 
 // Drizzle's table and client types are per dialect; the store treats them
@@ -130,6 +143,10 @@ export interface StepRow {
   owner: StepOwner;
   /** 1.4.0: where a person runs the command outside Termix; null if not. */
   where: string | null;
+  /** 1.4.2: a Make a secret step; null if not. */
+  generate: GenerateSpec | null;
+  /** 1.4.2: an Ask for a secret step; null if not. */
+  ask: AskSpec | null;
   /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
   suffix: string | null;
   /** 1.4.0: the step this one amends, how, why and by which token. */
@@ -150,7 +167,7 @@ export interface RunRow {
   id: number;
   stepId: number;
   runbookId: number;
-  mode: "exec" | "terminal" | "manual" | "agent" | "outside";
+  mode: "exec" | "terminal" | "manual" | "agent" | "outside" | "secret";
   status: RunStatus;
   /** Null for a manual or agent run: Termix ran nothing on a host. */
   hostId: number | null;
@@ -271,6 +288,8 @@ function toStep(row: Record<string, unknown>): StepRow {
     secretCaptures: parseJson<Capture[]>(row.secretCaptures, []),
     checks: parseJson<Check[]>(row.checks, []),
     stdin: parseJson<StoredStdin | null>(row.stdin, null),
+    generate: parseJson<GenerateSpec | null>(row.generate, null),
+    ask: parseJson<AskSpec | null>(row.ask, null),
     owner: row.owner === "agent" ? "agent" : "person",
     where: (row.outsideWhere as string | null | undefined) || null,
     suffix: (row.suffix as string | null | undefined) || null,
@@ -294,7 +313,10 @@ function toRun(row: Record<string, unknown>): RunRow {
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
     hostId:
-      row.mode === "manual" || row.mode === "agent" || row.mode === "outside"
+      row.mode === "manual" ||
+      row.mode === "agent" ||
+      row.mode === "outside" ||
+      row.mode === "secret"
         ? null
         : Number(row.hostId),
     note: (row.note as string | null | undefined) ?? null,
@@ -339,10 +361,16 @@ export interface NewStep {
   secretCaptures: Capture[];
   owner: StepOwner;
   where: string | null;
+  /** 1.4.2: Make a secret; null or left out for any other step. */
+  generate?: GenerateSpec | null;
+  /** 1.4.2: Ask for a secret; null or left out for any other step. */
+  ask?: AskSpec | null;
 }
 
 /** Columns the store keeps as JSON text. */
 const JSON_COLUMNS = new Set([
+  "generate",
+  "ask",
   "captures",
   "checks",
   "captured",
@@ -533,6 +561,8 @@ export async function createStore(db: PluginDatabase) {
         : null,
       owner: step.owner,
       outsideWhere: step.where,
+      generate: step.generate ? JSON.stringify(step.generate) : null,
+      ask: step.ask ? JSON.stringify(step.ask) : null,
       endedAt: null,
       revision: 1,
       createdAt: at,

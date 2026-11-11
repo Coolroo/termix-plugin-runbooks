@@ -13,6 +13,7 @@ import {
   VALUE_NAME,
   type Values,
 } from "./values.js";
+import { redact, type SecretText } from "./redact.js";
 import {
   describeCheck,
   quote,
@@ -208,9 +209,10 @@ function texts(run: CheckedRun, stream: CheckStream): string[] {
 }
 
 /**
- * Tests each check against a finished run's full stored output (before any
- * hiding from agents) and the values captured from it. Details never repeat
- * the output: only the check's own words and the exit code.
+ * Tests each check against a finished run's full output (before any hiding
+ * from agents) and the values captured from it. The caller hides secrets
+ * first (see checkHidden). Details never repeat the output: only the check's
+ * own words and the exit code.
  */
 export function evaluateChecks(
   checks: Check[],
@@ -314,4 +316,34 @@ export function evaluateChecks(
       }
     }
   });
+}
+
+/**
+ * Tests the checks against the output with its secrets hidden (1.4.1): the
+ * same text Runbooks keeps and shows. A check for "[secret:api_token]" then
+ * passes, and a check that names part of a secret's real value can never
+ * pass or fail on that value, so an author learns nothing about it.
+ * Captured values are hidden the same way.
+ */
+export function checkHidden(
+  checks: Check[],
+  run: CheckedRun,
+  captured: Values,
+  hide: SecretText[],
+): CheckResult[] {
+  return evaluateChecks(
+    checks,
+    {
+      ...run,
+      stdout: redact(run.stdout, hide),
+      stderr: redact(run.stderr, hide),
+      pastedOutput: redact(run.pastedOutput, hide),
+    },
+    Object.fromEntries(
+      Object.entries(captured).map(([name, value]) => [
+        name,
+        redact(value, hide),
+      ]),
+    ),
+  );
 }

@@ -20,6 +20,14 @@ export interface FakeSecrets {
   keyFor: (pluginId: string) => string;
   /** Sets a secret directly, as a person would in the Secrets tab. */
   seed: (area: string, name: string, value: string) => void;
+  /**
+   * App secrets (OpenBao Secrets 1.0.5, service 1.1.0): fields by
+   * "<app>/<host>", the allowed app paths (null: the feature is off), and
+   * the users who hold Create app secrets.
+   */
+  apps: Map<string, Record<string, string>>;
+  appsAllowed: Set<string> | null;
+  appCreators: Set<string>;
 }
 
 const NAME = /^[A-Za-z0-9._-]{1,200}(?:\/[A-Za-z0-9._-]{1,200}){0,3}$/;
@@ -38,6 +46,9 @@ export function createFakeSecrets(mock: () => MockPluginContext) {
     seed: (area, name, value) => {
       fake.data.set(`${area}|${name}`, { value, expiresAt: null });
     },
+    apps: new Map(),
+    appsAllowed: new Set(["web/host-1"]),
+    appCreators: new Set(["alice"]),
   };
 
   function actor(): string {
@@ -149,6 +160,52 @@ export function createFakeSecrets(mock: () => MockPluginContext) {
           expiresAt: entry.expiresAt,
           note: null,
         }));
+    },
+    /** Create only, as OpenBao Secrets 1.0.5 does (docs/service.md there). */
+    async createAppField(
+      caller: unknown,
+      app: string,
+      host: string,
+      field: string,
+      value: string,
+    ) {
+      const label = area(caller);
+      if (!label.startsWith("plugin:")) {
+        throw new Error("createAppField is for plugins bound to the store");
+      }
+      if (!fake.appCreators.has(actor())) {
+        const error = new Error(
+          "You need the openbao-secrets.create-app-secrets permission",
+        ) as Error & { code: string };
+        error.code = "EPLUGINSVCPERM";
+        throw error;
+      }
+      if (!fake.appsAllowed) {
+        throw new Error(
+          "creating app secrets is off: an admin sets the app secrets folder and the allowed app paths",
+        );
+      }
+      if (!fake.appsAllowed.has(`${app}/${host}`)) {
+        throw new Error(`${app}/${host} is not in the allowed app paths`);
+      }
+      const fields = fake.apps.get(`${app}/${host}`);
+      if (fields && field in fields) {
+        throw new Error(
+          `the field ${field} exists already at ${app}/${host}, and is never replaced`,
+        );
+      }
+      fake.calls.push({
+        method: "createAppField",
+        area: label,
+        name: `${app}/${host}#${field}`,
+      });
+      fake.apps.set(`${app}/${host}`, { ...(fields ?? {}), [field]: value });
+      return {
+        path: `kv/apps/${app}/${host}`,
+        field,
+        created: fields ? "field" : "secret",
+        version: 1,
+      };
     },
     async removePrefix(where: unknown, prefix: string) {
       const label = area(where);

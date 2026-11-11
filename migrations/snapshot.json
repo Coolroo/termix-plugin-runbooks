@@ -175,6 +175,12 @@
           "type": "varchar",
           "length": 255
         },
+        "generate": {
+          "type": "text"
+        },
+        "ask": {
+          "type": "text"
+        },
         "revision": {
           "type": "integer",
           "notNull": true

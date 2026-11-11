@@ -10,6 +10,8 @@ import {
 import { describeCheck } from "../shared/checks";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
+import { cardState, KindChip, kindStyle, MarkChip, useStepKind } from "./kinds";
+import { ByHandPlace, SecretStepBody } from "./SecretStepBody";
 import type {
   Check,
   CheckResult,
@@ -42,6 +44,11 @@ export interface StepActions {
   ) => void;
   /** Asks for a note and sends the step to the runbook's agent (1.4.0). */
   sendToAgent: (step: Step) => void;
+  /**
+   * Make it (no value) or Save (the value a person pasted) on a secret
+   * step (1.4.2). Resolves true when the server stored it.
+   */
+  secret: (step: Step, value?: string) => Promise<boolean>;
   complete: (
     run: Run,
     pasted: string,
@@ -380,24 +387,29 @@ function RunDetails({
         <ListBadge tone={tone}>{t(`run.status.${run.status}`)}</ListBadge>
         <span>
           {t(
-            run.mode === "manual"
-              ? run.status === "done"
-                ? "run.manualDone"
-                : "run.manualFailed"
-              : run.mode === "outside"
+            run.mode === "secret"
+              ? run.secrets?.made?.how === "saved"
+                ? "run.secretSaved"
+                : "run.secretMade"
+              : run.mode === "manual"
                 ? run.status === "done"
-                  ? "run.outsideDone"
-                  : "run.outsideFailed"
-                : run.mode === "agent"
+                  ? "run.manualDone"
+                  : "run.manualFailed"
+                : run.mode === "outside"
                   ? run.status === "done"
-                    ? "run.agentDone"
-                    : "run.agentFailed"
-                  : run.mode === "exec"
-                    ? "run.byExec"
-                    : "run.byTerminal",
+                    ? "run.outsideDone"
+                    : "run.outsideFailed"
+                  : run.mode === "agent"
+                    ? run.status === "done"
+                      ? "run.agentDone"
+                      : "run.agentFailed"
+                    : run.mode === "exec"
+                      ? "run.byExec"
+                      : "run.byTerminal",
             {
               user: run.userId,
               time: formatTime(run.startedAt),
+              name: run.secrets?.made?.name ?? "",
             },
           )}
         </span>
@@ -420,11 +432,13 @@ function RunDetails({
           </span>
         ) : null}
       </div>
-      {run.mode !== "manual" && run.mode !== "agent" && (
-        <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
-          $ {run.command}
-        </pre>
-      )}
+      {run.mode !== "manual" &&
+        run.mode !== "agent" &&
+        run.mode !== "secret" && (
+          <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
+            $ {run.command}
+          </pre>
+        )}
       {run.note && (
         <p className="mt-1 whitespace-pre-wrap" data-run-note>
           {t("run.note", { note: run.note })}
@@ -502,6 +516,11 @@ function RunDetails({
               {t("run.markFailed")}
             </Button>
           </div>
+          {pasted.trim() === "" && (
+            <p className="text-xs text-muted-foreground" data-paste-first>
+              {t("run.pasteFirst")}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -517,9 +536,12 @@ export function StepCard({
   secrets = [],
   agentLabel = "",
   canSendToAgent = false,
+  last = false,
 }: {
   step: Step;
   isNext: boolean;
+  /** The runbook's last step: it may be the Finish step (1.4.1). */
+  last?: boolean;
   runbookOpen: boolean;
   busy: boolean;
   actions: StepActions;
@@ -539,6 +561,9 @@ export function StepCard({
   const [expanded, setExpanded] = useState(false);
   const [outsideOutput, setOutsideOutput] = useState("");
   const replaced = step.status === "replaced";
+  // Done on a step with checks needs the output they read (1.4.1).
+  const pasteFirst =
+    (step.checks ?? []).length > 0 && outsideOutput.trim() === "";
 
   // Agent edits and polls must not wipe a note being typed.
   useEffect(() => {
@@ -546,6 +571,10 @@ export function StepCard({
   }, [step.ownerNote, editingNote]);
 
   const agentStep = step.owner === "agent";
+  // Who does it and how (1.4.1): a color, an icon and a label.
+  const kindRunbook = { last, agentLabel };
+  const { kind, marks, color: kindColor } = useStepKind(step, kindRunbook);
+  const state = cardState(step, isNext);
   const [latest, ...earlier] = step.runs;
   const running = step.runs.some((run) => run.running);
   const waitLeft = useWaitRemaining(step.wait);
@@ -586,18 +615,23 @@ export function StepCard({
       >
         {step.title}
       </h3>
+      <KindChip
+        kind={kind}
+        step={step}
+        runbook={kindRunbook}
+        color={kindColor}
+        state={state}
+      />
       <ListBadge tone={STATUS_TONE[step.status] ?? "muted"}>
         {t(`step.status.${step.status}`)}
       </ListBadge>
+      {marks.map((mark) => (
+        <MarkChip key={mark.id} mark={mark} />
+      ))}
       {step.amendment && (
         <ListBadge tone="warning">{t("amend.badge")}</ListBadge>
       )}
       {isNext && <ListBadge tone="brand">{t("step.next")}</ListBadge>}
-      {agentStep && (
-        <span data-agent-step>
-          <ListBadge tone="muted">{t("step.agentBadge")}</ListBadge>
-        </span>
-      )}
       {step.hideOutputFromAgents && (
         <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
       )}
@@ -631,7 +665,10 @@ export function StepCard({
     return (
       <section
         className="border border-dashed border-border p-3 opacity-80"
+        style={kindStyle.card(state, kindColor)}
         data-step={step.id}
+        data-kind={kind.id}
+        data-state={state}
         data-collapsed
       >
         {header}
@@ -642,12 +679,11 @@ export function StepCard({
 
   return (
     <section
-      className={cn(
-        "border border-border p-3",
-        isNext && "border-accent-brand",
-        replaced && "border-dashed",
-      )}
+      className={cn("border border-border p-3", replaced && "border-dashed")}
+      style={kindStyle.card(state, kindColor)}
       data-step={step.id}
+      data-kind={kind.id}
+      data-state={state}
       aria-current={isNext ? "step" : undefined}
     >
       {header}
@@ -655,6 +691,16 @@ export function StepCard({
       <AmendmentNote step={step} />
 
       <Markdown source={step.body} className="mt-2" copyCode />
+
+      {step.secretStep && (
+        <SecretStepBody
+          step={step}
+          runbookOpen={runbookOpen && !replaced}
+          busy={busy}
+          onSecret={actions.secret}
+          onManual={(target, outcome) => actions.manual(target, outcome, note)}
+        />
+      )}
 
       {agentStep && step.command !== null && (
         <div className="mt-2" data-agent-command>
@@ -706,7 +752,8 @@ export function StepCard({
                 <Button
                   size="sm"
                   data-outside-mark="done"
-                  disabled={busy || step.missing.length > 0}
+                  disabled={busy || step.missing.length > 0 || pasteFirst}
+                  title={pasteFirst ? t("run.pasteFirst") : undefined}
                   onClick={() =>
                     actions.manual(step, "done", note, outsideOutput)
                   }
@@ -725,6 +772,11 @@ export function StepCard({
                   {t("step.failed")}
                 </Button>
               </div>
+              {pasteFirst && (
+                <p className="text-xs text-muted-foreground" data-paste-first>
+                  {t("run.pasteFirst")}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -777,6 +829,25 @@ export function StepCard({
             <p className="mt-1 text-xs text-destructive" data-stdin-problem>
               {stdin.problem}
             </p>
+          )}
+          {stdin?.byHand && stdin.source.from === "secret" && (
+            <div className="mt-1 text-xs" data-stdin-by-hand>
+              <p>
+                {t(
+                  stdin.byHand.step
+                    ? "secretStep.readByHandStep"
+                    : "secretStep.readByHand",
+                  {
+                    name:
+                      "name" in stdin.source
+                        ? stdin.source.name
+                        : stdin.source.library,
+                    step: stdin.byHand.step,
+                  },
+                )}
+              </p>
+              <ByHandPlace place={stdin.byHand} />
+            </div>
           )}
         </div>
       )}
@@ -899,6 +970,7 @@ export function StepCard({
             )}
           {runbookOpen &&
             !agentStep &&
+            !step.secretStep &&
             step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (

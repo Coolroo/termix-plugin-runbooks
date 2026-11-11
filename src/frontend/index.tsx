@@ -6,6 +6,7 @@ import {
 } from "./deep-link";
 import { createRunbooksTab, RunbooksIcon } from "./RunbooksTab";
 import { NotifySetting } from "./NotifySetting";
+import { AdminStepColors, UserStepColors } from "./kinds";
 
 export const TAB_ID = "runbooks";
 
@@ -28,6 +29,9 @@ export function activate(app: TermixApp): void {
   });
   // The signing secret and Test button of agent notifications (1.4.0).
   app.registerSettingsComponent("notify-secret", NotifySetting);
+  // A color per kind of step (1.4.1), for everyone and for each person.
+  app.registerSettingsComponent("step-colors", AdminStepColors);
+  app.registerSettingsComponent("step-colors-user", UserStepColors);
   // A runbook link went through the full-screen view to the app: open the
   // Runbooks tab on it once the shell has its tabs back.
   app.tabs.onReady(() => {

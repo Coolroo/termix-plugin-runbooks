@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.4.2
+
+### Added
+
+- **Make a secret** steps. A step with `generate: { name, format, length, store }` makes a new random value on the server when a person clicks **Make it**: `alnum` (letters and digits, the default, 16 to 128, default 32), `hex` (16 to 128, default 64), `base64url` (16 to 128, default 43), `words` (4 to 12 words of the EFF long word list joined by `-`, default 6) or `pin` (4 to 12 digits, default 6). Each character or word is picked with `crypto.randomInt`, so there is no modulo bias. The step says "Make secret <name>: 32 letters and digits" and where the value goes.
+- **Ask for a secret** steps. A step with `ask: { name, label, pattern?, store }` takes a value the person types or pastes once, such as a token another site shows, in a field that shows it while it is typed with **Hide** (as in OpenBao Secrets 1.0.2), then **Save**. The value is trimmed and must match `pattern` whole (checked with a time limit); a refusal never repeats it.
+- Where the value goes, `store`: `"runbook"` (the default: the runbook's own secrets, as captured ones, for 7 days and deleted when the runbook ends), `{ library: "mine/<path>" | "shared/<path>", expires?: <days, 1 to 30> }` (a new secret in the OpenBao Secrets library, never replacing one: 409 `exists`), or `{ app: "<app>/<host>", field }` (a new field through OpenBao Secrets 1.0.5's `createAppField`, for app paths its admin allows; 409 `app-store-off`, `app-not-allowed` or `exists` when it refuses).
+- The value never reaches the browser, an agent, an event, a notification, the audit log or any output. The run (`mode: "secret"`) says "Made secret <name>" or "Saved secret <name>" with `secrets.made` (`name`, `how`, `store`, `where`, `expiresAt`). Later steps read it with `stdin: { from: "secret", name }` (or the library form), and every later output of the runbook shows `[secret:<name>]` instead of it, also in steps that do not read it.
+- By hand: when OpenBao Secrets is not installed or not connected, or an app path store meets an OpenBao Secrets without `createAppField`, the step shows **Do it by hand**: for Make a secret the format and length to make in a password manager, then the KV engine, path and field to save it at in OpenBao or Vault (each with Copy), and **Done** and **Failed**. A later step that reads the secret says where to get it.
+- `POST /plugin-api/runbooks/steps/{id}/secret` (`{ revision, value?, confirmRepeat?, outOfOrder?, waitAnyway? }`), a person only, asks about a repeat, the order and a wait as Run does. Agents can set `generate` and `ask` (REST, MCP, amendments) but never make, save or complete such a step; `owner: "agent"`, a command, a host, `where`, `stdin`, captures, secret captures and checks are refused on it (400), as are bad formats, lengths, names, labels, patterns and stores.
+- Two step kinds in the registry: **Make a secret** (fuchsia, Dices) and **Ask for a secret** (teal, Clipboard paste), with their own color settings.
+- The EFF long word list (CC BY 3.0 US), credited in NOTICE and the README.
+
+### Changed
+
+- A step that reads a secret by name may read one an earlier step made or asked for with store `"runbook"`. Reading a library or app store secret by name is refused with a hint to use the library form.
+
+## 1.4.1
+
+### Fixed
+
+- Checks test the output with its secrets hidden, the same text Runbooks keeps and shows. Before, they read the raw output: a check for `token: [secret:api_token]` failed, and a check that named part of a secret's value passed or failed on its characters, so an agent could learn the secret one guess at a time. Captured values that a check reads are hidden the same way. This holds for Run, Send to terminal with Mark done, steps run outside Termix and agent steps.
+- **Done** on a step run outside Termix needs pasted output when the step has checks: the button is off with "Paste the output first: at least one line.", as Mark done on a terminal run is, and the server refuses it with 400. **Failed** needs nothing. The hint also shows as text under the buttons, for phones.
+
+### Added
+
+- Step kinds. Each step shows who does it and how, read from the fields it already has: **Run here** (a command and a host; green, Play, "Run on <host>"), **Lead's step** (an agent step; blue, Bot, "<agent>'s step"), **Outside Termix** (a command and `where`; amber, External link, "Run outside Termix"), **In an app** (no command; violet, Mouse pointer, "Do it yourself") and **Finish** (the last step, with no command, whose title starts with "Finish"; neutral, Flag). The chips **Secret** (it captures or reads a secret) and **Wait** (it has a wait timer) go on any kind.
+- The current step has a 2 px border and a soft glow in its kind's color. Pending steps have a stripe in their kind's color, dimmed once done; failed steps a red stripe, whatever their kind; replaced and skipped steps a grey one. The runbook list shows the next step's kind as a dot, an icon and its name (`nextKind` in `GET /runbooks`).
+- Step colors. Admins set one color per kind for everyone, and each person can set their own, which win (setting `stepColors` in both scopes, `#rgb` or `#rrggbb` only, anything else refused on save). `GET /colors` answers the colors a person sees. Empty keeps the built-in color, which suits light and dark themes. Failed stays red.
+- Kinds and marks are one registry, `src/shared/step-kinds.ts`: a new kind is one entry. See "Adding a step kind" in the README.
+
 ## 1.4.0
 
 This update asks the admin to agree to two new capabilities: `network:outbound`, to send agent notifications to the webhook an admin sets, and `secrets:own`, to keep the webhook's signing secret sealed with Termix's installation key. Runbooks sends nothing until an admin turns notifications on.

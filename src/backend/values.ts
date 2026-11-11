@@ -224,6 +224,28 @@ export function testPattern(
   }
 }
 
+/**
+ * Whether a pattern (JavaScript) matches the whole text, as an Ask for a
+ * secret step checks a value (1.4.2). Null when it did not finish within
+ * the captures' time limit: it runs in a separate context.
+ */
+export function matchesWhole(
+  pattern: string,
+  input: string,
+  timeLimitMs = CAPTURE_TIME_LIMIT_MS,
+): boolean | null {
+  const sandbox = vm.createContext({ input, pattern });
+  try {
+    return vm.runInContext(
+      "new RegExp('^(?:' + pattern + ')$').test(input)",
+      sandbox,
+      { timeout: timeLimitMs },
+    ) as boolean;
+  } catch {
+    return null;
+  }
+}
+
 /** JSON text to an object, or a fallback for anything malformed. */
 export function parseJson<T>(text: unknown, fallback: T): T {
   if (typeof text !== "string" || text === "") return fallback;

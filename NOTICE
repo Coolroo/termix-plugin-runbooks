@@ -1,0 +1,10 @@
+Runbooks, a Termix plugin
+Copyright Coolroo
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This plugin includes the EFF long word list (src/backend/wordlist.ts), used
+for passphrases. The word list is by the Electronic Frontier Foundation,
+https://www.eff.org/dice, and is licensed under the Creative Commons
+Attribution 3.0 United States license
+(https://creativecommons.org/licenses/by/3.0/us/).
