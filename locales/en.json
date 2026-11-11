@@ -40,7 +40,8 @@
   "values": {
     "title": "Values",
     "author": "set by the author",
-    "captured": "captured in step {{position}}"
+    "captured": "captured in step {{position}}",
+    "notSet": "(value {{name}}: not set yet)"
   },
   "step": {
     "status": {
@@ -57,6 +58,7 @@
     "copy": "Copy",
     "copied": "Copied",
     "missing": "Values missing: {{names}}. This step cannot run until they are set.",
+    "missingText": "Values missing: {{names}}. The text shows where they go. They do not stop this step.",
     "expect": "You should see",
     "run": "Run",
     "send": "Send to terminal",

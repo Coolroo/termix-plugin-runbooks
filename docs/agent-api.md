@@ -64,11 +64,11 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
 | `title`                    | string          | Required. Up to 200 characters.                                                                              |
 | `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                      |
-| `body`                     | markdown        | What to do and why, shown before the command.                                                                |
+| `body`                     | markdown        | What to do and why, shown before the command. May use `{{name}}` (1.4.3).                                    |
 | `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                     |
 | `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                              |
 | `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix).  |
-| `expect`                   | markdown        | What the person should see when it works.                                                                    |
+| `expect`                   | markdown        | What the person should see when it works. May use `{{name}}` (1.4.3).                                        |
 | `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                   |
 | `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                             |
 | `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                           |
@@ -205,6 +205,23 @@ Creating or changing a runbook or its steps is not an event, and neither is a no
 ### Values and placeholders
 
 `{{name}}` in a command is replaced by the value of `name`, as plain text, with no shell quoting. Values come from the runbook's `values` object first, then from captures of earlier steps in step order; a later value wins. Names match `[A-Za-z_][A-Za-z0-9_.-]*`. A step whose placeholders have no value cannot run, and its `missing` field names them.
+
+Since 1.4.3, `{{name}}` works in `body`, `expect` and `where` too, with the same values. A click step can say "Open the admin console and find `{{ts_ip}}`". `GET /runbooks/{id}` (MCP `get_runbook`) returns each step's text as written and as the person sees it:
+
+| Field            | What it is                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `resolvedBody`   | `body` with its values. Always present.                                                 |
+| `resolvedExpect` | `expect` with its values. Always present.                                               |
+| `resolvedWhere`  | `where` with its values; null when the step has no `where`.                             |
+| `textMissing`    | Names that `body`, `expect` and `where` use and that have no value yet; `[]` when none. |
+
+- A value that is not set yet stays as `{{name}}` in these fields, as in a command. The person sees "(value ts_ip: not set yet)" there, and the step's "Values missing" line names it.
+- A missing value in the text never stops a step. A click step can still be marked done or failed. Only `missing`, the command's values, stops a Run.
+- `body` and `expect` are Markdown, and a value can be command output, so a value shows as text: outside code, its Markdown characters are escaped with a backslash, its line breaks become spaces, and a bare address in it (`://`, `www.`, `@`) gets an empty HTML comment `<!---->`, which the page drops, so it cannot add a link, an image, a heading, emphasis or HTML. Inside a code span or a code block, the value goes in as it is. A value with backticks gets a longer code span, and a value with a fence line gets a longer fence. A Copy button on a code block copies the filled-in text.
+- To make a link from a value, write the link: `[admin console]({{url}})`, `https://{{ip}}:8443/` or `<https://{{host}}/>`. In a link destination the value is escaped and its spaces are percent-encoded; in an autolink its spaces, `<` and `>` are.
+- `where` is plain text: values go in as they are.
+- A value from a step with `hideOutputFromAgents` shows as `[hidden by owner]` in an agent's view, as in `effectiveValues`.
+- Secrets are never values. A secret step, `secretCaptures` and `stdin` from a secret never fill a `{{name}}`, and captured values have secrets removed before they are kept. Use `{{name}}` only for values that may show on the page.
 
 A capture is a JavaScript regular expression, in multiline mode, with exactly one capturing group. It runs on the first 256 KB of standard output (or the pasted terminal output); the first match's group becomes the value.
 

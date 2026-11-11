@@ -56,6 +56,7 @@ import {
   stepRef,
   type StepNumber,
 } from "../shared/steps.js";
+import { fillMarkdown, fillPlain, uniqueNames } from "../shared/fill.js";
 
 /** A step as an author writes it: stdin names an earlier step by position. */
 export type AuthorStep = Omit<NewStep, "stdin"> & {
@@ -728,6 +729,44 @@ export function resolveStep(
   };
 }
 
+/** A step's text with its values filled in (1.4.3). */
+export interface ResolvedText {
+  /** `body` with values: escaped outside code, raw inside it. */
+  resolvedBody: string;
+  /** `expect`, as `body`. */
+  resolvedExpect: string;
+  /** `where`, plain text, values as they are; null when it has none. */
+  resolvedWhere: string | null;
+  /** Names body, expect and where use that have no value. */
+  textMissing: string[];
+}
+
+/**
+ * Fills {{name}} in a step's body, expect and where with the values the
+ * command gets (the author's, then captures). A value not set stays as
+ * written, as in resolvedCommand. Values are never secrets: secrets are
+ * kept apart and never become values, and captured values have secrets
+ * removed before they are stored.
+ */
+export function resolveText(
+  step: Pick<StepRow, "body" | "expect" | "where">,
+  values: Values,
+): ResolvedText {
+  const body = fillMarkdown(step.body, values);
+  const expect = fillMarkdown(step.expect, values);
+  const where = step.where === null ? null : fillPlain(step.where, values);
+  return {
+    resolvedBody: body.text,
+    resolvedExpect: expect.text,
+    resolvedWhere: where ? where.text : null,
+    textMissing: uniqueNames(
+      body.missing,
+      expect.missing,
+      where ? where.missing : [],
+    ),
+  };
+}
+
 /**
  * A step's stdin source as views show it: an earlier step by its position,
  * or by its label ("3a") when it is an amendment.
@@ -1290,6 +1329,8 @@ export function personView(
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
         missing: resolved.missing,
+        // 1.4.3: values in the step's text, as in its command.
+        ...resolveText(step, values),
         wait: waitState(step, steps, runsByStep),
         runs: runsByStep.get(step.id) ?? [],
         // Each time a person sent this step to the agent, with the note.
@@ -1325,6 +1366,9 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
     return out;
   };
   const next = steps.find((step) => step.status === "pending");
+  const valueMap: Values = Object.fromEntries(
+    values.map((entry) => [entry.name, entry.value]),
+  );
   return {
     ...runbookSummary(runbook, steps),
     openPath: openPath(runbook.id),
@@ -1339,6 +1383,9 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
       const used = placeholders(step.command);
       const known = new Set(values.map((entry) => entry.name));
       const stepRuns = runsByStep.get(step.id) ?? [];
+      // 1.4.3: the text as the person sees it, with values from hidden
+      // steps replaced, as in the runs.
+      const text = resolveText(step, valueMap);
       return {
         id: step.id,
         position: step.position,
@@ -1353,6 +1400,10 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         command: step.command,
         missing: used.filter((name) => !known.has(name)),
         expect: step.expect,
+        resolvedBody: mask(text.resolvedBody)!,
+        resolvedExpect: mask(text.resolvedExpect)!,
+        resolvedWhere: mask(text.resolvedWhere),
+        textMissing: text.textMissing,
         captures: step.captures,
         secretCaptures: step.secretCaptures,
         // A secret step's field (1.4.2): never a value, which no agent gets.

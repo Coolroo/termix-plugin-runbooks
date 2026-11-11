@@ -12,6 +12,9 @@ export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const VALUE_SYNTAX =
   "Commands may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook's value of that name: the author's values first, then values captured from earlier steps' output (a later capture wins). The person sees the resolved command before running it; a step whose placeholders have no value cannot run.";
 
+const TEXT_VALUES =
+  "{{name}} values work here too, with the command's values: get_runbook returns the text as written and resolved (resolvedBody, resolvedExpect, resolvedWhere; textMissing names values not set yet, which show to the person as not set and do not stop the step). In Markdown a value shows as text (its Markdown is escaped), and inside a code span or code block as it is. Secrets are never values.";
+
 const OPEN_LINK =
   "Each runbook has openPath, a link relative to the Termix address: give the person the Termix address followed by openPath (for example https://termix.example.com/?view=runbook&id=12). It opens that runbook in the Runbooks tab, after a sign-in if needed.";
 
@@ -89,7 +92,7 @@ const AMEND_HELP =
   'Amend a step in place instead of adding a fix at the end. kind "replace" makes a fixed version of a step that did not end done (pending, failed or skipped): the new step is 3a right after step 3, and step 3 shows "Replaced by 3a", keeps its runs and counts as ended. kind "substep" adds an extra step 3a (then 3b) after step 3 in any state. Later steps keep their numbers. An amendment can be amended too: replace 3a with 3b. reason (up to 500 characters) is shown on the new step. step has the fields of a new step and the same checks. Refused: a closed runbook (409), a step whose run is running (409 running), replace of a step that ended done (409 done: use substep) or was already replaced (409 replaced: amend its replacement). A later step names an amendment in stdin as "3a".';
 
 const WHERE_HELP =
-  'Where the person runs the command when it is not a shell on a Termix host, up to 80 characters: for example "Windows PC, PowerShell as admin" or "browser console on the admin page". A person step with command and where and no hostId shows "Run outside Termix: <where>", the command with its values filled in and a Copy button; Termix never runs it. The person pastes the output and marks the step done or failed; checks (not exitCode) and captures read the pasted output. Not with stdin or secretCaptures. Use it instead of a code block in body for a command that runs outside Termix.';
+  'Where the person runs the command when it is not a shell on a Termix host, up to 80 characters: for example "Windows PC, PowerShell as admin" or "browser console on the admin page". A person step with command and where and no hostId shows "Run outside Termix: <where>", the command with its values filled in and a Copy button; Termix never runs it. The person pastes the output and marks the step done or failed; checks (not exitCode) and captures read the pasted output. Not with stdin or secretCaptures. Use it instead of a code block in body for a command that runs outside Termix. {{name}} values work in where too, as plain text.';
 
 const OWNER_SCHEMA = {
   type: ["object", "null"],
@@ -198,7 +201,7 @@ const STEP_SCHEMA = {
     },
     body: {
       type: "string",
-      description: "Markdown shown before the command: why and what to check.",
+      description: `Markdown shown before the command: why and what to check. ${TEXT_VALUES}`,
     },
     hostId: {
       type: ["integer", "null"],
@@ -216,7 +219,8 @@ const STEP_SCHEMA = {
     },
     expect: {
       type: "string",
-      description: "Markdown: what the person should see when the step works.",
+      description:
+        "Markdown: what the person should see when the step works. {{name}} values work here, as in body.",
     },
     captures: {
       type: "array",

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -953,6 +954,16 @@ function RunbookDetail({
       }
     });
 
+  // The values the server fills commands with fill the steps' text too.
+  const effective = runbook?.effectiveValues;
+  const values = useMemo(
+    () =>
+      Object.fromEntries(
+        (effective ?? []).map((entry) => [entry.name, entry.value]),
+      ),
+    [effective],
+  );
+
   if (failed && !runbook) {
     return <p className="p-4 text-sm text-destructive">{t("error.load")}</p>;
   }
@@ -1072,6 +1083,7 @@ function RunbookDetail({
             )}
             agentLabel={runbook.agentLabel ?? runbook.createdBy}
             canSendToAgent={Boolean(runbook.canSendToAgent)}
+            values={values}
           />
         ))}
       </div>

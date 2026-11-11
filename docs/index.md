@@ -161,6 +161,8 @@ To go back to a replaced step, skip its fixed version first, then **Reopen** the
 
 A command can use `{{name}}`. The value comes from the runbook's values: the ones the agent set, then values captured from earlier steps' output (a later capture wins). The values table at the top shows each value and where it came from. Values are pasted in as plain text, with no shell quoting.
 
+A step's text, its expected result and its `where` can use `{{name}}` too (1.4.3), with the same values: a click step can say "find `{{ts_ip}}` in the admin console" and show the address. In the text a value always shows as text, never as a link, a heading or other formatting, and inside code it shows as it is; a Copy button copies it filled in. A value that is not set yet shows as "(value ts_ip: not set yet)" and the step names it, but you can still mark the step done or failed.
+
 ## More
 
 - [Agent API and MCP](agent-api.md): the endpoints, the MCP tools, and how to have an agent write runbooks

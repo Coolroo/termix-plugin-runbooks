@@ -26,7 +26,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Run over SSH with the host's stored login, or send to an open terminal and paste the output back
 - Every run is kept with who ran it, when, the exit code and the output
 - A repeat of a step, or of the same command on the same host within 24 hours, asks first
-- `{{name}}` values, set by the agent or captured from earlier output
+- `{{name}}` values, set by the agent or captured from earlier output, in commands and in a step's text
 - Output hidden from agents, step by step
 - Notes on every step that the agent can read
 - Standard input from an earlier step's output, a value or a secret, so nobody copies output from one command to the next

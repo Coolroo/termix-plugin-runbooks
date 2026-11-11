@@ -215,8 +215,15 @@ export interface Step {
   command: string | null;
   resolvedCommand: string | null;
   commandHash: string | null;
+  /** Names the command uses that have no value: it cannot run. */
   missing: string[];
   expect: string;
+  /** 1.4.3: body, expect and where with their values filled in. */
+  resolvedBody?: string;
+  resolvedExpect?: string;
+  resolvedWhere?: string | null;
+  /** 1.4.3: names body, expect and where use that have no value. */
+  textMissing?: string[];
   captures: Array<{ name: string; pattern: string }>;
   /** Rules tested on the output when a run ends. */
   checks?: Check[];

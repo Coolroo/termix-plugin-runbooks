@@ -8,6 +8,12 @@ import {
   cn,
 } from "@termix-ssh/plugin-sdk/ui";
 import { describeCheck } from "../shared/checks";
+import {
+  fillMarkdown,
+  fillPlain,
+  uniqueNames,
+  type TextValues,
+} from "../shared/fill";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { cardState, KindChip, kindStyle, MarkChip, useStepKind } from "./kinds";
@@ -527,6 +533,39 @@ function RunDetails({
   );
 }
 
+const NO_VALUES: TextValues = {};
+
+/** A step's text as the page shows it: values in, a marker for each gap. */
+export interface StepText {
+  body: string;
+  expect: string;
+  where: string | null;
+  /** Names the text uses that have no value. */
+  missing: string[];
+}
+
+/**
+ * Fills a step's body, expect and where with the runbook's values (1.4.3),
+ * as the server's resolvedBody, resolvedExpect and resolvedWhere are, with
+ * the same rules and values (src/shared/fill.ts), and with a marker where a
+ * value is not set yet, which the server leaves as {{name}}.
+ */
+export function useStepText(step: Step, values: TextValues): StepText {
+  const { t } = useTranslation();
+  return useMemo(() => {
+    const mark = (name: string) => t("values.notSet", { name });
+    const body = fillMarkdown(step.body, values, mark);
+    const expect = fillMarkdown(step.expect, values, mark);
+    const where = step.where ? fillPlain(step.where, values, mark) : null;
+    return {
+      body: body.text,
+      expect: expect.text,
+      where: where ? where.text : null,
+      missing: uniqueNames(body.missing, expect.missing, where?.missing ?? []),
+    };
+  }, [step.body, step.expect, step.where, values, t]);
+}
+
 export function StepCard({
   step,
   isNext,
@@ -537,8 +576,14 @@ export function StepCard({
   agentLabel = "",
   canSendToAgent = false,
   last = false,
+  values = NO_VALUES,
 }: {
   step: Step;
+  /**
+   * The runbook's values (author values, then captures), as the server
+   * fills the command with: they fill the step's text too (1.4.3).
+   */
+  values?: TextValues;
   isNext: boolean;
   /** The runbook's last step: it may be the Finish step (1.4.1). */
   last?: boolean;
@@ -570,7 +615,30 @@ export function StepCard({
     if (!editingNote) setNote(step.ownerNote);
   }, [step.ownerNote, editingNote]);
 
+  const text = useStepText(step, values);
+  // One line names every value not set: the command's (it cannot run) and
+  // the text's (it shows a marker; a step with no command can still end).
+  const allMissing = uniqueNames(step.missing, text.missing);
+  const missingLine = allMissing.length > 0 && (
+    <p
+      className={cn(
+        "mt-1 text-xs",
+        step.missing.length > 0 ? "text-destructive" : "text-warning",
+      )}
+      data-missing={allMissing.join(",")}
+    >
+      {t(step.missing.length > 0 ? "step.missing" : "step.missingText", {
+        names: allMissing.join(", "),
+      })}
+    </p>
+  );
+
   const agentStep = step.owner === "agent";
+  // The command blocks below carry the line; other steps show it after
+  // the expected result.
+  const missingInBlock =
+    !agentStep &&
+    ((Boolean(step.where) && step.command !== null) || step.hostId !== null);
   // Who does it and how (1.4.1): a color, an icon and a label.
   const kindRunbook = { last, agentLabel };
   const { kind, marks, color: kindColor } = useStepKind(step, kindRunbook);
@@ -690,7 +758,7 @@ export function StepCard({
       {replacedLine}
       <AmendmentNote step={step} />
 
-      <Markdown source={step.body} className="mt-2" copyCode />
+      <Markdown source={text.body} className="mt-2" copyCode />
 
       {step.secretStep && (
         <SecretStepBody
@@ -719,7 +787,7 @@ export function StepCard({
         <div className="mt-2" data-outside>
           <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
             <span data-outside-where>
-              {t("outside.where", { where: step.where })}
+              {t("outside.where", { where: text.where })}
             </span>
             <CopyButton
               text={step.resolvedCommand ?? step.command}
@@ -734,11 +802,7 @@ export function StepCard({
           <pre className="mt-1 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all">
             {step.resolvedCommand ?? step.command}
           </pre>
-          {step.missing.length > 0 && (
-            <p className="mt-1 text-xs text-destructive">
-              {t("step.missing", { names: step.missing.join(", ") })}
-            </p>
-          )}
+          {missingLine}
           {runbookOpen && !replaced && step.status === "pending" && (
             <div className="mt-2 flex flex-col gap-2" data-outside-paste>
               <Textarea
@@ -796,11 +860,7 @@ export function StepCard({
           <pre className="mt-1 overflow-x-auto border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all">
             {step.resolvedCommand ?? step.command}
           </pre>
-          {step.missing.length > 0 && (
-            <p className="mt-1 text-xs text-destructive">
-              {t("step.missing", { names: step.missing.join(", ") })}
-            </p>
-          )}
+          {missingLine}
           {stdin && (
             <p className="mt-1 text-xs text-muted-foreground" data-stdin>
               {t("stdin.label", { source: stdinSource })}
@@ -857,9 +917,11 @@ export function StepCard({
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
             {t("step.expect")}
           </div>
-          <Markdown source={step.expect} copyCode />
+          <Markdown source={text.expect} copyCode />
         </div>
       )}
+
+      {!missingInBlock && missingLine}
 
       <ChecksList
         checks={step.checks ?? []}

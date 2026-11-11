@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.3
+
+### Fixed
+
+- `{{name}}` values fill a step's text, not only its command. `body`, `expect` and `where` showed the bare name, so a click step that said "find `{{ts_ip}}` in the admin console" gave the person no address. They now get the same values as the command (the author's, then captures), on the server, as `resolvedBody`, `resolvedExpect` and `resolvedWhere` (null when the step has no `where`), with `textMissing` for names that have no value yet. The person view, the agent API and MCP `get_runbook` return them next to the written text. In an agent's view, a value from a step hidden from agents shows as `[hidden by owner]`, as in `effectiveValues`.
+- A value is never Markdown. Outside code, its Markdown characters are escaped with a backslash, its line breaks become spaces, and a bare address in it (`://`, `www.`, `@`) gets an empty HTML comment that the page drops, so a value cannot add a link, an image, a heading, emphasis or HTML. Inside a code span or a code block it goes in as it is: a value with backticks gets a longer code span, and a value with a fence line gets a longer fence. In the author's link destination (`[text]({{url}})`) and autolink (`<https://{{host}}/>`) it makes the link the author wrote. `where` is plain text, filled as it is.
+- A value not set yet shows as "(value ts_ip: not set yet)", and the step's "Values missing" line names it. It does not stop the step: a click step can still be marked done or failed, and a command runs when the command's own values are set, as before.
+- A Copy button on a code block in `body` or `expect` copies the filled-in text.
+
 ## 1.4.2
 
 ### Added
