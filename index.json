@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-10T15:26:53.000Z",
+  "updatedAt": "2026-11-11T00:27:26.000Z",
   "plugins": [
     {
       "id": "openbao-secrets",
@@ -20,13 +20,37 @@
         "A Secrets tab for your own secrets and shared ones, by name, in folders",
         "A saved value is never sent to the browser for display: no reveal, no copy",
         "Type a secret at the cursor of an open terminal, for a password prompt",
+        "Put a secret in a shell variable, without showing it or saving it in history",
         "A service other plugins use to store, read and delete secrets in their own area",
+        "Optional, off by default: other plugins may create (never read or replace) fields at app paths an admin allows",
         "Secrets with an expiry time are deleted when it passes",
         "Every read, write and delete is in the audit log, never with the value"
       ],
       "docs": "https://github.com/Coolroo/termix-plugin-openbao-secrets/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.5",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/download/v1.0.5/openbao-secrets-1.0.5.tmxplug",
+          "sha256": "c39e77d02612ef98f0e9380c6049ea32f7c52efe838ab2a9bdc4d6fbc4c72467",
+          "signature": "tbrQ56R2BMTiIQfvJjs74R1JZimuDvHQ/NjOmr50tOzJI3erTQEIRhQrX68G7E2DScHinqTWrGIFgZGVqv/RCA==",
+          "size": 89456,
+          "capabilities": [
+            "db:own",
+            "secrets:own",
+            "network:outbound",
+            "network:serve",
+            "ui:surface"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-openbao-secrets/releases/tag/v1.0.5",
+          "notes": "### Added\n\n- **App secrets**, off by default. The service `openbao-secrets.store` is now version 1.1.0, with `createAppField(caller, app, host, field, value)`: a plugin bound to the store adds one new field at `<app secrets folder>/<app>/<host>`, for another program that reads its secrets there. It never reads a value and never replaces a field: it reads the secret's field names (KV `subkeys`), refuses a field that exists, and writes with check-and-set (0 for a new secret, the checked version for a new field by JSON merge patch), trying once more after a lost race. A secret whose newest version is deleted or destroyed is refused.\n- Admin settings **App secrets folder** (a folder in the KV mount, outside the base path) and **Allowed app paths** (one `<app>/<host>` per line). Both are empty by default, and the feature is off until both are set.\n- The permission **Create app secrets** (`openbao-secrets.create-app-secrets`), for admins by default. Callers need it as well as **Use secrets**.\n- An audit line for every try: the user, the calling plugin, the path and the field, never the value.\n- Docs: the OpenBao policy lines for it (`create` and `patch` on data, `read` on `subkeys` and `metadata`), and what that policy cannot stop (a `patch` can replace a field; the plugin refuses to, the policy alone does not).",
+          "publishedAt": "2026-11-11T00:27:26Z"
+        },
         {
           "version": "1.0.3",
           "api": "1",
@@ -124,11 +148,37 @@
         "Runbook events an agent can read or get as a signed webhook, off by default",
         "Send to agent on any step, with a short note",
         "Steps run outside Termix: the command with a Copy button, the pasted output checked",
-        "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers"
+        "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
+        "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed"
       ],
       "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.4.2",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.2/runbooks-1.4.2.tmxplug",
+          "sha256": "277904c0fcf34f4c0c13a1a1945411cdb483c8348518b943c55d8ff802309df4",
+          "signature": "X3g9I55z/MscHiBaMvni6p1GcSQGYIszfDuqoVDAYcH6TMuZxAYqWaZ0WgnlRyeWIvhimLKPeJVn9RUGFPMbDA==",
+          "size": 643230,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.2",
+          "notes": "### Added\n\n- **Make a secret** steps. A step with `generate: { name, format, length, store }` makes a new random value on the server when a person clicks **Make it**: `alnum` (letters and digits, the default, 16 to 128, default 32), `hex` (16 to 128, default 64), `base64url` (16 to 128, default 43), `words` (4 to 12 words of the EFF long word list joined by `-`, default 6) or `pin` (4 to 12 digits, default 6). Each character or word is picked with `crypto.randomInt`, so there is no modulo bias. The step says \"Make secret <name>: 32 letters and digits\" and where the value goes.\n- **Ask for a secret** steps. A step with `ask: { name, label, pattern?, store }` takes a value the person types or pastes once, such as a token another site shows, in a field that shows it while it is typed with **Hide** (as in OpenBao Secrets 1.0.2), then **Save**. The value is trimmed and must match `pattern` whole (checked with a time limit); a refusal never repeats it.\n- Where the value goes, `store`: `\"runbook\"` (the default: the runbook's own secrets, as captured ones, for 7 days and deleted when the runbook ends), `{ library: \"mine/<path>\" | \"shared/<path>\", expires?: <days, 1 to 30> }` (a new secret in the OpenBao Secrets library, never replacing one: 409 `exists`), or `{ app: \"<app>/<host>\", field }` (a new field through OpenBao Secrets 1.0.5's `createAppField`, for app paths its admin allows; 409 `app-store-off`, `app-not-allowed` or `exists` when it refuses).\n- The value never reaches the browser, an agent, an event, a notification, the audit log or any output. The run (`mode: \"secret\"`) says \"Made secret <name>\" or \"Saved secret <name>\" with `secrets.made` (`name`, `how`, `store`, `where`, `expiresAt`). Later steps read it with `stdin: { from: \"secret\", name }` (or the library form), and every later output of the runbook shows `[secret:<name>]` instead of it, also in steps that do not read it.\n- By hand: when OpenBao Secrets is not installed or not connected, or an app path store meets an OpenBao Secrets without `createAppField`, the step shows **Do it by hand**: for Make a secret the format and length to make in a password manager, then the KV engine, path and field to save it at in OpenBao or Vault (each with Copy), and **Done** and **Failed**. A later step that reads the secret says where to get it.\n- `POST /plugin-api/runbooks/steps/{id}/secret` (`{ revision, value?, confirmRepeat?, outOfOrder?, waitAnyway? }`), a person only, asks about a repeat, the order and a wait as Run does. Agents can set `generate` and `ask` (REST, MCP, amendments) but never make, save or complete such a step; `owner: \"agent\"`, a command, a host, `where`, `stdin`, captures, secret captures and checks are refused on it (400), as are bad formats, lengths, names, labels, patterns and stores.\n- Two step kinds in the registry: **Make a secret** (fuchsia, Dices) and **Ask for a secret** (teal, Clipboard paste), with their own color settings.\n- The EFF long word list (CC BY 3.0 US), credited in NOTICE and the README.\n\n### Changed\n\n- A step that reads a secret by name may read one an earlier step made or asked for with store `\"runbook\"`. Reading a library or app store secret by name is refused with a hint to use the library form.",
+          "publishedAt": "2026-11-11T00:27:22Z"
+        },
         {
           "version": "1.4.0",
           "api": "1",
