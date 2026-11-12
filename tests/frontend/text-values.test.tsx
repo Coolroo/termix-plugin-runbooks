@@ -134,7 +134,7 @@ async function open(client: ReturnType<typeof api>) {
   });
   rendered.renderTab("runbooks", { isVisible: true });
   fireEvent.click(await screen.findByText("Tailnet"));
-  await screen.findByText("Approve the route");
+  await screen.findByRole("heading", { name: "Approve the route" });
 }
 
 const card = (id: number) =>

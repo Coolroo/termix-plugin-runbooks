@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -48,6 +49,8 @@ import {
   sleep,
   waitForNewSession,
 } from "./terminal";
+import { buttonForKey, pressedKey } from "./bar-items";
+import { NextStepBar, StepRail, useBarContext, useStepNav } from "./StepNav";
 import { TokensView } from "./TokensView";
 import { KindColorsProvider, NextKindDot } from "./kinds";
 import {
@@ -964,129 +967,169 @@ function RunbookDetail({
     [effective],
   );
 
+  // The rail and the bar follow the steps on screen (1.4.4).
+  const scroller = useRef<HTMLDivElement>(null);
+  const nav = useStepNav(scroller, runbook?.steps ?? []);
+  const bar = useBarContext(runbook, nav.view, nav.wide, nav.goTo, nav.toTop);
+  // A key of a button on the bar presses it (N: Go to step).
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!bar) return;
+    const button = buttonForKey(bar, pressedKey(event));
+    if (!button) return;
+    event.preventDefault();
+    button.onClick(bar);
+  };
+
   if (failed && !runbook) {
     return <p className="p-4 text-sm text-destructive">{t("error.load")}</p>;
   }
   if (!runbook) return null;
   const open = runbook.status === "open";
+  const hasSteps = runbook.steps.length > 0;
 
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-semibold">{runbook.title}</h2>
-        <ListBadge tone={open ? "brand" : "muted"}>
-          {t(`runbook.status.${runbook.status}`)}
-        </ListBadge>
-        <span className="text-xs text-muted-foreground">
-          {t("list.meta", {
-            done: runbook.progress.done,
-            total: runbook.progress.total,
-            author: runbook.createdBy,
-            time: formatTime(runbook.updatedAt),
-          })}
-        </span>
-        <span className="ml-auto flex gap-2">
-          {open ? (
-            <>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setStatus("done")}
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={onKeyDown}
+      data-runbook-view
+    >
+      <div className="relative flex min-h-0 flex-1">
+        <div
+          ref={scroller}
+          className="thin-scrollbar min-w-0 flex-1 overflow-y-auto"
+          data-runbook-scroll
+        >
+          <div className="flex flex-col gap-4 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold">{runbook.title}</h2>
+              <ListBadge tone={open ? "brand" : "muted"}>
+                {t(`runbook.status.${runbook.status}`)}
+              </ListBadge>
+              <span className="text-xs text-muted-foreground">
+                {t("list.meta", {
+                  done: runbook.progress.done,
+                  total: runbook.progress.total,
+                  author: runbook.createdBy,
+                  time: formatTime(runbook.updatedAt),
+                })}
+              </span>
+              <span className="ml-auto flex gap-2">
+                {open ? (
+                  <>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setStatus("done")}
+                    >
+                      {t("runbook.markDone")}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => setStatus("abandoned")}
+                    >
+                      {t("runbook.abandon")}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setStatus("open")}
+                  >
+                    {t("runbook.reopen")}
+                  </Button>
+                )}
+              </span>
+            </div>
+
+            {runbook.owner && (
+              <p
+                className="-mt-2 text-xs text-muted-foreground"
+                data-runbook-owner
               >
-                {t("runbook.markDone")}
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => setStatus("abandoned")}
-              >
-                {t("runbook.abandon")}
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => setStatus("open")}
-            >
-              {t("runbook.reopen")}
-            </Button>
-          )}
-        </span>
-      </div>
-
-      {runbook.owner && (
-        <p className="-mt-2 text-xs text-muted-foreground" data-runbook-owner>
-          {runbook.owner.task
-            ? t("runbook.agentTask", {
-                label: runbook.agentLabel ?? runbook.createdBy,
-                task: runbook.owner.task,
-              })
-            : t("runbook.agent", {
-                label: runbook.agentLabel ?? runbook.createdBy,
-              })}
-        </p>
-      )}
-
-      {early && <EarlyStartPrompt request={early} />}
-      {sending && <SendToAgentPrompt request={sending} />}
-
-      <Markdown source={runbook.summary} />
-
-      {runbook.effectiveValues.length > 0 && (
-        <div>
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            {t("values.title")}
-          </div>
-          <table className="mt-1 w-full border-collapse text-xs">
-            <tbody>
-              {runbook.effectiveValues.map((value) => (
-                <tr key={value.name} className="border-t border-border">
-                  <td className="py-1 pr-2 font-mono">{value.name}</td>
-                  <td className="py-1 pr-2 font-mono break-all">
-                    {value.value}
-                  </td>
-                  <td className="py-1 text-muted-foreground">
-                    {value.source === "author"
-                      ? t("values.author")
-                      : t("values.captured", {
-                          position: (() => {
-                            const from = runbook.steps.find(
-                              (s) => s.id === value.stepId,
-                            );
-                            return from ? stepLabel(from) : "?";
-                          })(),
-                        })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {runbook.steps.length === 0 && (
-        <EmptyState title={t("runbook.noSteps")} />
-      )}
-      <div className="flex flex-col gap-3">
-        {runbook.steps.map((step, index) => (
-          <StepCard
-            key={step.id}
-            step={step}
-            isNext={step.id === runbook.nextStepId}
-            last={index === runbook.steps.length - 1}
-            runbookOpen={open}
-            busy={busy}
-            actions={actions}
-            secrets={(runbook.secrets ?? []).filter(
-              (secret) => String(secret.step) === stepLabel(step),
+                {runbook.owner.task
+                  ? t("runbook.agentTask", {
+                      label: runbook.agentLabel ?? runbook.createdBy,
+                      task: runbook.owner.task,
+                    })
+                  : t("runbook.agent", {
+                      label: runbook.agentLabel ?? runbook.createdBy,
+                    })}
+              </p>
             )}
-            agentLabel={runbook.agentLabel ?? runbook.createdBy}
-            canSendToAgent={Boolean(runbook.canSendToAgent)}
-            values={values}
+
+            {early && <EarlyStartPrompt request={early} />}
+            {sending && <SendToAgentPrompt request={sending} />}
+
+            <Markdown source={runbook.summary} />
+
+            {runbook.effectiveValues.length > 0 && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  {t("values.title")}
+                </div>
+                <table className="mt-1 w-full border-collapse text-xs">
+                  <tbody>
+                    {runbook.effectiveValues.map((value) => (
+                      <tr key={value.name} className="border-t border-border">
+                        <td className="py-1 pr-2 font-mono">{value.name}</td>
+                        <td className="py-1 pr-2 font-mono break-all">
+                          {value.value}
+                        </td>
+                        <td className="py-1 text-muted-foreground">
+                          {value.source === "author"
+                            ? t("values.author")
+                            : t("values.captured", {
+                                position: (() => {
+                                  const from = runbook.steps.find(
+                                    (s) => s.id === value.stepId,
+                                  );
+                                  return from ? stepLabel(from) : "?";
+                                })(),
+                              })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {runbook.steps.length === 0 && (
+              <EmptyState title={t("runbook.noSteps")} />
+            )}
+            <div className="flex flex-col gap-3">
+              {runbook.steps.map((step, index) => (
+                <StepCard
+                  key={step.id}
+                  step={step}
+                  isNext={step.id === runbook.nextStepId}
+                  last={index === runbook.steps.length - 1}
+                  runbookOpen={open}
+                  busy={busy}
+                  actions={actions}
+                  secrets={(runbook.secrets ?? []).filter(
+                    (secret) => String(secret.step) === stepLabel(step),
+                  )}
+                  agentLabel={runbook.agentLabel ?? runbook.createdBy}
+                  canSendToAgent={Boolean(runbook.canSendToAgent)}
+                  values={values}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        {hasSteps && nav.wide && (
+          <StepRail
+            runbook={runbook}
+            view={nav.view}
+            height={nav.height}
+            onGo={nav.goTo}
           />
-        ))}
+        )}
       </div>
+      {hasSteps && bar && <NextStepBar ctx={bar} />}
     </div>
   );
 }
@@ -1151,7 +1194,8 @@ export function createRunbooksTab(app: TermixApp) {
         title={view.kind === "tokens" ? t("tokens.title") : t("tab.title")}
         leading={leading}
         docs={docs ?? undefined}
-        scroll
+        // A runbook scrolls itself, beside its rail and above its bar.
+        scroll={view.kind !== "runbook"}
         actions={
           canManageTokens && view.kind === "list" ? (
             <Button

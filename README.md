@@ -43,6 +43,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Amendments: an agent fixes a step (3a replaces 3) or adds one after it, in place, with its reason, and later steps keep their numbers
 - Step kinds: each step shows who does it and how (Run here, the lead's step, outside Termix, in an app, Finish) with its own color, icon and label, and the current step stands out
 - Step colors an admin sets for everyone, and each person for themselves
+- A bar under the runbook that names the next step and goes to it (or press N), and a rail of the steps near you on the right edge, even in a runbook of 80 steps
 
 <br />
 
@@ -104,6 +105,29 @@ Kinds of step live in one registry, `src/shared/step-kinds.ts`. A kind is one `S
 3. Prefer Termix tokens for `defaultColor` (`var(--warning)`). A hex color of your own needs at least 4.5:1 on Termix's light and dark cards: the tests check every hex default.
 
 The step cards, the list dot, the settings (one color row per kind) and `GET /colors` read the registry, so nothing else changes. A kind that matches on a new step field adds that field to `KindStep`; if the step needs controls of its own, they go in the step's body only, as `SecretStepBody` does for Make a secret and Ask for a secret. A step that matches no kind gets the fallback kind, `app`. Marks such as Secret and Wait are `StepMark` entries in the same file.
+
+### Adding a button to the bar
+
+The bar under a runbook is one registry too, `src/frontend/bar-items.tsx`. A button is one `BarButton` entry. Go to step (1.4.4) is this one:
+
+```ts
+{
+  type: "button",
+  id: "go-to-step",                       // stable: the bar marks it data-bar-item
+  order: 300,                             // left to right; the built-ins use 100, 200, 300, 310
+  when: (ctx) => ctx.next !== null,       // optional: shown only when true
+  label: (ctx) => ctx.t("nav.go"),
+  icon: "ArrowDown",                      // optional, a Lucide icon name
+  key: "n",                               // optional, one letter or digit
+  variant: (ctx) => (ctx.onScreen ? "outline" : "default"),
+  onClick: (ctx) => ctx.goTo(ctx.next!.step.id, true),
+}
+```
+
+1. Add the entry to `BUILT_IN_BAR_ITEMS` (or call `registerBarItem`, which returns a remover).
+2. Add its words to `locales/en.json`.
+
+Every item gets the same `BarContext`: the runbook, its next step (`next`, with its label, kind color and state), every step, the steps on screen, whether the next step is on screen, whether the pane is wide, `t`, `goTo(stepId, focus)` and `toTop()`. The bar draws the button, shows its key in a wide pane, and its key presses it while the focus is in the runbook, never in a field. Anything that is not a button (a chip, a counter) is a `BarCustom` entry with a `render(ctx)` that returns the element, as the next step's caption and kind chip are. Registering an id again replaces that item.
 
 <br />
 

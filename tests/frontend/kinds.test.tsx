@@ -383,7 +383,7 @@ describe("step cards", () => {
   it("show each kind's icon and label, and the Secret and Wait marks", async () => {
     const { row } = await open();
     fireEvent.click(row);
-    await screen.findByText("Check Windows");
+    await screen.findByRole("heading", { name: "Check Windows" });
     const expected: Array<[number, string, string]> = [
       [1, "run", "Run on web-1"],
       [2, "run", "Run on web-1"],
@@ -418,7 +418,7 @@ describe("step cards", () => {
   it("mark the current step, and show failed, done and grey states", async () => {
     const { row } = await open();
     fireEvent.click(row);
-    await screen.findByText("Check Windows");
+    await screen.findByRole("heading", { name: "Check Windows" });
     const state = (id: number) => card(id).getAttribute("data-state");
     expect(state(4)).toBe("current");
     expect(card(4).getAttribute("aria-current")).toBe("step");
@@ -441,7 +441,7 @@ describe("step cards", () => {
       api({ run: "#ff8800", app: "red;background:url(x)", lead: "#00f" }),
     );
     fireEvent.click(row);
-    await screen.findByText("Check Windows");
+    await screen.findByRole("heading", { name: "Check Windows" });
     await vi.waitFor(() =>
       expect(card(5).style.borderLeftColor).toBe("rgb(255, 136, 0)"),
     );
@@ -502,7 +502,7 @@ describe("a kind added to the registry", () => {
       ]),
     );
     fireEvent.click(row);
-    await screen.findByText("Type the secret");
+    await screen.findByRole("heading", { name: "Type the secret" });
     expect(card(1).getAttribute("data-kind")).toBe("type-secret");
     expect(chip(1).textContent).toBe("Type a secret");
     expect(chip(1).querySelector("svg")).not.toBeNull();

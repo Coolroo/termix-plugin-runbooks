@@ -738,6 +738,7 @@ export function StepCard({
         data-kind={kind.id}
         data-state={state}
         data-collapsed
+        tabIndex={-1}
       >
         {header}
         {replacedLine}
@@ -747,12 +748,17 @@ export function StepCard({
 
   return (
     <section
-      className={cn("border border-border p-3", replaced && "border-dashed")}
+      className={cn(
+        "border border-border p-3 outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        replaced && "border-dashed",
+      )}
       style={kindStyle.card(state, kindColor)}
       data-step={step.id}
       data-kind={kind.id}
       data-state={state}
       aria-current={isNext ? "step" : undefined}
+      // The bar and the rail move the focus here (1.4.4).
+      tabIndex={-1}
     >
       {header}
       {replacedLine}

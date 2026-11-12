@@ -177,7 +177,7 @@ async function open() {
     locales.list.amended,
   );
   fireEvent.click(row);
-  await screen.findByText("Restart, fixed");
+  await screen.findByRole("heading", { name: "Restart, fixed" });
 }
 
 describe("amended steps", () => {

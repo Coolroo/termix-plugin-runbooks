@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.4
+
+### Added
+
+- A bar under the open runbook names the next step: its number of the total, how many are done, its title and its kind. **Go to step** puts that step in the middle of the view and moves the focus to it. The key **N** does the same while the focus is in the runbook, never while you type in a field, and never in a terminal. When the step is already on screen, the bar says "On screen" and the button goes quiet. When the next step failed, it says "Failed" in red. With every step done, or the runbook closed, it says so, and **Go to top** goes back to the runbook's own buttons.
+- A rail of steps on the right edge of the runbook. It shows only the steps near the part of the runbook on screen, at most 11, so a runbook of 80 steps stays readable. Each step is a dot drawn like its card: the next step big and glowing, pending steps a ring, done ones a dimmed dot, failed ones red, replaced and skipped ones grey. A box marks the steps on screen, and counts above and below say how many steps the rail leaves out (click one to move by a window). When the next step is outside the window, its number stays pinned at the rail's edge. Hover or focus on a dot to see its number and title, and click it to go there.
+- In a narrow pane (under 560 px, as on a phone) the rail hides, and the bar shows a progress strip with the next step and the steps on screen.
+- The bar's contents come from one registry, `src/frontend/bar-items.tsx`. A new button is one entry (`registerBarItem` with an id, an order, a label and an onClick, plus an optional icon, key and `when`); anything else is a custom entry that renders itself. The bar draws every entry from it, and the keys of its buttons work from it, so Go to step and N are entries like any other. The README's "Adding a button to the bar" shows how.
+
+### Changed
+
+- A runbook scrolls in its own area between the panel's header and the new bar, beside the rail. Step cards can take the focus (`tabIndex=-1`), so the bar and the key can move it there.
+
 ## 1.4.3
 
 ### Fixed

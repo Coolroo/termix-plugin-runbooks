@@ -174,6 +174,47 @@ export const kindStyle = {
   dot(color: string): CSSProperties {
     return { background: color };
   },
+  /** The color a card's state shows: red when failed, grey when replaced or skipped. */
+  stateColor(state: CardState, color: string): string {
+    if (state === "failed") return FAILED;
+    if (state === "grey") return GREY;
+    return color;
+  },
+  /** The next step's dot: filled, with the current card's glow (1.4.4). */
+  glow(color: string): CSSProperties {
+    return {
+      background: color,
+      boxShadow: `0 0 0 4px color-mix(in oklab, ${color} 22%, transparent), 0 0 12px color-mix(in oklab, ${color} 50%, transparent)`,
+    };
+  },
+  /**
+   * A step on the rail (1.4.4), drawn like its card: the current step big
+   * and glowing, pending ones a ring, done ones a dimmed dot, failed ones
+   * red, replaced and skipped ones grey.
+   */
+  railDot(state: CardState, color: string): CSSProperties {
+    const size = (px: number): CSSProperties => ({ width: px, height: px });
+    switch (state) {
+      case "current":
+        return { ...size(14), ...kindStyle.glow(color) };
+      case "pending":
+        return {
+          ...size(10),
+          boxSizing: "border-box",
+          border: `2px solid ${color}`,
+          background: "var(--background)",
+        };
+      case "done":
+        return {
+          ...size(8),
+          background: `color-mix(in oklab, ${color} 55%, transparent)`,
+        };
+      case "failed":
+        return { ...size(10), background: FAILED };
+      case "grey":
+        return { ...size(8), background: GREY };
+    }
+  },
 };
 
 /** A step's kind and marks, with the runbook around it, and its color. */

@@ -143,7 +143,7 @@ async function open(client: ReturnType<typeof api>) {
   });
   rendered.renderTab("runbooks", { isVisible: true });
   fireEvent.click(await screen.findByText("Deploy"));
-  await screen.findByText("Read the dashboard");
+  await screen.findByRole("heading", { name: "Read the dashboard" });
 }
 
 const card = (id: number) =>

@@ -231,7 +231,7 @@ async function open(client = api()) {
   });
   rendered.renderTab("runbooks", { isVisible: true });
   fireEvent.click(await screen.findByText("Secrets"));
-  await screen.findByText("Make the database password");
+  await screen.findByRole("heading", { name: "Make the database password" });
   return client;
 }
 

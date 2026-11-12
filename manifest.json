@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -26,7 +26,8 @@
     "Send to agent on any step, with a short note",
     "Steps run outside Termix: the command with a Copy button, the pasted output checked",
     "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
-    "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed"
+    "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed",
+    "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks"
   ],
   "env": [],
   "engine": {

@@ -140,7 +140,7 @@ async function open(client: ReturnType<typeof api>) {
   });
   rendered.renderTab("runbooks", { isVisible: true });
   fireEvent.click(await screen.findByText("Tokens"));
-  await screen.findByText("Make password");
+  await screen.findByRole("heading", { name: "Make password" });
 }
 
 const card = (id: number) =>

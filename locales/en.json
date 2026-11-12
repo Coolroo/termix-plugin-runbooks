@@ -37,6 +37,21 @@
     "agent": "Agent: {{label}}",
     "agentTask": "Agent: {{label}} · task {{task}}"
   },
+  "nav": {
+    "rail": "Steps near you",
+    "earlier": "{{count}} earlier steps",
+    "later": "{{count}} later steps",
+    "goTo": "Go to step {{label}}: {{title}}",
+    "pinned": "Next step {{label}}: {{title}}",
+    "next": "Next · step {{label}} of {{total}}",
+    "onScreen": "On screen · step {{label}} of {{total}}",
+    "failed": "Failed · step {{label}} of {{total}}",
+    "done": "{{done}} done",
+    "allDone": "All {{total}} steps done",
+    "closed": "Runbook {{status}}",
+    "go": "Go to step",
+    "top": "Go to top"
+  },
   "values": {
     "title": "Values",
     "author": "set by the author",

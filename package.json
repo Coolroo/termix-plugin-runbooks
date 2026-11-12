@@ -1,7 +1,7 @@
 {
   "name": "termix-plugin-runbooks",
   "private": true,
-  "version": "1.4.3",
+  "version": "1.4.4",
   "type": "module",
   "scripts": {
     "build": "termix-plugin build",

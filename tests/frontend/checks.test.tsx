@@ -132,7 +132,7 @@ async function open(client: ReturnType<typeof api>) {
   });
   rendered.renderTab("runbooks", { isVisible: true });
   fireEvent.click(await screen.findByText("Restart web"));
-  await screen.findByText("Check again");
+  await screen.findByRole("heading", { name: "Check again" });
 }
 
 const card = (id: number) =>

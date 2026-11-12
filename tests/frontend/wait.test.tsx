@@ -129,7 +129,7 @@ async function open(client: ReturnType<typeof server>, fake: boolean) {
     await flush();
   } else {
     fireEvent.click(await screen.findByText("Restart app"));
-    await screen.findByText("Health check");
+    await screen.findByRole("heading", { name: "Health check" });
   }
 }
 
