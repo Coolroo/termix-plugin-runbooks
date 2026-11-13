@@ -108,7 +108,7 @@ The step cards, the list dot, the settings (one color row per kind) and `GET /co
 
 ### Adding a button to the bar
 
-The bar under a runbook is one registry too, `src/frontend/bar-items.tsx`. A button is one `BarButton` entry. Go to step (1.4.4) is this one:
+The bar under a runbook is one registry too, `src/frontend/nav/bar-items.tsx`. A button is one `BarButton` entry. Go to step (1.4.4) is this one:
 
 ```ts
 {

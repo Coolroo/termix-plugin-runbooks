@@ -1,73 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
+import { formatBytes } from "../../src/frontend/ui/format";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import { formatBytes } from "../../src/frontend/StepCard";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  locales,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Deploy",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: "true",
-    resolvedCommand: "true",
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    ...overrides,
-  };
-}
-
-const runbook = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 2,
-  secretsAvailable: true,
-  steps: [
-    step({ id: 1, position: 1, title: "Make config", status: "done" }),
-    step({
+const runbook = makeRunbook(
+  [
+    makeStep({ id: 1, title: "Make config", status: "done" }),
+    makeStep({
       id: 2,
-      position: 2,
       title: "Apply config",
       command: "apply -",
       resolvedCommand: "apply -",
@@ -78,9 +28,8 @@ const runbook = {
         problem: null,
       },
     }),
-    step({
+    makeStep({
       id: 3,
-      position: 3,
       title: "Log in",
       command: "login --password-stdin",
       resolvedCommand: "login --password-stdin",
@@ -92,33 +41,17 @@ const runbook = {
       },
     }),
   ],
-};
+  { title: "Deploy", nextStepId: 2, secretsAvailable: true },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook,
-    })),
-    post: vi.fn(async () => ({ data: { id: 40, status: "running" } })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
-
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+const api = () =>
+  fakeApi({
+    detail: runbook,
+    post: async () => ({ data: { id: 40, status: "running" } }),
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Deploy"));
-  await screen.findByRole("heading", { name: "Apply config" });
-}
 
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Deploy", shows: "Apply config" });
 
 describe("standard input in the UI", () => {
   it("says where the input comes from, never a secret", async () => {

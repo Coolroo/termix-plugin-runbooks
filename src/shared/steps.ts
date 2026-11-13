@@ -5,8 +5,13 @@
  * never renumber. The order of a runbook is (position, suffix): the step
  * without a suffix first, then a, b, ... z, aa, ab.
  *
+ * Also what kind of step Termix never runs: an agent's step, and a person's
+ * step run outside Termix.
+ *
  * Shared by the server and the UI.
  */
+
+import type { StepName } from "./api.js";
 
 export interface StepNumber {
   position: number;
@@ -16,6 +21,18 @@ export interface StepNumber {
 /** "3" for step 3, "3a" for its first amendment. */
 export function stepLabel(step: StepNumber): string {
   return `${step.position}${step.suffix ?? ""}`;
+}
+
+/** A step as a wait or an order question names it. */
+export function stepBrief(
+  step: StepNumber & { id: number; title: string },
+): StepName {
+  return {
+    id: step.id,
+    position: step.position,
+    label: stepLabel(step),
+    title: step.title,
+  };
 }
 
 /**
@@ -43,6 +60,21 @@ export function suffixIndex(suffix: string | null | undefined): number {
   let n = 0;
   for (const char of suffix) n = n * 26 + (char.charCodeAt(0) - 96);
   return n - 1;
+}
+
+/** A step an agent completes (1.4.0): Termix never runs its command. */
+export function isAgentStep(step: { owner?: string | null }): boolean {
+  return step.owner === "agent";
+}
+
+/**
+ * A person's step whose command they run outside Termix (1.4.0): it says
+ * where. Termix never runs it either; the person pastes its output.
+ */
+export function isOutsideStep<
+  T extends { where?: string | null; command: string | null },
+>(step: T): step is T & { where: string; command: string } {
+  return Boolean(step.where) && step.command !== null;
 }
 
 /** Negative when a comes before b in the runbook's order. */

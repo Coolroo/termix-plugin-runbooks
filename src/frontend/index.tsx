@@ -3,12 +3,12 @@ import {
   createRunbookLink,
   RUNBOOK_VIEW,
   takePendingRunbook,
-} from "./deep-link";
-import { createRunbooksTab, RunbooksIcon } from "./RunbooksTab";
-import { NotifySetting } from "./NotifySetting";
-import { AdminStepColors, UserStepColors } from "./kinds";
+} from "./runbooks/deep-link";
+import { createRunbooksTab, RunbooksIcon } from "./runbooks/tab";
+import { NotifySetting } from "./agents/NotifySetting";
+import { AdminStepColors, UserStepColors } from "./kinds/StepColorsSetting";
 
-export const TAB_ID = "runbooks";
+const TAB_ID = "runbooks";
 
 export function activate(app: TermixApp): void {
   app.registerRailItem({

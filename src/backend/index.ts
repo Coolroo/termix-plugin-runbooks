@@ -1,20 +1,24 @@
 import type { Router } from "express";
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
-import { createAgentOps } from "./agent-ops.js";
-import { createAgentRouter } from "./agent-routes.js";
+import { createAgentOps } from "./agents/ops/ops.js";
+import { createAgentRouter } from "./agents/agent-routes.js";
 import {
   createLiveRuns,
   PLUGIN_STOPPED,
   sweepInterrupted,
   type LiveRuns,
-} from "./live.js";
-import { registerPersonRoutes } from "./routes.js";
-import { createSecrets } from "./secrets.js";
-import { createEvents } from "./events.js";
-import { createStore } from "./store.js";
-import { createStateStore } from "./state.js";
-import { createNotifier, validateSettings, type Notifier } from "./notifier.js";
-import { registerAdminRoutes } from "./admin-routes.js";
+} from "./running/live.js";
+import { registerPersonRoutes } from "./runbooks/routes.js";
+import { createSecrets } from "./secrets/secrets.js";
+import { createEvents } from "./agents/events.js";
+import { createStore } from "./runbooks/store/store.js";
+import { createStateStore } from "./core/state.js";
+import {
+  createNotifier,
+  validateSettings,
+  type Notifier,
+} from "./agents/notifier.js";
+import { registerAdminRoutes } from "./agents/admin-routes.js";
 import { validateColors } from "../shared/step-kinds.js";
 
 /** Requests a minute one address may make to the agent routes (core's limit). */

@@ -1,22 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
-import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+import { locales, useRenderedApp } from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
-
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
+const render = useRenderedApp();
 
 const SECRET = "s".repeat(43);
 
@@ -57,12 +43,7 @@ function api(secretSet: boolean) {
 }
 
 async function show(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-    isAdmin: true,
-  });
+  const rendered = await render(client, { isAdmin: true });
   expect(rendered.registered.settingsComponents()).toContain("notify-secret");
   return rendered.renderSettingsComponent("notify-secret", { running: true });
 }
@@ -96,6 +77,26 @@ describe("the signing secret section", () => {
     expect(
       document.querySelector('[data-notify-secret="true"]'),
     ).not.toBeNull();
+  });
+
+  it("copies the secret shown once and says Copied", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    await show(api(false));
+    await screen.findByText(locales.notify.none);
+    fireEvent.click(button(locales.notify.make));
+    const shown = await vi.waitFor(() => {
+      const box = document.querySelector("[data-notify-shown]");
+      expect(box).not.toBeNull();
+      return box as HTMLElement;
+    });
+    const copy = within(shown).getByText(locales.notify.copy);
+    fireEvent.click(copy);
+    expect(writeText).toHaveBeenCalledWith(SECRET);
+    await vi.waitFor(() => expect(copy.textContent).toBe(locales.step.copied));
   });
 
   it("asks before it replaces a secret", async () => {

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import express, { type Router } from "express";
 import { inject } from "light-my-request";
 import {
@@ -351,6 +351,83 @@ export async function startServer(
     },
   };
   return server;
+}
+
+export type ServerOptions = Parameters<typeof startServer>[0];
+
+/** Servers started through useTestServer, closed after each test. */
+const started: TestServer[] = [];
+let closesServers = false;
+
+/** Starts a server that is closed after the test. See useTestServer. */
+async function testServer(options?: ServerOptions): Promise<TestServer> {
+  if (!closesServers) {
+    throw new Error("call useTestServer() at the top of the test file");
+  }
+  const server = await startServer(options);
+  started.push(server);
+  // A test that closes its server itself takes it off the list.
+  const close = server.close;
+  server.close = async () => {
+    const index = started.indexOf(server);
+    if (index >= 0) started.splice(index, 1);
+    await close();
+  };
+  return server;
+}
+
+/**
+ * Call once at the top of a test file: every server started through the
+ * function it returns, or through setupRunbook, is closed after the test.
+ */
+export function useTestServer(): typeof testServer {
+  closesServers = true;
+  afterEach(async () => {
+    for (const server of started.splice(0)) await server.close();
+  });
+  return testServer;
+}
+
+/**
+ * A server, a token and a runbook the agent made with `steps`: what most
+ * tests start from. `extra` adds fields to the runbook; `server` are the
+ * server's options. Needs useTestServer.
+ */
+export async function setupRunbook(
+  steps: Array<Record<string, unknown>>,
+  options: {
+    title?: string;
+    values?: Record<string, string>;
+    owner?: Record<string, string>;
+    extra?: Record<string, unknown>;
+    server?: ServerOptions;
+    tokenName?: string;
+  } = {},
+) {
+  const s = await testServer(options.server);
+  const token = await s.makeToken(options.tokenName);
+  const runbook = await agentRunbook(s, token, {
+    title: options.title ?? "Test",
+    ...(options.values ? { values: options.values } : {}),
+    ...(options.owner ? { owner: options.owner } : {}),
+    steps,
+    ...options.extra,
+  });
+  return { s, token, runbook };
+}
+
+/** What a command answers: exit code 0 and no stderr unless given. */
+export function execResult(
+  stdout = "",
+  options: { stderr?: string; code?: number | null } = {},
+): PluginSshExecResult {
+  return {
+    stdout,
+    stderr: options.stderr ?? "",
+    code: options.code === undefined ? 0 : options.code,
+    truncated: false,
+    timedOut: false,
+  };
 }
 
 /** A runbook from the agent side, returning its view. */

@@ -1,6 +1,6 @@
 /**
  * Checks on a step's output, as the server stores them and the Termix UI
- * shows them. The server tests them (src/backend/checks.ts); this file holds
+ * shows them. The server tests them (src/backend/checks/checks.ts); this file holds
  * the shapes and the words, which both sides use.
  */
 

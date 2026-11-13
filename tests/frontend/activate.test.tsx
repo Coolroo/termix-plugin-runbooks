@@ -1,131 +1,67 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeSummary,
+  makeStep,
+  manifest,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
+const render = useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Restart web",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    ...overrides,
-  };
-}
-
-const runbook = {
-  ...summary,
-  summary: "Restart **nginx** <script>alert(1)</script>",
-  values: { svc: "nginx" },
-  effectiveValues: [{ name: "svc", value: "nginx", source: "author" }],
-  nextStepId: 2,
-  steps: [
-    step({
+const runbook = makeRunbook(
+  [
+    makeStep({
       id: 1,
-      position: 1,
       title: "Check status",
       command: "systemctl status {{svc}}",
       resolvedCommand: "systemctl status nginx",
-      commandHash: "a".repeat(64),
       status: "done",
       runs: [
-        {
+        makeRun({
           id: 11,
-          stepId: 1,
-          runbookId: 7,
-          mode: "exec",
-          status: "done",
-          hostId: 1,
           command: "systemctl status nginx",
-          commandHash: "a".repeat(64),
-          userId: "alice",
-          startedAt: "2026-11-07T10:01:00.000Z",
           finishedAt: "2026-11-07T10:01:01.000Z",
-          exitCode: 0,
           stdout: "active (running)",
-          stderr: "",
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          captured: {},
-        },
+        }),
       ],
     }),
-    step({
+    makeStep({
       id: 2,
-      position: 2,
       title: "Restart",
       command: "systemctl restart {{svc}}",
       resolvedCommand: "systemctl restart nginx",
       commandHash: "b".repeat(64),
       expect: "No output.",
     }),
-    step({
+    makeStep({
       id: 3,
-      position: 3,
       title: "Deploy",
       command: "deploy {{version}}",
       resolvedCommand: "deploy {{version}}",
+      commandHash: null,
       missing: ["version"],
     }),
   ],
-};
+  {
+    title: "Restart web",
+    summary: "Restart **nginx** <script>alert(1)</script>",
+    values: { svc: "nginx" },
+    effectiveValues: [{ name: "svc", value: "nginx", source: "author" }],
+    nextStepId: 2,
+  },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook,
-    })),
-    post: vi.fn(async () => ({ data: runbook })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = () => fakeApi({ detail: runbook });
 
 describe(`${manifest.id} frontend`, () => {
   it("registers the rail item and tab", async () => {
-    rendered = await renderWithApp(plugin, { manifest, locales });
+    const rendered = await render(undefined);
     expect(rendered.registered.tabs()).toEqual(["runbooks"]);
     expect(rendered.registered.railItems()).toEqual([
       expect.objectContaining({ id: "runbooks", permission: "runbooks.use" }),
@@ -134,13 +70,7 @@ describe(`${manifest.id} frontend`, () => {
 
   it("lists runbooks and opens one with resolved commands", async () => {
     const client = api();
-    rendered = await renderWithApp(plugin, {
-      manifest,
-      locales,
-      api: client as never,
-    });
-    rendered.renderTab("runbooks", { isVisible: true });
-    fireEvent.click(await screen.findByText("Restart web"));
+    await openRunbook(client, { title: "Restart web" });
 
     expect(await screen.findByText("systemctl restart nginx")).toBeTruthy();
     expect(client.get).toHaveBeenCalledWith("/runbooks/7");
@@ -169,13 +99,7 @@ describe(`${manifest.id} frontend`, () => {
 
   it("asks before running and sends what the person saw", async () => {
     const client = api();
-    rendered = await renderWithApp(plugin, {
-      manifest,
-      locales,
-      api: client as never,
-    });
-    rendered.renderTab("runbooks", { isVisible: true });
-    fireEvent.click(await screen.findByText("Restart web"));
+    await openRunbook(client, { title: "Restart web" });
     const card = (
       await screen.findByText("Restart", {
         selector: "h3",
@@ -203,6 +127,11 @@ describe(`${manifest.id} frontend`, () => {
   });
 
   it("makes a token for the hosts the person ticks", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
     const client = {
       ...api(),
       get: vi.fn(async (url: string) => ({
@@ -229,15 +158,13 @@ describe(`${manifest.id} frontend`, () => {
                   revokedAt: null,
                 },
               ]
-            : [summary],
+            : [makeSummary({ title: "Restart web" })],
       })),
       post: vi.fn(async () => ({
         data: { id: 6, name: "lead", prefix: "rbk_wxyz", token: "rbk_secret" },
       })),
     };
-    rendered = await renderWithApp(plugin, {
-      manifest,
-      locales,
+    const rendered = await render(client, {
       permissions: ["runbooks.use", "runbooks.manage-tokens"],
       hosts: [
         { id: 1, name: "web-1", ip: "10.0.0.1", folder: "web" },
@@ -251,7 +178,6 @@ describe(`${manifest.id} frontend`, () => {
         },
         { id: 4, name: "vnc-1", ip: "10.0.0.4", connectionType: "vnc" },
       ],
-      api: client as never,
     });
     rendered.renderTab("runbooks", { isVisible: true });
     fireEvent.click(await screen.findByText(locales.tokens.title));
@@ -285,6 +211,12 @@ describe(`${manifest.id} frontend`, () => {
       }),
     );
     expect(await screen.findByText("rbk_secret")).toBeTruthy();
+    // Copy says so, as every other Copy button does.
+    const box = screen.getByText("rbk_secret").parentElement as HTMLElement;
+    const copy = within(box).getByText(locales.step.copy);
+    fireEvent.click(copy);
+    expect(writeText).toHaveBeenCalledWith("rbk_secret");
+    await vi.waitFor(() => expect(copy.textContent).toBe(locales.step.copied));
 
     // Change the old token's hosts.
     fireEvent.click(within(row).getByText(locales.tokens.editHosts));

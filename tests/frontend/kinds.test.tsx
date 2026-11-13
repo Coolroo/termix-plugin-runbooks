@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
+  card,
+  chip,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRunbook,
+  summaryOf,
+  useRenderedApp,
+} from "./helpers";
+import type { Step } from "../../src/frontend/api-types";
 import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
-import { cardState, kindStyle, resolveColor } from "../../src/frontend/kinds";
+import {
+  cardState,
+  kindStyle,
+  resolveColor,
+} from "../../src/frontend/kinds/kinds";
 import {
   BUILT_IN_KINDS,
   cleanColors,
@@ -24,16 +32,14 @@ import {
   type StepKind,
 } from "../../src/shared/step-kinds";
 
-const manifest = manifestJson as unknown as PluginManifest;
-
-let rendered: RenderedPluginApp | null = null;
 const removers: Array<() => void> = [];
 
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
+// Registered first, so it runs after the app is deactivated.
+afterEach(() => {
   for (const remove of removers.splice(0)) remove();
 });
+
+const render = useRenderedApp();
 
 const base = {
   title: "A step",
@@ -238,55 +244,11 @@ describe("step colors from the settings", () => {
   });
 });
 
-const summary = {
-  id: 7,
-  title: "Kinds",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-10T10:00:00.000Z",
-  updatedAt: "2026-11-10T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 1, total: 8 },
-  nextKind: "outside",
-};
+const step = (overrides: Partial<Step> & { id: number }) =>
+  clickStep({ owner: "person", where: null, ...overrides });
 
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: null,
-    hostName: null,
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    owner: "person",
-    where: null,
-    ...overrides,
-  };
-}
-
-const data = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 4,
-  owner: { label: "lead" },
-  agentLabel: "lead",
-  steps: [
+const data = makeRunbook(
+  [
     step({
       id: 1,
       position: 1,
@@ -347,33 +309,29 @@ const data = {
     step({ id: 7, position: 7, title: "Read the logs", owner: "agent" }),
     step({ id: 8, position: 8, title: "Finish the runbook" }),
   ],
-};
+  {
+    title: "Kinds",
+    createdAt: "2026-11-10T10:00:00.000Z",
+    updatedAt: "2026-11-10T10:05:00.000Z",
+    progress: { done: 1, failed: 1, total: 8 },
+    nextStepId: 4,
+    owner: { label: "lead" },
+    agentLabel: "lead",
+  },
+);
 
-function api(colors: unknown = {}, steps?: unknown[]) {
-  const shown = steps ? { ...data, steps, nextStepId: 1 } : data;
-  return {
-    get: vi.fn(async (url: string) => ({
-      data:
-        url === "/runbooks" ? [summary] : url === "/colors" ? colors : shown,
-    })),
-    post: vi.fn(async () => ({ data })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
+function api(colors: unknown = {}, steps?: Step[]) {
+  return fakeApi({
+    // The list says the next step is run outside Termix.
+    list: [summaryOf(data, "outside")],
+    detail: steps ? { ...data, steps, nextStepId: 1 } : data,
+    colors,
+    post: async () => ({ data }),
+  });
 }
 
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
-const chip = (id: number) =>
-  card(id).querySelector("[data-kind]:not([data-step])") as HTMLElement;
-
 async function open(client = api()) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
+  const rendered = await render(client);
   rendered.renderTab("runbooks", { isVisible: true });
   const row = await screen.findByText("Kinds");
   return { client, row };
@@ -478,7 +436,7 @@ describe("a kind added to the registry", () => {
 
   it("gets its own field in the settings", async () => {
     removers.push(registerStepKind(extra));
-    rendered = await renderWithApp(plugin, { manifest, locales });
+    const rendered = await render(undefined);
     const element = rendered.renderSettingsComponent("step-colors", {
       values: {},
       setValue: vi.fn(),
@@ -517,7 +475,7 @@ describe("a kind added to the registry", () => {
 
 describe("the step colors setting", () => {
   it("edits one color per registered kind, says what is wrong and resets", async () => {
-    rendered = await renderWithApp(plugin, { manifest, locales });
+    const rendered = await render(undefined);
     expect(rendered.registered.settingsComponents()).toEqual(
       expect.arrayContaining(["step-colors", "step-colors-user"]),
     );

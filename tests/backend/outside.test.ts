@@ -1,35 +1,21 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  agentRunbook,
   auditText,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const WHERE = "Windows PC, PowerShell as admin";
 
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   values: Record<string, string> = {},
-) {
-  server = await startServer();
-  const token = await server.makeToken("lead");
-  const runbook = await agentRunbook(server, token, {
-    title: "Outside",
-    values,
-    steps,
-  });
-  return { s: server, token, runbook };
-}
+) => setupRunbook(steps, { title: "Outside", values });
 
 const mark = (s: TestServer, stepId: number, body: Record<string, unknown>) =>
   s.person("POST", `/steps/${stepId}/manual`, body);
@@ -61,7 +47,7 @@ describe("steps run outside Termix", () => {
   });
 
   it("refuse a step with no where, where with a host or without a command, stdin, secret captures, exit code checks, and an agent step with where", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const bad = [
       { command: "dir" },

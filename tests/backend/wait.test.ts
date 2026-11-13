@@ -1,18 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  agentRunbook,
-  runStep,
-  startServer,
-  view,
-  type TestServer,
-} from "./helpers";
+import { describe, expect, it } from "vitest";
+import { runStep, setupRunbook, useTestServer, view } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const restartThenCheck = [
   { title: "Restart", hostId: 1, command: "systemctl restart app" },
@@ -25,12 +14,8 @@ const restartThenCheck = [
   },
 ];
 
-async function setup(steps: Array<Record<string, unknown>> = restartThenCheck) {
-  server = await startServer();
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, { title: "Wait", steps });
-  return { s: server, token, runbook };
-}
+const setup = (steps: Array<Record<string, unknown>> = restartThenCheck) =>
+  setupRunbook(steps, { title: "Wait" });
 
 describe("wait timers", () => {
   it("has no timer until the previous step ended", async () => {
@@ -145,8 +130,53 @@ describe("wait timers", () => {
     expect(shown.steps[1].wait.previousEnded).toBe(false);
   });
 
+  it("refuses an early Make it on a secret step, and makes it with waitAnyway", async () => {
+    const { s, runbook } = await setupRunbook(
+      [
+        restartThenCheck[0],
+        {
+          title: "Make the password",
+          generate: { name: "db_password" },
+          waitAfterPreviousSeconds: 120,
+          waitReason: "let the service restart",
+        },
+      ],
+      { title: "Wait", server: { secrets: true } },
+    );
+    const stepId = runbook.steps[1].id;
+    await runStep(s, runbook.id, runbook.steps[0].id);
+    const make = async (extra: Record<string, unknown> = {}) => {
+      const shown = await view(s, runbook.id);
+      return s.person("POST", `/steps/${stepId}/secret`, {
+        revision: shown.steps[1].revision,
+        ...extra,
+      });
+    };
+    const stored = () =>
+      s.secrets!.data.get(`plugin:runbooks|runbooks/${runbook.id}/db_password`);
+
+    const refused = await make();
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({
+      code: "wait",
+      reason: "let the service restart",
+      previous: { id: runbook.steps[0].id, position: 1, label: "1" },
+    });
+    expect(refused.body.remainingSeconds).toBeGreaterThan(110);
+    expect(refused.body.remainingSeconds).toBeLessThanOrEqual(120);
+    expect(refused.body.error).toMatch(
+      /wait \d+ s more after step 1 \(let the service restart\)/,
+    );
+    expect(stored()).toBeUndefined();
+
+    const made = await make({ waitAnyway: true });
+    expect(made.status).toBe(200);
+    expect(made.body.steps[1].status).toBe("done");
+    expect(stored()!.value).toMatch(/^[A-Za-z0-9]{32}$/);
+  });
+
   it("checks the range and the reason", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     for (const bad of [0, 86_401, 1.5, "60"]) {
       const refused = await server.agent("POST", "/runbooks", token, {

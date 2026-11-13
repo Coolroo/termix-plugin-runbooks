@@ -1,48 +1,31 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { commandHash } from "../../src/backend/values";
-import { createRedactor, redact } from "../../src/backend/redact";
+import { describe, expect, it, vi } from "vitest";
+import { commandHash } from "../../src/backend/values/values";
+import { createRedactor, redact } from "../../src/backend/running/redact";
 import {
   agentRunbook,
   auditText,
   everything,
+  execResult,
   FakeChannel,
   runStep,
+  setupRunbook,
   shownRun,
-  startServer,
+  useTestServer,
   view,
   waitForRun,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+const startServer = useTestServer();
 
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
-
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   options: { values?: Record<string, string>; secrets?: boolean } = {},
-) {
-  server = await startServer({ secrets: options.secrets });
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, {
+) =>
+  setupRunbook(steps, {
     title: "Pipe",
     values: options.values ?? {},
-    steps,
-  });
-  return { s: server, token, runbook };
-}
-
-const printOut =
-  (stdout: string, stderr = "", code = 0) =>
-  async () => ({
-    stdout,
-    stderr,
-    code,
-    truncated: false,
-    timedOut: false,
+    server: { secrets: options.secrets },
   });
 
 describe("standard input from an earlier step", () => {
@@ -61,7 +44,7 @@ describe("standard input from an earlier step", () => {
       step: 1,
       stream: "stdout",
     });
-    s.setExec(printOut("key: 1\n", "noise\n"));
+    s.setExec(async () => execResult("key: 1\n", { stderr: "noise\n" }));
     expect((await runStep(s, runbook.id, runbook.steps[0].id)).status).toBe(
       200,
     );
@@ -73,7 +56,7 @@ describe("standard input from an earlier step", () => {
       preview: "key: 1\n",
       problem: null,
     });
-    s.setExec(printOut("applied\n"));
+    s.setExec(async () => execResult("applied\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(ran.status).toBe(200);
     expect(ran.body.status).toBe("done");
@@ -111,7 +94,7 @@ describe("standard input from an earlier step", () => {
       pastedOutput: "pasted text\n",
       outcome: "done",
     });
-    s.setExec(printOut(""));
+    s.setExec(async () => execResult(""));
     const ran = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(ran.body.status).toBe("done");
     expect(s.channels[0].stdin).toBe("pasted text\n");
@@ -145,7 +128,7 @@ describe("standard input from an earlier step", () => {
     });
     expect(s.channels).toHaveLength(0);
 
-    s.setExec(printOut("half\n", "", 2));
+    s.setExec(async () => execResult("half\n", { code: 2 }));
     await runStep(s, runbook.id, runbook.steps[0].id);
     refused = await runStep(s, runbook.id, runbook.steps[1].id, {
       outOfOrder: true,
@@ -156,7 +139,7 @@ describe("standard input from an earlier step", () => {
       error: "the last run of step 1 failed",
     });
 
-    s.setExec(printOut("ok\n"));
+    s.setExec(async () => execResult("ok\n"));
     const anyway = await runStep(s, runbook.id, runbook.steps[2].id, {
       outOfOrder: true,
     });
@@ -290,7 +273,9 @@ describe("standard input from a library secret", () => {
       preview: null,
       problem: null,
     });
-    s.setExec(printOut("password hunter2-xyz ok\n", "echo hunter2-xyz\n"));
+    s.setExec(async () =>
+      execResult("password hunter2-xyz ok\n", { stderr: "echo hunter2-xyz\n" }),
+    );
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("done");
     expect(s.channels[0].stdin).toBe("hunter2-xyz\n");
@@ -398,8 +383,7 @@ describe("standard input from a library secret", () => {
 
 describe("what agents may write", () => {
   it("checks the source, needs a command, and keeps the step it names", async () => {
-    server = await startServer();
-    const s = server;
+    const s = await startServer();
     const token = await s.makeToken();
     const bad = async (step: Record<string, unknown>) =>
       (
@@ -505,10 +489,10 @@ describe("the redactor", () => {
 
 describe("stdin over MCP", () => {
   it("takes stdin on a step and explains it in the tools", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const rpc = (method: string, params: unknown) =>
-      server!.agent("POST", "/mcp", token, {
+      server.agent("POST", "/mcp", token, {
         jsonrpc: "2.0",
         id: 1,
         method,

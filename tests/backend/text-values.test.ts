@@ -1,41 +1,19 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  agentRunbook,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
-  type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+useTestServer();
 
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
-
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   values: Record<string, string> = {},
   options: { secrets?: boolean } = {},
-) {
-  server = await startServer(options);
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, {
-    title: "Tailnet",
-    values,
-    steps,
-  });
-  return { s: server, token, runbook };
-}
-
-const prints = (stdout: string) => async () => ({
-  stdout,
-  stderr: "",
-  code: 0,
-  truncated: false,
-  timedOut: false,
-});
+) => setupRunbook(steps, { title: "Tailnet", values, server: options });
 
 describe("values in body, expect and where (1.4.3)", () => {
   it("fills an author value in a click step's body and expect", async () => {
@@ -85,7 +63,7 @@ describe("values in body, expect and where (1.4.3)", () => {
     // A value missing from the text is not a command value.
     expect(before.missing).toEqual([]);
 
-    s.setExec(prints(`banner: ${nasty}\n`));
+    s.setExec(async () => execResult(`banner: ${nasty}\n`));
     expect(
       (await runStep(s, runbook.id, runbook.steps[0].id)).body.status,
     ).toBe("done");
@@ -145,7 +123,7 @@ describe("values in body, expect and where (1.4.3)", () => {
     const { s, runbook } = await setup([
       { title: "Up", body: "For {{later}}.", hostId: 1, command: "uptime" },
     ]);
-    s.setExec(prints("up\n"));
+    s.setExec(async () => execResult("up\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.status).toBe(200);
     expect(ran.body.status).toBe("done");
@@ -170,7 +148,7 @@ describe("values in body, expect and where (1.4.3)", () => {
       ],
       { ts_ip: "100.64.0.7" },
     );
-    s.setExec(prints("id: k-secretish-42\n"));
+    s.setExec(async () => execResult("id: k-secretish-42\n"));
     await runStep(s, runbook.id, runbook.steps[0].id);
     const read = await s.agent("GET", `/runbooks/${runbook.id}`, token);
     const step = read.body.steps[1];
@@ -218,7 +196,7 @@ describe("values in body, expect and where (1.4.3)", () => {
       {},
       { secrets: true },
     );
-    s.setExec(prints("token: tk-9f8e7d6c5b4a\n"));
+    s.setExec(async () => execResult("token: tk-9f8e7d6c5b4a\n"));
     expect(
       (await runStep(s, runbook.id, runbook.steps[0].id)).body.status,
     ).toBe("done");

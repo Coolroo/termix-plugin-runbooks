@@ -3,30 +3,29 @@ import {
   streamExec,
   type ExecChannel,
   type ExecClient,
-} from "../../src/backend/stream-exec";
+} from "../../src/backend/running/stream-exec";
 import {
   createLiveRuns,
   INTERRUPTED,
   PLUGIN_STOPPED,
-} from "../../src/backend/live";
-import type { Store } from "../../src/backend/store";
+} from "../../src/backend/running/live";
+import type { Store } from "../../src/backend/runbooks/store/store";
 import {
-  agentRunbook,
   FakeChannel,
   runStep,
+  setupRunbook,
   shownRun,
-  startServer,
+  useTestServer,
   view,
   waitForRun,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+const startServer = useTestServer();
 
-afterEach(async () => {
+// Runs before the server closes: hooks after a test run last-in first.
+afterEach(() => {
   vi.useRealTimers();
-  await server?.close();
-  server = null;
 });
 
 /** A client whose one command is driven by hand. */
@@ -171,12 +170,8 @@ describe("the live buffer", () => {
   });
 });
 
-async function setup(steps: Array<Record<string, unknown>>) {
-  server = await startServer();
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, { title: "Live", steps });
-  return { s: server, token, runbook };
-}
+const setup = (steps: Array<Record<string, unknown>>) =>
+  setupRunbook(steps, { title: "Live" });
 
 /** Starts a Run whose command is driven by hand; returns its channel. */
 async function startHeld(s: TestServer, runbookId: number, stepId: number) {
@@ -350,7 +345,7 @@ describe("stopping a run", () => {
 describe("a Termix restart", () => {
   it("marks runs left running as interrupted and keeps their partial output", async () => {
     const at = new Date().toISOString();
-    server = await startServer({
+    const server = await startServer({
       seed: (db) => {
         db.sqlite
           .prepare(

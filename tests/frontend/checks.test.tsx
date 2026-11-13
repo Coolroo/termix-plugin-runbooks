@@ -1,35 +1,26 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  makeSummary,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { Check, Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
+const summary = makeSummary({
+  title: "Restart web",
+  progress: { done: 0, failed: 1, total: 2 },
 });
 
-const summary = {
-  id: 7,
-  title: "Restart web",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 1, total: 2 },
-};
-
-const checks = [
+const checks: Check[] = [
   { type: "exitCode", equals: 0 },
   {
     type: "contains",
@@ -39,63 +30,28 @@ const checks = [
   },
 ];
 
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
+const step = (overrides: Partial<Step> & { id: number }) =>
+  makeStep({
     command: "systemctl status nginx",
     resolvedCommand: "systemctl status nginx",
-    commandHash: "a".repeat(64),
-    missing: [],
     expect: "nginx is up.",
-    captures: [],
     checks,
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
     ...overrides,
-  };
-}
+  });
 
-const runbook = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 2,
-  steps: [
+const runbook = makeRunbook(
+  [
     step({
       id: 1,
-      position: 1,
       title: "Check status",
       status: "failed",
       runs: [
-        {
+        makeRun({
           id: 11,
-          stepId: 1,
-          runbookId: 7,
-          mode: "exec",
           status: "failed",
-          hostId: 1,
           command: "systemctl status nginx",
-          commandHash: "a".repeat(64),
-          userId: "alice",
-          startedAt: "2026-11-07T10:01:00.000Z",
           finishedAt: "2026-11-07T10:01:01.000Z",
-          exitCode: 0,
           stdout: "inactive (dead)",
-          stderr: "",
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          captured: {},
           running: false,
           checks: [
             { label: "exit code is 0", ok: true, detail: "exit code 0" },
@@ -105,38 +61,18 @@ const runbook = {
               detail: "expected stdout to contain 'active (running)'",
             },
           ],
-        },
+        }),
       ],
     }),
-    step({ id: 2, position: 2, title: "Check again" }),
+    step({ id: 2, title: "Check again" }),
   ],
-};
+  { ...summary, nextStepId: 2 },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook,
-    })),
-    post: vi.fn(async () => ({ data: runbook })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = () => fakeApi({ list: [summary], detail: runbook });
 
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Restart web"));
-  await screen.findByRole("heading", { name: "Check again" });
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Restart web", shows: "Check again" });
 
 const states = (element: HTMLElement) =>
   [...element.querySelectorAll("[data-check-state]")].map((li) => [
@@ -186,7 +122,7 @@ describe("checks in the UI", () => {
           title: "Check again",
           runs: [
             {
-              ...(runbook.steps[0].runs as Array<Record<string, unknown>>)[0],
+              ...runbook.steps[0].runs[0],
               id: 12,
               stepId: 2,
               mode: "terminal",

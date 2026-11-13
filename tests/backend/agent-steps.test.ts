@@ -1,36 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  agentRunbook,
   auditText,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const OWNER = { task: "T-7", agent: "session:abc", label: "Lead agent" };
 
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   extra: Record<string, unknown> = {},
-) {
-  server = await startServer();
-  const token = await server.makeToken("lead");
-  const runbook = await agentRunbook(server, token, {
-    title: "Mixed",
-    owner: OWNER,
-    steps,
-    ...extra,
-  });
-  return { s: server, token, runbook };
-}
+) => setupRunbook(steps, { title: "Mixed", owner: OWNER, extra });
 
 const complete = (
   s: TestServer,
@@ -62,7 +48,7 @@ describe("who a runbook belongs to", () => {
   });
 
   it("refuses an owner with unknown fields, long fields or control characters", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const bad = [
       { owner: { who: "x" } },
@@ -242,13 +228,7 @@ describe("complete_step", () => {
     ]);
 
     // A failed earlier step has ended: it is the agent's turn.
-    s.setExec(async () => ({
-      stdout: "",
-      stderr: "boom",
-      code: 1,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("", { stderr: "boom", code: 1 }));
     const ran = await runStep(s, runbook.id, personStep.id);
     expect(ran.body.status).toBe("failed");
     const now = await complete(s, token, agentStep.id, { outcome: "done" });

@@ -1,82 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  buttons,
+  card,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRunbook,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
+afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const summary = {
-  id: 7,
-  title: "Laptop setup",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-09T10:00:00.000Z",
-  updatedAt: "2026-11-09T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 0, total: 3 },
-};
+const step = (overrides: Partial<Step> & { id: number }) =>
+  clickStep({ revision: 3, owner: "person", where: null, ...overrides });
 
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: null,
-    hostName: null,
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 3,
-    runs: [],
-    wait: null,
-    stdin: null,
-    owner: "person",
-    where: null,
-    ...overrides,
-  };
-}
-
-const data = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 1,
-  owner: null,
-  agentLabel: "lead",
-  steps: [
+const data = makeRunbook(
+  [
     step({
       id: 1,
-      position: 1,
       title: "Read the docs",
       body: "Open a shell and run:\n\n```\nwinget install Git.Git\n```\n\nThen `git --version` should work.",
       expect: "It prints:\n\n```text\ngit version 2.47.0\n```",
     }),
     step({
       id: 2,
-      position: 2,
       title: "Check Windows",
       where: "Windows PC, PowerShell as admin",
       command: "Get-ComputerInfo -Property {{field}}",
@@ -85,7 +39,6 @@ const data = {
     }),
     step({
       id: 3,
-      position: 3,
       title: "Needs a value",
       where: "Browser console",
       command: "fetch('{{url}}')",
@@ -93,34 +46,24 @@ const data = {
       missing: ["url"],
     }),
   ],
-};
+  {
+    title: "Laptop setup",
+    createdAt: "2026-11-09T10:00:00.000Z",
+    updatedAt: "2026-11-09T10:05:00.000Z",
+    progress: { done: 0, failed: 0, total: 3 },
+    nextStepId: 1,
+    owner: null,
+    agentLabel: "lead",
+  },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : data,
-    })),
-    post: vi.fn(async () => ({ data })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
-const buttons = (id: number) =>
-  [...card(id).querySelectorAll("button")].map((b) => b.textContent);
+const api = () => fakeApi({ detail: data });
 
 async function open(client = api()) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+  await openRunbook(client, {
+    title: "Laptop setup",
+    shows: () => screen.findByText("Check Windows"),
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Laptop setup"));
-  await screen.findByText("Check Windows");
   return client;
 }
 

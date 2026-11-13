@@ -1,137 +1,74 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { formatWait } from "../../src/frontend/ui/format";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import { formatWait } from "../../src/frontend/StepCard";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  flush,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { Runbook } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
-
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  vi.useRealTimers();
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Restart app",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: "true",
-    resolvedCommand: "true",
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    ...overrides,
-  };
-}
+useRenderedApp();
 
 /** The server counts the wait down on the (fake) clock. */
 function server(waitMs: number) {
   const until = Date.now() + waitMs;
-  const runbook = () => ({
-    ...summary,
-    summary: "",
-    values: {},
-    effectiveValues: [],
-    nextStepId: 2,
-    steps: [
-      step({ id: 1, position: 1, title: "Restart", status: "done" }),
-      step({
-        id: 2,
-        position: 2,
-        title: "Health check",
-        commandHash: "b".repeat(64),
-        wait: {
-          previous: { id: 1, position: 1, title: "Restart" },
-          seconds: 120,
-          reason: "let the service restart",
-          previousEnded: true,
-          until: new Date(until).toISOString(),
-          remainingMs: Math.max(0, until - Date.now()),
-        },
-      }),
-      step({
-        id: 3,
-        position: 3,
-        title: "Report",
-        commandHash: "c".repeat(64),
-        wait: {
-          previous: { id: 2, position: 2, title: "Health check" },
-          seconds: 300,
-          reason: null,
-          previousEnded: false,
-          until: null,
-          remainingMs: 0,
-        },
-      }),
-    ],
+  const runbook = () =>
+    makeRunbook(
+      [
+        makeStep({ id: 1, title: "Restart", status: "done" }),
+        makeStep({
+          id: 2,
+          title: "Health check",
+          commandHash: "b".repeat(64),
+          wait: {
+            previous: { id: 1, position: 1, label: "1", title: "Restart" },
+            seconds: 120,
+            reason: "let the service restart",
+            previousEnded: true,
+            until: new Date(until).toISOString(),
+            remainingMs: Math.max(0, until - Date.now()),
+          },
+        }),
+        makeStep({
+          id: 3,
+          title: "Report",
+          commandHash: "c".repeat(64),
+          wait: {
+            previous: { id: 2, position: 2, label: "2", title: "Health check" },
+            seconds: 300,
+            reason: null,
+            previousEnded: false,
+            until: null,
+            remainingMs: 0,
+          },
+        }),
+      ],
+      { title: "Restart app", nextStepId: 2 },
+    );
+  return fakeApi({
+    detail: runbook,
+    post: async () => ({ data: {} }),
   });
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook(),
-    })),
-    post: vi.fn(async (): Promise<{ data: unknown }> => ({ data: {} })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
 }
 
-const flush = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
 /** Lets time pass a second at a time, as a browser would render it. */
 async function seconds(count: number) {
   for (let i = 0; i < count; i++) await flush(1000);
 }
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
 
-async function open(client: ReturnType<typeof server>, fake: boolean) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+const open = (client: ReturnType<typeof server>, fake: boolean) =>
+  openRunbook(client, {
+    title: "Restart app",
+    shows: "Health check",
+    fakeTimers: fake,
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  if (fake) {
-    await flush();
-    fireEvent.click(screen.getByText("Restart app"));
-    await flush();
-  } else {
-    fireEvent.click(await screen.findByText("Restart app"));
-    await screen.findByRole("heading", { name: "Health check" });
-  }
-}
 
 describe("wait timers in the UI", () => {
   it("counts down, then says the person can start", async () => {
@@ -286,31 +223,16 @@ describe("a run started early", () => {
     client.get.mockImplementation(async (url: string) => {
       const answer = await base(url);
       if (url === "/runbooks") return answer;
-      const data = answer.data as { steps: Array<Record<string, unknown>> };
+      const data = answer.data as Runbook;
       data.steps[1].runs = [
-        {
+        makeRun({
           id: 51,
           stepId: 2,
-          runbookId: 7,
-          mode: "exec",
-          status: "done",
-          hostId: 1,
-          command: "true",
           commandHash: "b".repeat(64),
-          userId: "alice",
-          startedAt: "2026-11-07T10:01:00.000Z",
           finishedAt: "2026-11-07T10:01:01.000Z",
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          captured: {},
           running: false,
           startedEarlySeconds: 36,
-        },
+        }),
       ];
       return answer;
     });

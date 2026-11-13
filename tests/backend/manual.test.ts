@@ -1,25 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   agentRunbook,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
-  type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+useTestServer();
 
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
-
-async function setup(steps: Array<Record<string, unknown>>) {
-  server = await startServer();
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, { title: "Manual", steps });
-  return { s: server, token, runbook };
-}
+const setup = (steps: Array<Record<string, unknown>>) =>
+  setupRunbook(steps, { title: "Manual" });
 
 describe("Done and Failed for a step with no command", () => {
   it("records a manual run with who, when, the outcome and the note", async () => {

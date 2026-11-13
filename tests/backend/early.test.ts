@@ -1,21 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { agentRunbook, runStep, startServer, type TestServer } from "./helpers";
+import { describe, expect, it } from "vitest";
+import { runStep, setupRunbook, useTestServer } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+useTestServer();
 
 describe("a start before the wait is over", () => {
   it("keeps startedEarlySeconds on the run, for agents too", async () => {
-    server = await startServer();
-    const s = server;
-    const token = await s.makeToken();
-    const runbook = await agentRunbook(s, token, {
-      title: "Restart",
-      steps: [
+    const { s, token, runbook } = await setupRunbook(
+      [
         { title: "Restart", hostId: 1, command: "restart" },
         {
           title: "Check",
@@ -25,7 +16,8 @@ describe("a start before the wait is over", () => {
         },
         { title: "Report", hostId: 1, command: "report" },
       ],
-    });
+      { title: "Restart" },
+    );
     await runStep(s, runbook.id, runbook.steps[0].id);
     const early = await runStep(s, runbook.id, runbook.steps[1].id, {
       waitAnyway: true,

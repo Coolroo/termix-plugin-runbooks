@@ -2,21 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { toast } from "sonner";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import {
   OPEN_POLL_MS,
   OPEN_TIMEOUT_MS,
   pickNewSession,
   pickSession,
   PROMPT_SETTLE_MS,
-} from "../../src/frontend/terminal";
-import type { TerminalSession } from "../../src/frontend/types";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+} from "../../src/frontend/running/terminal";
+import type { TerminalSession } from "../../src/frontend/api-types";
+import {
+  fakeApi,
+  locales,
+  makeRunbook,
+  makeStep,
+  useRenderedApp,
+  type FakeApi,
+} from "./helpers";
 
 // The shell's tabs, for bringing the terminal to the front.
 const shell = vi.hoisted(() => ({
@@ -32,61 +32,37 @@ vi.mock("@termix-ssh/plugin-sdk/frontend", async (importOriginal) => {
   return { ...actual, useShell: () => shell };
 });
 
-const manifest = manifestJson as unknown as PluginManifest;
 const COMMAND = "systemctl restart nginx";
 
-let rendered: RenderedPluginApp | null = null;
+const render = useRenderedApp();
 
 beforeEach(() => {
   shell.tabs.list = [];
   shell.tabs.setActive = vi.fn();
 });
 
-afterEach(async () => {
-  vi.useRealTimers();
+afterEach(() => {
   vi.restoreAllMocks();
-  await rendered?.deactivate();
-  rendered = null;
 });
 
-const runbook = {
-  id: 7,
-  title: "Restart web",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 0, total: 1 },
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 2,
-  steps: [
-    {
+const runbook = makeRunbook(
+  [
+    makeStep({
       id: 2,
-      runbookId: 7,
       position: 1,
       title: "Restart",
-      body: "",
-      hostId: 1,
-      hostName: "web-1",
       command: COMMAND,
       resolvedCommand: COMMAND,
       commandHash: "b".repeat(64),
-      missing: [],
-      expect: "",
-      captures: [],
-      hideOutputFromAgents: false,
-      status: "pending",
-      skipReason: null,
-      ownerNote: "",
-      timeoutMs: null,
       revision: 3,
-      runs: [],
-    },
+    }),
   ],
-};
+  {
+    title: "Restart web",
+    progress: { done: 0, failed: 0, total: 1 },
+    nextStepId: 2,
+  },
+);
 
 const terminalRun = {
   id: 21,
@@ -101,10 +77,7 @@ const terminalRun = {
 const shown = { revision: 3, commandHash: "b".repeat(64) };
 
 interface Fakes {
-  client: {
-    get: ReturnType<typeof vi.fn>;
-    post: ReturnType<typeof vi.fn>;
-  };
+  client: FakeApi;
   sessions: TerminalSession[];
   open: ReturnType<typeof vi.fn>;
   sendToSession: ReturnType<typeof vi.fn>;
@@ -122,30 +95,18 @@ async function setup(
   } = {},
 ): Promise<Fakes> {
   const fakes: Fakes = {
-    client: {
-      get: vi.fn(async (url: string) => ({
-        data: url === "/runbooks" ? [runbook] : runbook,
-      })),
-      post: vi.fn(
-        options.post ?? (async () => ({ data: terminalRun }) as unknown),
-      ),
-    },
+    client: fakeApi({
+      detail: runbook,
+      post: options.post ?? (async () => ({ data: terminalRun })),
+    }),
     sessions: options.sessions ?? [],
     open: vi.fn(),
     sendToSession: vi.fn(() => true),
   };
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
+  const rendered = await render(fakes.client, {
     hosts: options.hosts ?? [
       { id: "1", name: "web-1", ip: "10.0.0.1", enableSsh: true },
     ],
-    api: {
-      ...fakes.client,
-      put: vi.fn(),
-      patch: vi.fn(),
-      delete: vi.fn(),
-    } as never,
   });
   const { app } = rendered;
   app.registerAction("terminal.listSessions", () =>

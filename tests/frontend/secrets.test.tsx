@@ -1,150 +1,73 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { Runbook } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Tokens",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: "true",
-    resolvedCommand: "true",
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    ...overrides,
-  };
-}
-
-const run = {
-  id: 21,
-  stepId: 1,
-  runbookId: 7,
-  mode: "exec",
-  status: "done",
-  hostId: 1,
+const run = makeRun({
   command: "make-token",
-  commandHash: "a".repeat(64),
-  userId: "alice",
-  startedAt: "2026-11-07T10:01:00.000Z",
   finishedAt: "2026-11-07T10:01:01.000Z",
-  exitCode: 0,
   stdout: "token: [secret:api_token]\n",
-  stderr: "",
-  truncated: false,
-  timedOut: false,
-  pastedOutput: null,
-  error: null,
-  captured: {},
   running: false,
   stdin: null,
   secrets: {
     used: [],
     captured: [{ name: "api_token", expiresAt: "2026-11-14T10:01:01.000Z" }],
   },
-};
+});
 
-function runbook(overrides: Record<string, unknown> = {}) {
-  return {
-    ...summary,
-    summary: "",
-    values: {},
-    effectiveValues: [],
-    nextStepId: 2,
-    secretsAvailable: true,
-    secrets: [
-      {
-        name: "api_token",
-        step: 1,
-        set: true,
-        expiresAt: "2026-11-14T10:01:01.000Z",
-      },
-      { name: "db_password", step: 2, set: false, expiresAt: null },
-    ],
-    steps: [
-      step({
+function runbook(overrides: Partial<Runbook> = {}) {
+  return makeRunbook(
+    [
+      makeStep({
         id: 1,
-        position: 1,
         title: "Make token",
         status: "done",
         secretCaptures: [{ name: "api_token", pattern: "token: (\\S+)" }],
         runs: [run],
       }),
-      step({
+      makeStep({
         id: 2,
-        position: 2,
         title: "Make password",
         secretCaptures: [{ name: "db_password", pattern: "pw: (\\S+)" }],
       }),
     ],
-    ...overrides,
-  };
+    {
+      title: "Tokens",
+      nextStepId: 2,
+      secretsAvailable: true,
+      secrets: [
+        {
+          name: "api_token",
+          step: 1,
+          set: true,
+          expiresAt: "2026-11-14T10:01:01.000Z",
+        },
+        { name: "db_password", step: 2, set: false, expiresAt: null },
+      ],
+      ...overrides,
+    },
+  );
 }
 
-function api(data = runbook()) {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : data,
-    })),
-    post: vi.fn(async () => ({ data: { id: 40, status: "running" } })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
-
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+const api = (data = runbook()) =>
+  fakeApi({
+    detail: data,
+    post: async () => ({ data: { id: 40, status: "running" } }),
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Tokens"));
-  await screen.findByRole("heading", { name: "Make password" });
-}
 
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Tokens", shows: "Make password" });
 
 describe("secret captures in the UI", () => {
   it("says which secrets a step captures and whether each is stored", async () => {
@@ -173,7 +96,7 @@ describe("secret captures in the UI", () => {
 
   it("blocks Run and Send without the service, and says why", async () => {
     const data = runbook({ secretsAvailable: false });
-    (data.steps[1] as Record<string, unknown>).secretsProblem =
+    data.steps[1].secretsProblem =
       "Install and connect the OpenBao Secrets plugin to use secrets";
     await open(api(data));
     expect(card(2).querySelector("[data-secrets-problem]")!.textContent).toBe(
@@ -188,7 +111,7 @@ describe("secret captures in the UI", () => {
 
   it("says the output is held while such a run runs", async () => {
     const data = runbook();
-    (data.steps[1] as Record<string, unknown>).runs = [
+    data.steps[1].runs = [
       {
         ...run,
         id: 22,

@@ -1,79 +1,33 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  locales,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { RunbookStatus, Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Look",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 0, total: 2 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
+const step = (overrides: Partial<Step> & { id: number }) =>
+  makeStep({
     command: "uptime",
     resolvedCommand: "uptime",
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
     owner: "person",
     sent: [],
     ...overrides,
-  };
-}
+  });
 
-function runbook(canSendToAgent: boolean, status = "open") {
-  return {
-    ...summary,
-    status,
-    summary: "",
-    values: {},
-    effectiveValues: [],
-    nextStepId: 1,
-    owner: { task: "T-3", label: "Lead" },
-    agentLabel: "Lead",
-    notifyEnabled: canSendToAgent,
-    canSendToAgent,
-    steps: [
-      step({ id: 1, position: 1, title: "Graph" }),
+function runbook(canSendToAgent: boolean, status: RunbookStatus = "open") {
+  return makeRunbook(
+    [
+      step({ id: 1, title: "Graph" }),
       step({
         id: 2,
-        position: 2,
         title: "Logs",
         sent: [
           {
@@ -91,43 +45,34 @@ function runbook(canSendToAgent: boolean, status = "open") {
         ],
       }),
     ],
-  };
+    {
+      title: "Look",
+      progress: { done: 0, failed: 0, total: 2 },
+      status,
+      nextStepId: 1,
+      owner: { task: "T-3", label: "Lead" },
+      agentLabel: "Lead",
+      notifyEnabled: canSendToAgent,
+      canSendToAgent,
+    },
+  );
 }
 
-function api(canSend: boolean, status = "open") {
-  const data = runbook(canSend, status);
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [{ ...summary, status }] : data,
-    })),
-    post: vi.fn(async () => ({ data })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = (canSend: boolean, status: RunbookStatus = "open") =>
+  fakeApi({ detail: runbook(canSend, status) });
 
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, {
+    title: "Look",
+    shows: () => screen.findByText("Logs"),
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Look"));
-  await screen.findByText("Logs");
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
 
 describe("Send to agent", () => {
   it("shows on every step only when the runbook can send", async () => {
-    await open(api(true));
+    const first = await open(api(true));
     expect(card(1).querySelector("[data-send-to-agent]")).not.toBeNull();
     expect(card(2).querySelector("[data-send-to-agent]")).not.toBeNull();
-    await rendered?.deactivate();
-    rendered = null;
+    await first.deactivate();
     await open(api(false));
     expect(document.querySelector("[data-send-to-agent]")).toBeNull();
   });

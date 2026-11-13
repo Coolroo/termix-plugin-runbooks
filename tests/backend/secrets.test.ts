@@ -1,23 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   agentRunbook,
   auditText,
   everything,
+  execResult,
   FakeChannel,
   runStep,
+  setupRunbook,
   shownRun,
-  startServer,
+  useTestServer,
   view,
   waitForRun,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const TOKEN = "tk-9f8e7d6c5b4a";
 
@@ -34,32 +31,20 @@ const useToken = {
   stdin: { from: "secret", name: "api_token" },
 };
 
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>> = [makeToken, useToken],
   options: { secrets?: boolean } = { secrets: true },
-) {
-  server = await startServer({ secrets: options.secrets });
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, { title: "Token", steps });
-  return { s: server, token, runbook };
-}
-
-const prints =
-  (stdout: string, stderr = "", code = 0) =>
-  async () => ({
-    stdout,
-    stderr,
-    code,
-    truncated: false,
-    timedOut: false,
-  });
+) =>
+  setupRunbook(steps, { title: "Token", server: { secrets: options.secrets } });
 
 const DAY = 24 * 60 * 60 * 1000;
 
 describe("secret captures", () => {
   it("stores the match in Runbooks' area for 7 days and hides it in the output", async () => {
     const { s, runbook } = await setup();
-    s.setExec(prints(`created\ntoken: ${TOKEN}\n`, `debug ${TOKEN}\n`));
+    s.setExec(async () =>
+      execResult(`created\ntoken: ${TOKEN}\n`, { stderr: `debug ${TOKEN}\n` }),
+    );
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("done");
     expect(ran.body.stdout).toBe("created\ntoken: [secret:api_token]\n");
@@ -95,7 +80,7 @@ describe("secret captures", () => {
     ).toContain("stored secret api_token");
 
     // The next step reads it as standard input.
-    s.setExec(prints(`using ${TOKEN}\n`));
+    s.setExec(async () => execResult(`using ${TOKEN}\n`));
     const used = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(used.body.status).toBe("done");
     expect(s.channels[1].stdin).toBe(`${TOKEN}\n`);
@@ -135,7 +120,7 @@ describe("secret captures", () => {
 
   it("fails the step when a pattern matches nothing, and stores nothing", async () => {
     const { s, runbook } = await setup();
-    s.setExec(prints("no token here\n"));
+    s.setExec(async () => execResult("no token here\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("failed");
     expect(ran.body.error).toBe("secret api_token: no match");
@@ -154,13 +139,13 @@ describe("secret captures", () => {
         captures: [{ name: "line", pattern: "^(token: .*)$" }],
       },
     ]);
-    s.setExec(prints(`token: ${TOKEN}\n`, "", 1));
+    s.setExec(async () => execResult(`token: ${TOKEN}\n`, { code: 1 }));
     let ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("failed");
     expect(ran.body.stdout).toBe("token: [secret:api_token]\n");
     expect(s.secrets!.data.size).toBe(0);
 
-    s.setExec(prints(`token: ${TOKEN}\n`));
+    s.setExec(async () => execResult(`token: ${TOKEN}\n`));
     ran = await runStep(s, runbook.id, runbook.steps[0].id, {
       confirmRepeat: true,
     });
@@ -247,7 +232,7 @@ describe("secret captures", () => {
 describe("deleting a runbook's secrets", () => {
   async function captured() {
     const ctx = await setup();
-    ctx.s.setExec(prints(`token: ${TOKEN}\n`));
+    ctx.s.setExec(async () => execResult(`token: ${TOKEN}\n`));
     await runStep(ctx.s, ctx.runbook.id, ctx.runbook.steps[0].id);
     expect(ctx.s.secrets!.data.size).toBe(1);
     return ctx;
@@ -312,8 +297,7 @@ describe("deleting a runbook's secrets", () => {
 
 describe("what agents may write", () => {
   it("checks secretCaptures and the secrets a step reads", async () => {
-    server = await startServer();
-    const s = server;
+    const s = await startServer();
     const token = await s.makeToken();
     const error = async (steps: unknown[]) =>
       (await s.agent("POST", "/runbooks", token, { title: "x", steps })).body
@@ -382,7 +366,7 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
       { type: "contains", text: "token: [secret:api_token]" },
       { type: "matches", pattern: "^token: \\[secret:api_token\\]$" },
     ]);
-    s.setExec(prints(`created\ntoken: ${TOKEN}\n`));
+    s.setExec(async () => execResult(`created\ntoken: ${TOKEN}\n`));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("done");
     expect(ran.body.checks.map((check: { ok: boolean }) => check.ok)).toEqual([
@@ -406,7 +390,7 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
         { type: "matches", pattern: "token: tk-[0-9a-f]+" },
         { type: "notContains", text: "tk-9f" },
       ]);
-      s.setExec(prints(`token: ${value}\n`));
+      s.setExec(async () => execResult(`token: ${value}\n`));
       const ran = await runStep(s, runbook.id, runbook.steps[0].id);
       outcomes.push({
         status: ran.body.status,
@@ -420,7 +404,6 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
       expect(s.secrets!.data.size).toBe(0);
       expect(everything(s)).not.toContain(value);
       await s.close();
-      server = null;
     }
     expect(outcomes[0]).toEqual(outcomes[1]);
   });
@@ -433,7 +416,7 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
       ],
       { captures: [{ name: "line", pattern: "^(token: .*)$" }] },
     );
-    s.setExec(prints(`token: ${TOKEN}\n`));
+    s.setExec(async () => execResult(`token: ${TOKEN}\n`));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("done");
     expect(ran.body.captured).toEqual({ line: "token: [secret:api_token]" });
@@ -445,7 +428,7 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
       [{ type: "value", name: "line", equals: `token: ${TOKEN}` }],
       { captures: [{ name: "line", pattern: "^(token: .*)$" }] },
     );
-    s.setExec(prints(`token: ${TOKEN}\n`));
+    s.setExec(async () => execResult(`token: ${TOKEN}\n`));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("failed");
     expect(s.secrets!.data.size).toBe(0);
@@ -462,9 +445,9 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
         ],
       },
     ]);
-    s.setExec(prints(`token: ${TOKEN}\n`));
+    s.setExec(async () => execResult(`token: ${TOKEN}\n`));
     await runStep(s, runbook.id, runbook.steps[0].id);
-    s.setExec(prints(`using ${TOKEN}\n`));
+    s.setExec(async () => execResult(`using ${TOKEN}\n`));
     const used = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(used.body.status).toBe("done");
     expect(used.body.checks.every((check: { ok: boolean }) => check.ok)).toBe(
@@ -506,7 +489,7 @@ describe("checks see the output with its secrets hidden (1.4.1)", () => {
         ],
       },
     ]);
-    s.setExec(prints("state: up\n"));
+    s.setExec(async () => execResult("state: up\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("done");
     expect(ran.body.stdout).toBe("state: up\n");

@@ -1,100 +1,44 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import { Markdown } from "../../src/frontend/Markdown";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { Markdown } from "../../src/frontend/ui/Markdown";
 import { fillMarkdown } from "../../src/shared/fill";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+import {
+  card,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRunbook,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
-
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Tailnet",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-11T10:00:00.000Z",
-  updatedAt: "2026-11-11T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 0, total: 4 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: null,
-    hostName: null,
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    ...overrides,
-  };
-}
+useRenderedApp();
 
 // A captured value that tries to add Markdown of its own.
 const NASTY =
   "[x](https://e.example) ![i](https://e.example/a.png) **b** _u_ <b>hi</b> https://e.example";
 
-const runbook = {
-  ...summary,
-  summary: "",
-  values: { ts_ip: "100.64.0.7" },
-  effectiveValues: [
-    { name: "ts_ip", value: "100.64.0.7", source: "author" },
-    { name: "banner", value: NASTY, source: "capture", stepId: 9, runId: 3 },
-    { name: "ver", value: "1.2.3", source: "capture", stepId: 9, runId: 3 },
-  ],
-  nextStepId: 1,
-  steps: [
-    step({
+const runbook = makeRunbook(
+  [
+    clickStep({
       id: 1,
-      position: 1,
       title: "Approve the route",
       body: "In the admin console, find `{{ts_ip}}` and approve it.\n\n```\ntailscale ping {{ts_ip}}\n```",
       expect: "The machine {{ts_ip}} shows **Connected**.",
     }),
-    step({
+    clickStep({
       id: 2,
-      position: 2,
       title: "Check the key",
       body: "Find the key of {{node_key}} in the list.",
       expect: "`{{node_key}}` shows as approved.",
     }),
-    step({
+    clickStep({
       id: 3,
-      position: 3,
       title: "Read the banner",
       body: "The banner said: {{banner}}\n\nIn code: `{{banner}}`",
     }),
-    step({
+    clickStep({
       id: 4,
-      position: 4,
       title: "Fetch",
       hostId: 1,
       hostName: "web-1",
@@ -103,42 +47,33 @@ const runbook = {
       commandHash: "a".repeat(64),
       body: "Fetch for {{later}}.",
     }),
-    step({
+    clickStep({
       id: 5,
-      position: 5,
       title: "Check in the browser",
       command: "Get-Item {{ver}}",
       resolvedCommand: "Get-Item 1.2.3",
       where: "browser on {{ts_ip}}",
     }),
   ],
-};
+  {
+    title: "Tailnet",
+    createdAt: "2026-11-11T10:00:00.000Z",
+    updatedAt: "2026-11-11T10:05:00.000Z",
+    progress: { done: 0, failed: 0, total: 4 },
+    values: { ts_ip: "100.64.0.7" },
+    effectiveValues: [
+      { name: "ts_ip", value: "100.64.0.7", source: "author" },
+      { name: "banner", value: NASTY, source: "capture", stepId: 9, runId: 3 },
+      { name: "ver", value: "1.2.3", source: "capture", stepId: 9, runId: 3 },
+    ],
+    nextStepId: 1,
+  },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook,
-    })),
-    post: vi.fn(async () => ({ data: runbook })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = () => fakeApi({ detail: runbook });
 
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Tailnet"));
-  await screen.findByRole("heading", { name: "Approve the route" });
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Tailnet", shows: "Approve the route" });
 
 describe("values in a step's text (1.4.3)", () => {
   it("shows a click step's body and expect with the value, and Copy copies it", async () => {

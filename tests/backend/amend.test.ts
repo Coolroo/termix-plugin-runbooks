@@ -1,46 +1,24 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ADMIN_PERMISSIONS,
   agentRunbook,
   auditText,
+  execResult,
   FakeChannel,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
   waitForRun,
   type TestServer,
 } from "./helpers";
-import {
-  compareSteps,
-  parseStepRef,
-  stepLabel,
-  suffixAt,
-  suffixIndex,
-} from "../../src/shared/steps";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const OWNER = { task: "T-42", agent: "session:abc", label: "Lead agent" };
 
-async function setup(steps: Array<Record<string, unknown>>) {
-  server = await startServer();
-  const token = await server.makeToken("lead");
-  const runbook = await agentRunbook(server, token, {
-    title: "Fix things",
-    owner: OWNER,
-    steps,
-  });
-  return { s: server, token, runbook };
-}
-
-const exits =
-  (code: number, stdout = "") =>
-  async () => ({ stdout, stderr: "", code, truncated: false, timedOut: false });
+const setup = (steps: Array<Record<string, unknown>>) =>
+  setupRunbook(steps, { title: "Fix things", owner: OWNER });
 
 const amend = (
   s: TestServer,
@@ -58,44 +36,13 @@ const FIX = {
   command: "systemctl restart app.service",
 };
 
-describe("step numbers", () => {
-  it("order (position, suffix) and read 3, '3' and '3a'", () => {
-    expect([0, 1, 25, 26, 27, 701, 702].map(suffixAt)).toEqual([
-      "a",
-      "b",
-      "z",
-      "aa",
-      "ab",
-      "zz",
-      "aaa",
-    ]);
-    for (const n of [0, 5, 25, 26, 300, 702]) {
-      expect(suffixIndex(suffixAt(n))).toBe(n);
-    }
-    const sorted = [
-      { position: 4, suffix: null },
-      { position: 3, suffix: "aa" },
-      { position: 3, suffix: "b" },
-      { position: 3, suffix: null },
-      { position: 3, suffix: "a" },
-    ].sort(compareSteps);
-    expect(sorted.map(stepLabel)).toEqual(["3", "3a", "3b", "3aa", "4"]);
-    expect(parseStepRef(3)).toEqual({ position: 3, suffix: null });
-    expect(parseStepRef("3")).toEqual({ position: 3, suffix: null });
-    expect(parseStepRef("3a")).toEqual({ position: 3, suffix: "a" });
-    for (const bad of [0, -1, 1.5, "a3", "3A", "03", "", null]) {
-      expect(parseStepRef(bad)).toBeNull();
-    }
-  });
-});
-
 describe("amend a step with a fixed version (replace)", () => {
   it("replaces a failed step: 1a after step 1, step 1 replaced with its runs, later steps keep their numbers", async () => {
     const { s, token, runbook } = await setup([
       { title: "Restart", hostId: 1, command: "systemctl restart app" },
       { title: "Check", hostId: 1, command: "systemctl is-active app" },
     ]);
-    s.setExec(exits(1));
+    s.setExec(async () => execResult("", { code: 1 }));
     await runStep(s, runbook.id, runbook.steps[0].id);
 
     const reply = await amend(s, token, runbook.steps[0].id, {
@@ -133,7 +80,7 @@ describe("amend a step with a fixed version (replace)", () => {
     expect(shown.steps[1].amendment.oldCommand).toBe("systemctl restart app");
     let list = await s.person("GET", "/runbooks");
     expect(list.body[0].amendedPending).toBe(1);
-    s.setExec(exits(0));
+    s.setExec(async () => execResult());
     expect((await runStep(s, runbook.id, fixed.id)).body.status).toBe("done");
     list = await s.person("GET", "/runbooks");
     expect(list.body[0].amendedPending).toBe(0);
@@ -174,7 +121,7 @@ describe("amend a step with a fixed version (replace)", () => {
     });
     expect(skip.status).toBe(409);
 
-    s.setExec(exits(0));
+    s.setExec(async () => execResult());
     await runStep(s, runbook.id, fixed.id);
     const check = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(check.status).toBe(200);
@@ -208,7 +155,7 @@ describe("amend a step with a fixed version (replace)", () => {
       { title: "Four", hostId: 1, command: "four" },
     ]);
     const three = runbook.steps[2].id;
-    s.setExec(exits(1));
+    s.setExec(async () => execResult("", { code: 1 }));
     await runStep(s, runbook.id, three, { outOfOrder: true });
     const first = await amend(s, token, three, {
       kind: "replace",
@@ -258,7 +205,7 @@ describe("amend a step with a sub-step", () => {
       { title: "Build", hostId: 1, command: "make" },
       { title: "Ship", hostId: 1, command: "ship" },
     ]);
-    s.setExec(exits(0));
+    s.setExec(async () => execResult());
     await runStep(s, runbook.id, runbook.steps[0].id);
     const reply = await amend(s, token, runbook.steps[0].id, {
       kind: "substep",
@@ -316,7 +263,7 @@ describe("amend a step with a sub-step", () => {
     expect(added.body.steps[3].stdin.step).toBe(1);
 
     s.setExec(async (_host, command) =>
-      exits(0, command === "print-version" ? "v1.4.0\n" : "cfg\n")(),
+      execResult(command === "print-version" ? "v1.4.0\n" : "cfg\n"),
     );
     await runStep(s, runbook.id, runbook.steps[0].id);
     await runStep(s, runbook.id, sub.body.steps[1].id);
@@ -411,7 +358,7 @@ describe("amend refusals", () => {
       { title: "Long", hostId: 1, command: "sleep 100" },
     ]);
     const fixed = { kind: "replace", reason: "fix", step: FIX };
-    s.setExec(exits(0));
+    s.setExec(async () => execResult());
     await runStep(s, runbook.id, runbook.steps[0].id);
     const done = await amend(s, token, runbook.steps[0].id, fixed);
     expect(done.status).toBe(409);
@@ -507,7 +454,7 @@ describe("Reopen of a replaced step", () => {
       step: FIX,
     });
     const fixed = reply.body.steps[1].id;
-    s.setExec(exits(1));
+    s.setExec(async () => execResult("", { code: 1 }));
     await runStep(s, runbook.id, fixed);
     await s.person("POST", `/steps/${fixed}/skip`, { reason: "give up" });
     const refused = await s.person("POST", `/steps/${old}/reopen`);
@@ -633,7 +580,7 @@ describe("the amended event", () => {
 
   it("goes to the webhook with ids only when notify lists it", async () => {
     const sent: Array<{ body: string }> = [];
-    server = await startServer({
+    const s = await startServer({
       permissions: ADMIN_PERMISSIONS,
       settings: {
         notifyEnabled: true,
@@ -644,7 +591,6 @@ describe("the amended event", () => {
         return new Response(null, { status: 204 });
       },
     });
-    const s = server;
     expect((await s.person("POST", "/admin/notify/secret")).status).toBe(200);
     const token = await s.makeToken("lead");
     const runbook = await agentRunbook(s, token, {

@@ -1,21 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { PluginSshHost } from "@termix-ssh/plugin-sdk/backend";
-import { isSshHost } from "../../src/shared/hosts";
 import {
   agentRunbook,
   host,
   runStep,
   sshHost,
-  startServer,
+  useTestServer,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 /** Host 4 is a remote desktop host: its SSH switch is off. */
 function desktopHost(id: number): PluginSshHost {
@@ -27,8 +21,8 @@ function desktopHost(id: number): PluginSshHost {
   };
 }
 
-async function start() {
-  server = await startServer({
+const start = () =>
+  startServer({
     hosts: [host(1), host(2), host(3), host(4)],
     sshHosts: [
       sshHost(1, "aa11"),
@@ -37,8 +31,6 @@ async function start() {
       desktopHost(4),
     ],
   });
-  return server;
-}
 
 /** A token as 1.0.0 stored it: host 4 in its list, no SSH flags. */
 async function oldToken(s: TestServer) {
@@ -53,19 +45,6 @@ async function oldToken(s: TestServer) {
 }
 
 const ids = (body: Array<{ id: number }>) => body.map((h) => h.id);
-
-describe("isSshHost", () => {
-  it("follows the SSH switch, then the connection type", () => {
-    expect(isSshHost({ enableSsh: true, connectionType: "rdp" })).toBe(true);
-    expect(isSshHost({ enableSsh: false, connectionType: "ssh" })).toBe(false);
-    expect(isSshHost({ enableSsh: 1 })).toBe(true);
-    expect(isSshHost({ enableSsh: 0 })).toBe(false);
-    expect(isSshHost({ connectionType: "vnc" })).toBe(false);
-    expect(isSshHost({ connectionType: "ssh" })).toBe(true);
-    expect(isSshHost({})).toBe(true);
-    expect(isSshHost(null)).toBe(false);
-  });
-});
 
 describe("SSH hosts only", () => {
   it("refuses a remote desktop host for a new token or a token's hosts", async () => {

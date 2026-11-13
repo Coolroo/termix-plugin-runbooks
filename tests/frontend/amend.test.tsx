@@ -1,98 +1,42 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  useRenderedApp,
+} from "./helpers";
+import type { Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+const render = useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Deploy",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-09T10:00:00.000Z",
-  updatedAt: "2026-11-09T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 4 },
-  amendedPending: 1,
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: null,
-    resolvedCommand: null,
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
+const step = (overrides: Partial<Step> & { id: number }) =>
+  makeStep({
     owner: "person",
     suffix: null,
     amendment: null,
     replacedBy: null,
     ...overrides,
-  };
-}
+  });
 
-const failedRun = {
+const failedRun = makeRun({
   id: 40,
   stepId: 3,
-  runbookId: 7,
-  mode: "exec",
   status: "failed",
-  hostId: 1,
   command: "systemctl restart app",
-  commandHash: "a".repeat(64),
-  userId: "alice",
   startedAt: "2026-11-09T10:01:00.000Z",
   finishedAt: "2026-11-09T10:01:02.000Z",
   exitCode: 5,
-  stdout: "",
   stderr: "Unit app not found",
-  truncated: false,
-  timedOut: false,
-  pastedOutput: null,
-  error: null,
-  captured: {},
   note: null,
   running: false,
-};
+});
 
-const data = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 4,
-  owner: { label: "Lead agent" },
-  agentLabel: "Lead agent",
-  steps: [
+const data = makeRunbook(
+  [
     step({
       id: 3,
       position: 3,
@@ -147,29 +91,20 @@ const data = {
       resolvedCommand: "systemctl is-active app.service",
     }),
   ],
-};
-
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : data,
-    })),
-    post: vi.fn(async () => ({ data })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+  {
+    title: "Deploy",
+    createdAt: "2026-11-09T10:00:00.000Z",
+    updatedAt: "2026-11-09T10:05:00.000Z",
+    progress: { done: 1, failed: 0, total: 4 },
+    amendedPending: 1,
+    nextStepId: 4,
+    owner: { label: "Lead agent" },
+    agentLabel: "Lead agent",
+  },
+);
 
 async function open() {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: api() as never,
-  });
+  const rendered = await render(fakeApi({ detail: data }));
   rendered.renderTab("runbooks", { isVisible: true });
   const row = await screen.findByText("Deploy");
   // The list says "amended" while an amendment has not run.

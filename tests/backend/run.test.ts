@@ -1,30 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   agentRunbook,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
   waitForRun,
-  type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+const startServer = useTestServer();
 
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
-
-async function setup(steps: Array<Record<string, unknown>>, values = {}) {
-  server = await startServer();
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, {
-    title: "Test",
-    values,
-    steps,
-  });
-  return { s: server, token, runbook };
-}
+const setup = (
+  steps: Array<Record<string, unknown>>,
+  values: Record<string, string> = {},
+) => setupRunbook(steps, { values });
 
 describe("running a step", () => {
   it("runs the resolved command over SSH and stores the run", async () => {
@@ -39,13 +29,7 @@ describe("running a step", () => {
       ],
       { tag: "a b" },
     );
-    s.setExec(async () => ({
-      stdout: "up 3 days\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("up 3 days\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.status).toBe(200);
     // The route answers before the command ends.
@@ -78,13 +62,7 @@ describe("running a step", () => {
       { title: "A", hostId: 1, command: "false" },
       { title: "B", hostId: 1, command: "true" },
     ]);
-    s.setExec(async () => ({
-      stdout: "",
-      stderr: "boom",
-      code: 1,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("", { stderr: "boom", code: 1 }));
     const failed = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(failed.body).toMatchObject({ status: "failed", exitCode: 1 });
     expect((await view(s, runbook.id)).steps[0].status).toBe("failed");
@@ -329,13 +307,7 @@ describe("running a step", () => {
     const gate = new Promise<void>((resolve) => (release = resolve));
     s.setExec(async () => {
       await gate;
-      return {
-        stdout: "ok",
-        stderr: "",
-        code: 0,
-        truncated: false,
-        timedOut: false,
-      };
+      return execResult("ok");
     });
     const shown = await view(s, runbook.id);
     const stepId = runbook.steps[0].id;
@@ -394,13 +366,7 @@ describe("captures", () => {
     const before = await view(s, runbook.id);
     expect(before.steps[1].missing).toEqual(["ver"]);
 
-    s.setExec(async () => ({
-      stdout: "app\nversion: 1.2.3\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("app\nversion: 1.2.3\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.captured).toEqual({ ver: "1.2.3" });
 
@@ -514,7 +480,7 @@ describe("person step actions", () => {
   });
 
   it("lists open runbooks first", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const a = await agentRunbook(server, token, { title: "A" });
     await agentRunbook(server, token, { title: "B" });

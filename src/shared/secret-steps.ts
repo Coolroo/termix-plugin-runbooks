@@ -11,25 +11,24 @@
  * React and no Node here.
  */
 
-/** A secret's name: a value name, at most 64 characters. */
-export const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
-export const MAX_SECRET_NAME = 64;
-
-/** A library secret: "mine/<name>" or "shared/<name>". */
-export const LIBRARY_REF =
-  /^(mine|shared)\/([A-Za-z0-9._-]{1,200}(?:\/[A-Za-z0-9._-]{1,200}){0,3})$/;
+import {
+  isOneLine,
+  LIBRARY_REF,
+  regexProblem,
+  secretNameProblem,
+} from "./names.js";
 
 /** One part of an app path, "<app>/<host>", as OpenBao Secrets takes it. */
-const APP_PART = /^[A-Za-z0-9._-]{1,64}$/;
+export const APP_PART = /^[A-Za-z0-9._-]{1,64}$/;
 /** A field of an app secret. */
-const APP_FIELD = /^[A-Za-z0-9._-]{1,128}$/;
+export const APP_FIELD = /^[A-Za-z0-9._-]{1,128}$/;
 
-export const MAX_ASK_LABEL = 200;
-export const MAX_ASK_PATTERN = 300;
+const MAX_ASK_LABEL = 200;
+const MAX_ASK_PATTERN = 300;
 /** OpenBao Secrets takes values up to 64 KiB. */
 export const MAX_ASKED_BYTES = 64 * 1024;
 /** A library secret Runbooks makes lives at most this many days. */
-export const MAX_LIBRARY_DAYS = 30;
+const MAX_LIBRARY_DAYS = 30;
 
 export type SecretFormat = "alnum" | "hex" | "base64url" | "words" | "pin";
 
@@ -85,7 +84,7 @@ export type AuthorStore =
   | { library: string; expires?: number }
   | { app: string; field: string };
 
-export function authorStore(store: SecretStore): AuthorStore {
+function authorStore(store: SecretStore): AuthorStore {
   switch (store.to) {
     case "runbook":
       return "runbook";
@@ -98,8 +97,24 @@ export function authorStore(store: SecretStore): AuthorStore {
   }
 }
 
+/** A Make a secret step's field, as an author writes it and views show it. */
+export interface GenerateField {
+  name: string;
+  format: SecretFormat;
+  length: number;
+  store: AuthorStore;
+}
+
+/** An Ask for a secret step's field, as an author writes it. */
+export interface AskField {
+  name: string;
+  label: string;
+  pattern?: string;
+  store: AuthorStore;
+}
+
 /** The step field as an author writes it and the API shows it. */
-export function showGenerate(spec: GenerateSpec) {
+export function showGenerate(spec: GenerateSpec): GenerateField {
   return {
     name: spec.name,
     format: spec.format,
@@ -108,7 +123,7 @@ export function showGenerate(spec: GenerateSpec) {
   };
 }
 
-export function showAsk(spec: AskSpec) {
+export function showAsk(spec: AskSpec): AskField {
   return {
     name: spec.name,
     label: spec.label,
@@ -122,13 +137,9 @@ function fail(message: string): never {
 }
 
 function nameOf(raw: unknown, field: string): string {
-  if (typeof raw !== "string" || !SECRET_NAME.test(raw)) {
-    fail(`${field} must match ${SECRET_NAME.source}`);
-  }
-  if (raw.length > MAX_SECRET_NAME) {
-    fail(`${field} is longer than ${MAX_SECRET_NAME} characters`);
-  }
-  return raw;
+  const problem = secretNameProblem(raw, field);
+  if (problem) fail(problem);
+  return raw as string;
 }
 
 function onlyKeys(raw: Record<string, unknown>, keys: string[], at: string) {
@@ -245,21 +256,17 @@ export function parseAsk(raw: unknown): AskSpec {
   if (label.length > MAX_ASK_LABEL) {
     fail(`ask.label is longer than ${MAX_ASK_LABEL} characters`);
   }
-  if (/[\u0000-\u001f\u007f]/.test(label)) fail("ask.label must be one line");
+  if (!isOneLine(label)) fail("ask.label must be one line");
   let pattern: string | null = null;
   if (input.pattern !== undefined && input.pattern !== null) {
-    if (typeof input.pattern !== "string" || input.pattern === "") {
-      fail("ask.pattern must be a regular expression as text");
-    }
-    if (input.pattern.length > MAX_ASK_PATTERN) {
-      fail(`ask.pattern is longer than ${MAX_ASK_PATTERN} characters`);
-    }
-    try {
-      new RegExp(input.pattern);
-    } catch {
-      fail("ask.pattern is not a valid regular expression");
-    }
-    pattern = input.pattern;
+    const problem = regexProblem(
+      input.pattern,
+      "ask.pattern",
+      MAX_ASK_PATTERN,
+      "ask.pattern must be a regular expression as text",
+    );
+    if (problem) fail(problem);
+    pattern = input.pattern as string;
   }
   return { name, label, pattern, store: parseStore(input.store, "ask") };
 }

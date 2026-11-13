@@ -1,17 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { agentRunbook, startServer, type TestServer } from "./helpers";
+import { describe, expect, it } from "vitest";
+import { setupRunbook, useTestServer } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 describe("step colors (1.4.1)", () => {
   it("refuse anything but #rgb or #rrggbb of a kind id on save, for admins and people", async () => {
-    server = await startServer();
-    const s = server;
+    const s = await startServer();
     for (const scope of ["admin", "user"] as const) {
       expect(
         await s.mock.validateSettings(scope, {
@@ -47,17 +41,16 @@ describe("step colors (1.4.1)", () => {
   });
 
   it("answer no colors when none is set: every kind keeps its default", async () => {
-    server = await startServer();
+    const server = await startServer();
     const colors = await server.person("GET", "/colors");
     expect(colors.status).toBe(200);
     expect(colors.body).toEqual({});
   });
 
   it("answer the admin's colors, and a person's own over them", async () => {
-    server = await startServer({
+    const s = await startServer({
       settings: { stepColors: { run: "#22C55E", lead: "#00f", app: "" } },
     });
-    const s = server;
     await s.mock.ctx.settings.setUser("bob", "stepColors", {
       lead: "#a78bfa",
       app: "#123456",
@@ -73,7 +66,7 @@ describe("step colors (1.4.1)", () => {
   });
 
   it("drop a stored value that is not a color or not a kind, whatever wrote it", async () => {
-    server = await startServer({
+    const server = await startServer({
       settings: {
         stepColors: {
           run: "red;background:url(x)",
@@ -95,7 +88,7 @@ describe("step colors (1.4.1)", () => {
   });
 
   it("need Use Runbooks", async () => {
-    server = await startServer({ permissions: [] });
+    const server = await startServer({ permissions: [] });
     const colors = await server.person("GET", "/colors");
     expect(colors.status).toBe(403);
   });
@@ -103,17 +96,14 @@ describe("step colors (1.4.1)", () => {
 
 describe("the runbook list (1.4.1)", () => {
   it("names the kind of each runbook's next step", async () => {
-    server = await startServer();
-    const s = server;
-    const token = await s.makeToken();
-    const runbook = await agentRunbook(s, token, {
-      title: "Kinds",
-      steps: [
+    const { s, runbook } = await setupRunbook(
+      [
         { title: "Read", owner: "agent" },
         { title: "Check", hostId: 1, command: "uptime" },
         { title: "Finish the runbook" },
       ],
-    });
+      { title: "Kinds" },
+    );
     const kind = async () =>
       (await s.person("GET", "/runbooks")).body.find(
         (row: { id: number }) => row.id === runbook.id,

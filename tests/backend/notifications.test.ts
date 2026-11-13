@@ -4,17 +4,17 @@ import {
   ADMIN_PERMISSIONS,
   agentRunbook,
   auditText,
+  execResult,
   runStep,
-  startServer,
+  useTestServer,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+const startServer = useTestServer();
 
-afterEach(async () => {
+// Runs before the server closes: hooks after a test run last-in first.
+afterEach(() => {
   vi.useRealTimers();
-  await server?.close();
-  server = null;
 });
 
 const URL_ = "https://agents.example.test/hook?key=abc123";
@@ -55,7 +55,7 @@ async function setup(
   options: { secret?: boolean } = {},
 ) {
   const hook = receiver();
-  server = await startServer({
+  const server = await startServer({
     permissions: ADMIN_PERMISSIONS,
     settings,
     fetch: hook.fetch,
@@ -70,13 +70,8 @@ async function setup(
   return { s: server, hook, secret, token };
 }
 
-const failing = async () => ({
-  stdout: "secret-output-text",
-  stderr: "boom",
-  code: 1,
-  truncated: false,
-  timedOut: false,
-});
+const failing = async () =>
+  execResult("secret-output-text", { stderr: "boom", code: 1 });
 
 /** Event rows as stored. */
 function eventRows(s: TestServer) {
@@ -399,7 +394,7 @@ describe("the signing secret and the Test button", () => {
   });
 
   it("are for admins in the app only", async () => {
-    server = await startServer({ settings: ON });
+    const server = await startServer({ settings: ON });
     for (const [method, path] of [
       ["GET", "/admin/notify"],
       ["POST", "/admin/notify/secret"],
@@ -408,18 +403,18 @@ describe("the signing secret and the Test button", () => {
       expect((await server.person(method, path)).status).toBe(403);
     }
     await server.close();
-    server = await startServer({
+    const admin = await startServer({
       permissions: ADMIN_PERMISSIONS,
       settings: ON,
     });
-    const key = await server.person("POST", "/admin/notify/secret", undefined, {
+    const key = await admin.person("POST", "/admin/notify/secret", undefined, {
       apiKey: true,
     });
     expect(key.status).toBe(403);
-    const anonymous = await server.raw("POST", "/admin/notify/secret", {});
+    const anonymous = await admin.raw("POST", "/admin/notify/secret", {});
     expect(anonymous.status).toBe(401);
-    const token = await server.makeToken();
-    const agent = await server.agent("POST", "/admin/notify/secret", token);
+    const token = await admin.makeToken();
+    const agent = await admin.agent("POST", "/admin/notify/secret", token);
     expect(agent.status).toBe(404);
   });
 });

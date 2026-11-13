@@ -1,98 +1,43 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  buttons,
+  card,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
+const step = (overrides: Partial<Step> & { id: number }) =>
+  clickStep({ owner: "person", ...overrides });
 
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Deploy",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: null,
-    hostName: null,
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    owner: "person",
-    ...overrides,
-  };
-}
-
-const agentRun = {
+const agentRun = makeRun({
   id: 40,
-  stepId: 1,
-  runbookId: 7,
   mode: "agent",
-  status: "done",
   hostId: null,
   command: "make check",
   commandHash: "",
   userId: "lead",
-  startedAt: "2026-11-07T10:01:00.000Z",
   finishedAt: "2026-11-07T10:01:00.000Z",
   exitCode: null,
   stdout: "42 passed\n",
   stderr: null,
-  truncated: false,
-  timedOut: false,
-  pastedOutput: null,
-  error: null,
-  captured: {},
   note: "all green",
   running: false,
-};
+});
 
 function runbook(owner: Record<string, string> | null) {
-  return {
-    ...summary,
-    summary: "",
-    values: {},
-    effectiveValues: [],
-    nextStepId: 2,
-    owner,
-    agentLabel: owner?.label ?? "lead",
-    steps: [
+  return makeRunbook(
+    [
       step({
         id: 1,
-        position: 1,
         title: "Run the tests",
         owner: "agent",
         command: "make check",
@@ -102,54 +47,33 @@ function runbook(owner: Record<string, string> | null) {
       }),
       step({
         id: 2,
-        position: 2,
         title: "Read the dashboard",
         owner: "agent",
         command: "curl -s https://grafana/api",
         resolvedCommand: "curl -s https://grafana/api",
       }),
-      step({
+      makeStep({
         id: 3,
-        position: 3,
         title: "Restart",
-        hostId: 1,
-        hostName: "web-1",
+        owner: "person",
         command: "systemctl restart app",
         resolvedCommand: "systemctl restart app",
-        commandHash: "a".repeat(64),
       }),
     ],
-  };
+    {
+      title: "Deploy",
+      nextStepId: 2,
+      owner,
+      agentLabel: owner?.label ?? "lead",
+    },
+  );
 }
 
-function api(owner: Record<string, string> | null) {
-  const data = runbook(owner);
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : data,
-    })),
-    post: vi.fn(async () => ({ data })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = (owner: Record<string, string> | null) =>
+  fakeApi({ detail: runbook(owner) });
 
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Deploy"));
-  await screen.findByRole("heading", { name: "Read the dashboard" });
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
-const buttons = (id: number) =>
-  [...card(id).querySelectorAll("button")].map((button) => button.textContent);
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Deploy", shows: "Read the dashboard" });
 
 describe("agent steps", () => {
   it("wait for the agent: no Run, Send or Done, only Skip", async () => {
@@ -181,15 +105,14 @@ describe("agent steps", () => {
   });
 
   it("use the token name when the owner has no label, and no line without an owner", async () => {
-    await open(api({ task: "T-9" }));
+    const first = await open(api({ task: "T-9" }));
     expect(document.querySelector("[data-runbook-owner]")!.textContent).toBe(
       "Agent: lead · task T-9",
     );
     expect(card(2).querySelector("[data-agent-waiting]")!.textContent).toBe(
       "Waiting for the agent (lead)",
     );
-    await rendered?.deactivate();
-    rendered = null;
+    await first.deactivate();
     await open(api(null));
     expect(document.querySelector("[data-runbook-owner]")).toBeNull();
   });

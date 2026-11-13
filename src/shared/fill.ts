@@ -29,8 +29,7 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfm } from "micromark-extension-gfm";
 import { gfmFromMarkdown } from "mdast-util-gfm";
-
-const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}/g;
+import { PLACEHOLDER } from "./names.js";
 
 export type TextValues = Record<string, string>;
 
@@ -370,4 +369,41 @@ export function uniqueNames(...lists: Array<readonly string[]>): string[] {
     for (const name of list) if (!out.includes(name)) out.push(name);
   }
   return out;
+}
+
+/** A step's text with its values filled in. */
+export interface StepText {
+  /** `body`: escaped outside code, raw inside it. */
+  body: string;
+  /** `expect`, as `body`. */
+  expect: string;
+  /** `where`, plain text, values as they are; null when it has none. */
+  where: string | null;
+  /** Names body, expect and where use that have no value. */
+  missing: string[];
+}
+
+/**
+ * Fills a step's body, expect and where with the values its command gets.
+ * The server sends the result as resolvedBody, resolvedExpect,
+ * resolvedWhere and textMissing, with no mark (a value not set stays
+ * `{{name}}`); the page fills the same text with a marker for it.
+ */
+export function fillStepText(
+  step: { body: string; expect: string; where?: string | null },
+  values: TextValues,
+  mark: MissingMark = null,
+): StepText {
+  const body = fillMarkdown(step.body, values, mark);
+  const expect = fillMarkdown(step.expect, values, mark);
+  const where =
+    step.where === null || step.where === undefined
+      ? null
+      : fillPlain(step.where, values, mark);
+  return {
+    body: body.text,
+    expect: expect.text,
+    where: where ? where.text : null,
+    missing: uniqueNames(body.missing, expect.missing, where?.missing ?? []),
+  };
 }

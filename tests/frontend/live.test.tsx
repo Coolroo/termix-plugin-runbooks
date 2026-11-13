@@ -1,35 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { formatDuration } from "../../src/frontend/ui/format";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import { formatDuration } from "../../src/frontend/StepCard";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  fakeApi,
+  flush,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+  type FakeApi,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
-
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  vi.useRealTimers();
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Deploy",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 0, failed: 0, total: 1 },
-};
+useRenderedApp();
 
 /**
  * The server side of one running command: its output grows when told to,
@@ -42,104 +27,66 @@ function server() {
     started: Date.now() - 60_000,
     running: true,
   };
-  const runbook = () => ({
-    ...summary,
-    summary: "",
-    values: {},
-    effectiveValues: [],
-    nextStepId: 2,
-    steps: [
+  const runbook = () =>
+    makeRunbook(
+      [
+        makeStep({
+          id: 2,
+          position: 1,
+          title: "Build",
+          command: "make",
+          resolvedCommand: "make",
+          commandHash: "b".repeat(64),
+          status: state.running ? "pending" : "done",
+          runs: [
+            makeRun({
+              id: 21,
+              stepId: 2,
+              status: state.running ? "running" : "done",
+              command: "make",
+              commandHash: "b".repeat(64),
+              startedAt: new Date(state.started).toISOString(),
+              finishedAt: null,
+              exitCode: state.running ? null : 0,
+              stdout: state.stdout,
+              running: state.running,
+              lastOutputAt: new Date(state.lastOutput).toISOString(),
+              elapsedMs: state.running ? Date.now() - state.started : null,
+              silentMs: state.running ? Date.now() - state.lastOutput : null,
+            }),
+          ],
+        }),
+      ],
       {
-        id: 2,
-        runbookId: 7,
-        position: 1,
-        title: "Build",
-        body: "",
-        hostId: 1,
-        hostName: "web-1",
-        command: "make",
-        resolvedCommand: "make",
-        commandHash: "b".repeat(64),
-        missing: [],
-        expect: "",
-        captures: [],
-        hideOutputFromAgents: false,
-        status: state.running ? "pending" : "done",
-        skipReason: null,
-        ownerNote: "",
-        timeoutMs: null,
-        revision: 1,
-        runs: [
-          {
-            id: 21,
-            stepId: 2,
-            runbookId: 7,
-            mode: "exec",
-            status: state.running ? "running" : "done",
-            hostId: 1,
-            command: "make",
-            commandHash: "b".repeat(64),
-            userId: "alice",
-            startedAt: new Date(state.started).toISOString(),
-            finishedAt: null,
-            exitCode: state.running ? null : 0,
-            stdout: state.stdout,
-            stderr: "",
-            truncated: false,
-            timedOut: false,
-            pastedOutput: null,
-            error: null,
-            captured: {},
-            running: state.running,
-            lastOutputAt: new Date(state.lastOutput).toISOString(),
-            elapsedMs: state.running ? Date.now() - state.started : null,
-            silentMs: state.running ? Date.now() - state.lastOutput : null,
-          },
-        ],
+        title: "Deploy",
+        progress: { done: 0, failed: 0, total: 1 },
+        nextStepId: 2,
       },
-    ],
+    );
+  const client = fakeApi({
+    detail: runbook,
+    post: async () => ({ data: {} }),
   });
-  const client = {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook(),
-    })),
-    post: vi.fn(async () => ({ data: {} })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
   return { state, client };
 }
 
-/** Lets promises and due timers run under fake timers. */
-const flush = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
-
-async function openRunbook(client: unknown, fake = false) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+async function open(client: FakeApi, fake = false) {
+  await openRunbook(client, {
+    title: "Deploy",
+    fakeTimers: fake,
+    shows: () => screen.findByText("building 1/3", { exact: false }),
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  if (fake) {
-    await flush();
-    fireEvent.click(screen.getByText("Deploy"));
-    await flush();
-  } else {
-    fireEvent.click(await screen.findByText("Deploy"));
-    await screen.findByText("building 1/3", { exact: false });
-  }
-  return document.querySelector('[data-step="2"]') as HTMLElement;
+  return card(2);
 }
 
-const detailCalls = (client: { get: ReturnType<typeof vi.fn> }) =>
+const detailCalls = (client: FakeApi) =>
   client.get.mock.calls.filter(([url]) => url === "/runbooks/7").length;
 
 describe("a running step", () => {
   it("shows the output as it grows, the elapsed time and the silence", async () => {
     vi.useFakeTimers();
     const { state, client } = server();
-    const card = await openRunbook(client, true);
+    const card = await open(client, true);
 
     const output = card.querySelector(
       `[data-live-output="${locales.run.stdout}"]`,
@@ -196,7 +143,7 @@ describe("a running step", () => {
 
   it("stops the command after a confirm", async () => {
     const { client } = server();
-    const card = await openRunbook(client);
+    const card = await open(client);
     fireEvent.click(within(card).getByText(locales.step.stop));
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("Stop step 1?")).toBeTruthy();

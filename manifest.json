@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"

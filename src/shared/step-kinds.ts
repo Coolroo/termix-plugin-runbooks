@@ -14,6 +14,8 @@
  * Shared by the server and the UI. No React here.
  */
 
+import { isAgentStep, isOutsideStep } from "./steps.js";
+
 /** Translates a key, as i18next's `t`. */
 export type Translate = (
   key: string,
@@ -90,7 +92,7 @@ export const BUILT_IN_KINDS: StepKind[] = [
       t("kind.lead", { label: runbook.agentLabel || t("kind.agent") }),
     // The plugin's own blue.
     defaultColor: { light: "#1d4ed8", dark: "#60a5fa" },
-    matches: (step) => step.owner === "agent",
+    matches: isAgentStep,
     priority: 50,
   },
   {
@@ -144,7 +146,7 @@ export const BUILT_IN_KINDS: StepKind[] = [
       light: "color-mix(in oklab, var(--warning) 55%, var(--foreground))",
       dark: "var(--warning)",
     },
-    matches: (step) => step.command !== null && Boolean(step.where),
+    matches: isOutsideStep,
     priority: 30,
   },
   {
@@ -193,7 +195,7 @@ export const BUILT_IN_MARKS: StepMark[] = [
 ];
 
 /** A kind id: what the settings key a color by. */
-export const KIND_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const KIND_ID = /^[a-z][a-z0-9-]{0,31}$/;
 
 const kinds = new Map<string, StepKind>();
 const marks = new Map<string, StepMark>();
@@ -267,7 +269,7 @@ export function nextKind(
 export const COLORS_SETTING = "stepColors";
 
 /** #rgb or #rrggbb, and nothing else: the value goes into a style. */
-export const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 const MAX_COLORS = 50;
 

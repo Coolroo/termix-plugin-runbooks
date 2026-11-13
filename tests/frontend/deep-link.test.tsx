@@ -2,23 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import {
   navigation,
   parseRunbookId,
   createRunbookLink,
-} from "../../src/frontend/deep-link";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+} from "../../src/frontend/runbooks/deep-link";
+import { makeRunbook, useRenderedApp } from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
+const renderApp = useRenderedApp();
 const PENDING_KEY = "termix-runbooks:open-runbook";
 
-let rendered: RenderedPluginApp | null = null;
 const realReplace = navigation.replace;
 
 beforeEach(() => {
@@ -29,25 +21,15 @@ beforeEach(() => {
 afterEach(async () => {
   navigation.replace = realReplace;
   vi.restoreAllMocks();
-  await rendered?.deactivate();
-  rendered = null;
 });
 
-const runbook = {
+const runbook = makeRunbook([], {
   id: 12,
   title: "Rotate logs",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
   revision: 1,
   progress: { done: 0, failed: 0, total: 0 },
   summary: "Rotate the **logs**.",
-  values: {},
-  effectiveValues: [],
-  nextStepId: null,
-  steps: [],
-};
+});
 
 function api(found = true) {
   return {
@@ -87,7 +69,7 @@ describe("runbook links", () => {
   });
 
   it("notes the id and goes on to the app", async () => {
-    rendered = await renderWithApp(plugin, { manifest, locales });
+    const rendered = await renderApp(undefined);
     const RunbookLink = createRunbookLink(rendered.app);
     render(
       <RunbookLink
@@ -100,7 +82,7 @@ describe("runbook links", () => {
   });
 
   it("ignores a bad id but still goes on to the app", async () => {
-    rendered = await renderWithApp(plugin, { manifest, locales });
+    const rendered = await renderApp(undefined);
     const RunbookLink = createRunbookLink(rendered.app);
     for (const id of ["abc", "-3", "0", "4.2"]) {
       render(
@@ -116,7 +98,7 @@ describe("runbook links", () => {
 
   it("opens the Runbooks tab on the noted runbook once the shell is ready", async () => {
     sessionStorage.setItem(PENDING_KEY, "12");
-    rendered = await renderWithApp(plugin, { manifest, locales, ready: true });
+    const rendered = await renderApp(undefined, { ready: true });
     const opens = rendered.shellCalls.filter((c) => c.method === "openTab");
     expect(opens).toHaveLength(1);
     expect(opens[0].args[0]).toBeNull();
@@ -130,18 +112,14 @@ describe("runbook links", () => {
 
   it("opens nothing for a bad noted id", async () => {
     sessionStorage.setItem(PENDING_KEY, "12; drop");
-    rendered = await renderWithApp(plugin, { manifest, locales, ready: true });
+    const rendered = await renderApp(undefined, { ready: true });
     expect(rendered.shellCalls.some((c) => c.method === "openTab")).toBe(false);
     expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
   });
 
   it("shows the linked runbook in the tab", async () => {
     const client = api();
-    rendered = await renderWithApp(plugin, {
-      manifest,
-      locales,
-      api: client as never,
-    });
+    const rendered = await renderApp(client);
     rendered.renderTab("runbooks", {
       tab: {
         id: "runbooks",
@@ -159,11 +137,7 @@ describe("runbook links", () => {
   it("falls back to the list when the runbook is not there", async () => {
     const error = vi.spyOn(toast, "error");
     const client = api(false);
-    rendered = await renderWithApp(plugin, {
-      manifest,
-      locales,
-      api: client as never,
-    });
+    const rendered = await renderApp(client);
     rendered.renderTab("runbooks", {
       tab: {
         id: "runbooks",

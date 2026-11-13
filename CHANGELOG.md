@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.4.5
+
+### Fixed
+
+- The MCP tool schemas told agents a library secret path the server refuses (`mine/a/b/c/d/e`, or one with an empty part). Their library, app field and name patterns now come from the regular expressions the server checks with, and a test keeps them equal.
+- The agent API refuses a body that is not an object with 400 "body must be an object" when it creates or changes a runbook, adds steps or reorders them. An array was taken as an empty body before, and adding or reordering steps with no body said only that steps or stepIds were missing.
+- The wait timer of a Make a secret or Ask for a secret step had no test. A test now checks that an early Make it gets the 409 `wait` answer, and that `waitAnyway` makes the secret.
+- Copy in the boxes that show a new agent token or the notification signing secret once says "Copied" after a copy, as every other Copy button does.
+- A refused **Mark done** with pasted output, or a refused note save, reads the runbook again, as a refused **Stop** already did, so the page does not show a step that changed meanwhile.
+- The agent tokens page shows the server's error text only when it is text, and its general message otherwise, instead of turning any error value into text.
+- "Stored until" on a secret step uses the same time format as the rest of the page; a value that is not a date shows as it was sent instead of "Invalid Date".
+
+### Changed
+
+- The release and CI workflows follow the current Termix plugin template: write permissions only on the release job, only the two secrets it uses (`TERMIX_PAT`, `TERMIX_PLUGIN_SIGNING_KEY`) instead of every secret, and no `overwrite` mode. Dependabot updates npm packages (not the plugin SDK) and the pinned actions weekly.
+- The frontend tests share `tests/frontend/helpers.tsx`: the rendered app, typed builders for what the server sends (`makeSummary`, `makeStep`, `clickStep`, `makeRun`, `makeRunbook`), a fake of the routes (`fakeApi`), `openRunbook`, `card` and `flush`. Their fixtures now match the server: a wait names the previous step's `label`, the fake `GET /runbooks` sends the list fields only, and `GET /colors` sends no colors.
+- The backend tests share `useTestServer`, `setupRunbook` and `execResult` from `tests/backend/helpers.ts`, instead of a copy of each in every file.
+- The tests of `src/shared` code (values in text, SSH hosts, step numbers) moved to `tests/backend/shared/`.
+- `{{name}}` in a command is filled by `fillPlain` in `src/shared/fill.ts`, the filler of a step's `where`, instead of a copy in `src/backend/values.ts`. A new test pins the resolved text and hash of a set of commands, and they did not change. The agent view's `missing` comes from the same fill instead of a second scan of the command.
+- The rules on names live in `src/shared/names.ts`: the value and secret name (`NAME`, which was `VALUE_NAME` and `SECRET_NAME`), `{{name}}` (`PLACEHOLDER`), `MAX_SECRET_NAME`, `LIBRARY_REF`, `secretNameProblem`, `regexProblem` (the check on a capture, check or ask pattern) and `isOneLine`. The server's checks, the MCP schemas and the page's store line use them instead of their own copies; every error message is the same.
+- A step's `body`, `expect` and `where` are filled by one function, `fillStepText` in `src/shared/fill.ts`: the server's `resolvedBody`, `resolvedExpect`, `resolvedWhere` and `textMissing` come from it, and the page uses it with its "not set yet" marker instead of its own copy. The API sends the same fields as before.
+- What the person routes send is typed once, in `src/shared/api.ts`: runbooks, steps, runs, waits, inputs, secret states, amendments, progress, tokens and the 409 answers the page asks about (`ConflictBody`). The server's view builders (`personView`, `runbookSummary`, `amendmentView`, `progress`, `runSummary`, the runbook list) return these types, and `src/frontend/api-types.ts` re-exports them instead of a hand copy, so the server and the page type-check against one definition. Fields the server always sends are required, and the page no longer falls back from `agentLabel` to `createdBy` or from a step's `label` to its position. `Translate` has one definition.
+- Small rules have one definition each. The page numbers steps and matches a step's secrets with `stepLabel` and `stepRef` from `src/shared/steps.ts`, as the server does. `isAgentStep` and `isOutsideStep` there tell the step kinds, the step card, the person view and the routes which steps Termix never runs. `MAX_SENT_NOTE` lives in `src/shared/limits.ts`, and `secretLabel` (the name of the secret a step's input reads) in `src/shared/names.ts`.
+- One module (`gates.ts`) decides whether a step may be acted on: an agent step, a closed runbook, a replaced step, a stale page, missing values, the order and the wait timer. Run, Send to terminal, Done and Failed, secret steps and an agent's completion all use it, each asking in its own order. Send to terminal no longer asks about an agent step twice.
+- `events.endStep` ends a step everywhere, including the sweep at start-up. `judgeOutput` finds secrets, hides them, takes captures and only then runs checks, so checks still never see a secret.
+- `insertRun` fills in the fields that an unfinished or hand-ended run does not have. `events.changeRunbook`, `secrets.read`, `storedRun`, the audit helpers and one `APP_STORE_NEEDS` replace copies that were in two or three places.
+- `http.ts` (wrap, idParam, body, requireSignedIn, refuseApiKey) and `parse.ts` (InputError, strictObject, optionalText, parseOutcome) are shared by the person, agent and admin routes. Each keeps its own wording.
+- The store reads rows by id, nullable columns, query conditions and JSON patches through one helper each.
+- The page's text helpers (times, durations, sizes, waits, the input source, the host label, the run summary) live in `format.ts`, and its clocks (`useTick`, `useFetchedAt`, `useWaitRemaining`, `usePolling`) in `timers.ts`.
+- Run, Send to terminal and Make it or Save share one handler for the repeat, wait, order and stale answers, and every step and runbook action posts through `postRunbook` or `postThenLoad`. The in-pane prompts use `usePromptRequest` and `usePaneEscape`, and finding or opening a terminal is `openSessionFor` in `terminal.ts`.
+- Shared screen pieces live in `ui.tsx`: `SectionLabel`, `CodeBlock`, `CommandBlock`, `OutcomeButtons`, `PasteFirstHint`, `ShownOnce`, `RunbookStatusBadge`, `runbookMeta` and `LoadError`.
+- A step's kind, marks, color and state are worked out once per render, and the cards, the rail and the bar all use that one result.
+- New tests pin the refusals of every route and the 200-step limit, `judgeOutput`, the page's order and stale answers, and Skip, Reopen, Hide, Note and the runbook status buttons.
+- The code is in one folder per feature (`core`, `runbooks`, `values`, `running`, `checks`, `secrets`, `kinds`, `agents` on the server; `ui`, `runbooks`, `steps`, `running`, `secrets`, `kinds`, `nav`, `agents` on the page), and the large files are split: `service.ts`, the store, the MCP server, the person routes (one kit with the one set of running steps), the agent operations, the step card and the Runbooks tab. The routes, their guards and their order, the MCP tools, settings, permissions and tables are the same; `dist/openapi.json` lists the same paths in a new order. Bar items are registered in `src/frontend/nav/bar-items.tsx`.
+- Dead code is gone: `store.getEvent`, the server's re-export of `describeCheck`, two unread terminal session fields, and the `export` on constants and functions that only their own file uses.
+
 ## 1.4.4
 
 ### Added

@@ -1,118 +1,45 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
-});
-
-const summary = {
-  id: 7,
-  title: "Announce",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-07T10:00:00.000Z",
-  updatedAt: "2026-11-07T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 3 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: "true",
-    resolvedCommand: "true",
-    commandHash: "a".repeat(64),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-    stdin: null,
-    ...overrides,
-  };
-}
-
-const terminalRun = {
+const terminalRun = makeRun({
   id: 31,
   stepId: 2,
-  runbookId: 7,
   mode: "terminal",
   status: "awaiting-output",
-  hostId: 1,
   command: "uptime",
-  commandHash: "a".repeat(64),
-  userId: "alice",
-  startedAt: "2026-11-07T10:01:00.000Z",
   finishedAt: null,
   exitCode: null,
   stdout: null,
   stderr: null,
-  truncated: false,
-  timedOut: false,
-  pastedOutput: null,
-  error: null,
-  captured: {},
   running: false,
-};
+});
 
-const runbook = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 1,
-  steps: [
-    step({
-      id: 1,
-      position: 1,
-      title: "Tell the team",
-      hostId: null,
-      hostName: null,
-      command: null,
-      resolvedCommand: null,
-      commandHash: null,
-      ownerNote: "posted",
-    }),
-    step({
+const runbook = makeRunbook(
+  [
+    clickStep({ id: 1, title: "Tell the team", ownerNote: "posted" }),
+    makeStep({
       id: 2,
-      position: 2,
       title: "Uptime",
       command: "uptime",
       resolvedCommand: "uptime",
       runs: [terminalRun],
     }),
-    step({
+    clickStep({
       id: 3,
-      position: 3,
       title: "Told",
-      hostId: null,
-      hostName: null,
-      command: null,
-      resolvedCommand: null,
-      commandHash: null,
       status: "done",
       runs: [
         {
@@ -129,33 +56,13 @@ const runbook = {
       ],
     }),
   ],
-};
+  { title: "Announce", nextStepId: 1 },
+);
 
-function api() {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : runbook,
-    })),
-    post: vi.fn(async () => ({ data: runbook })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
+const api = () => fakeApi({ detail: runbook });
 
-async function open(client: ReturnType<typeof api>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Announce"));
-  await screen.findByRole("heading", { name: "Tell the team" });
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
+const open = (client: ReturnType<typeof api>) =>
+  openRunbook(client, { title: "Announce", shows: "Tell the team" });
 
 describe("steps with no command", () => {
   it("have Done and Failed buttons, and a separate Skip", async () => {

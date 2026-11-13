@@ -1,64 +1,44 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
-import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
+import { fireEvent } from "@testing-library/react";
 import {
   barItems,
   pressedKey,
   registerBarItem,
-} from "../../src/frontend/bar-items";
+} from "../../src/frontend/nav/bar-items";
 import {
   RAIL_MAX,
   RAIL_MIN,
   railSize,
   railWindow,
   stepsInView,
-} from "../../src/frontend/StepNav";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+} from "../../src/frontend/nav/StepNav";
+import type { RunbookStatus, StepStatus } from "../../src/frontend/api-types";
+import {
+  fakeApi,
+  locales,
+  makeRunbook,
+  makeStep,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
 const removers: Array<() => void> = [];
 
-afterEach(async () => {
+afterEach(() => {
   vi.restoreAllMocks();
-  await rendered?.deactivate();
-  rendered = null;
   for (const remove of removers.splice(0)) remove();
 });
 
-function step(id: number, status: string) {
-  return {
+const step = (id: number, status: StepStatus) =>
+  makeStep({
     id,
     runbookId: 9,
-    position: id,
     title: `Step title ${id}`,
-    body: "",
-    hostId: 1,
-    hostName: "web-1",
-    command: "true",
-    resolvedCommand: "true",
     commandHash: String(id).padStart(64, "0"),
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
     status,
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
-    revision: 1,
-    runs: [],
-    wait: null,
-  };
-}
+  });
 
 /**
  * A runbook of `total` steps, the first `done` of them done; with
@@ -67,19 +47,9 @@ function step(id: number, status: string) {
 function server(
   total: number,
   done: number,
-  status = "open",
+  status: RunbookStatus = "open",
   failedNext = false,
 ) {
-  const summary = {
-    id: 9,
-    title: "Long one",
-    status,
-    createdBy: "lead",
-    createdAt: "2026-11-12T10:00:00.000Z",
-    updatedAt: "2026-11-12T10:05:00.000Z",
-    revision: 3,
-    progress: { done, failed: 0, total },
-  };
   const steps = Array.from({ length: total }, (_, index) =>
     step(
       index + 1,
@@ -90,25 +60,19 @@ function server(
           : "pending",
     ),
   );
-  return {
-    get: vi.fn(async (url: string) => ({
-      data:
-        url === "/runbooks"
-          ? [summary]
-          : {
-              ...summary,
-              summary: "",
-              values: {},
-              effectiveValues: [],
-              nextStepId: done < total && status === "open" ? done + 1 : null,
-              steps,
-            },
-    })),
-    post: vi.fn(async (): Promise<{ data: unknown }> => ({ data: {} })),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
+  return fakeApi({
+    detail: makeRunbook(steps, {
+      id: 9,
+      title: "Long one",
+      status,
+      createdAt: "2026-11-12T10:00:00.000Z",
+      updatedAt: "2026-11-12T10:05:00.000Z",
+      revision: 3,
+      progress: { done, failed: 0, total },
+      nextStepId: done < total && status === "open" ? done + 1 : null,
+    }),
+    post: async () => ({ data: {} }),
+  });
 }
 
 const rect = (top: number, bottom: number, width = 0) =>
@@ -147,16 +111,8 @@ function layout(paneWidth: number, scrollTop = 0) {
   );
 }
 
-async function open(client: ReturnType<typeof server>) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
-  });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Long one"));
-  await screen.findByRole("heading", { name: "Step title 1" });
-}
+const open = (client: ReturnType<typeof server>) =>
+  openRunbook(client, { title: "Long one", shows: "Step title 1" });
 
 const bar = () => document.querySelector("[data-next-bar]") as HTMLElement;
 const rail = () => document.querySelector("[data-step-rail]") as HTMLElement;
@@ -465,5 +421,41 @@ describe("the rail and the bar", () => {
     expect(bar().querySelector("[data-bar-caption]")!.textContent).toBe(
       "Runbook Abandoned",
     );
+  });
+});
+
+describe("one kind for the card, the rail and the bar", () => {
+  it("names the last step's kind the same way in all three", async () => {
+    const client = fakeApi({
+      detail: makeRunbook(
+        [
+          makeStep({ id: 1, title: "Step title 1", status: "done" }),
+          makeStep({
+            id: 2,
+            title: "Finish up",
+            hostId: null,
+            hostName: null,
+            command: null,
+            resolvedCommand: null,
+            commandHash: null,
+          }),
+        ],
+        { title: "Long one" },
+      ),
+    });
+    await open(client);
+    const cardKind = card(2)
+      .querySelector("header [data-kind]")!
+      .getAttribute("data-kind");
+    expect(cardKind).toBe("finish");
+    expect(card(2).getAttribute("data-kind")).toBe("finish");
+    const barChip = bar().querySelector("[data-kind]") as HTMLElement;
+    expect(barChip.getAttribute("data-kind")).toBe("finish");
+    expect(barChip.textContent).toBe(
+      card(2).querySelector("header [data-kind]")!.textContent,
+    );
+    expect(
+      rail().querySelector("[data-rail-step='2']")!.getAttribute("data-state"),
+    ).toBe("current");
   });
 });

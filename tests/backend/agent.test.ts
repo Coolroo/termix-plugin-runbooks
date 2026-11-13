@@ -1,18 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   agentRunbook,
+  execResult,
   runStep,
-  startServer,
+  useTestServer,
   view,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const twoSteps = {
   title: "Restart web",
@@ -35,14 +31,14 @@ const twoSteps = {
 
 describe("token auth", () => {
   it("opens only the agent routes to requests without a login", async () => {
-    server = await startServer();
+    const server = await startServer();
     expect(server.mock.httpRouters).toEqual([
       expect.objectContaining({ public: ["/agent/*"] }),
     ]);
   });
 
   it("refuses a missing, wrong or revoked token", async () => {
-    server = await startServer();
+    const server = await startServer();
     const missing = await server.agent("GET", "/hosts", null);
     expect(missing.status).toBe(401);
     expect(missing.headers["www-authenticate"]).toMatch(/Bearer/);
@@ -74,7 +70,7 @@ describe("token auth", () => {
   });
 
   it("stores only the hash of a token", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const rows = server.db.sqlite
       .prepare("SELECT * FROM p_runbooks_tokens")
@@ -84,14 +80,16 @@ describe("token auth", () => {
   });
 
   it("refuses a token whose creator lost runbooks.use", async () => {
-    server = await startServer({ permissions: ["runbooks.manage-tokens"] });
+    const server = await startServer({
+      permissions: ["runbooks.manage-tokens"],
+    });
     const token = await server.makeToken();
     const refused = await server.agent("GET", "/hosts", token);
     expect(refused.status).toBe(403);
   });
 
   it("rate limits each token", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     let last = 0;
     for (let i = 0; i < 121; i++) {
@@ -104,14 +102,14 @@ describe("token auth", () => {
   });
 
   it("only person routes can make tokens", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     expect((await server.agent("POST", "/tokens", token, {})).status).toBe(404);
     // A person without manage-tokens cannot either.
     await server.close();
-    server = await startServer({ permissions: ["runbooks.use"] });
+    const user = await startServer({ permissions: ["runbooks.use"] });
     expect(
-      (await server.person("POST", "/tokens", { name: "x", hostIds: [1] }))
+      (await user.person("POST", "/tokens", { name: "x", hostIds: [1] }))
         .status,
     ).toBe(403);
   });
@@ -119,7 +117,7 @@ describe("token auth", () => {
 
 describe("agent API", () => {
   it("lists hosts without anything but id, name, address and folder", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const hosts = await server.agent("GET", "/hosts", token);
     expect(hosts.body[0]).toEqual({
@@ -131,7 +129,7 @@ describe("agent API", () => {
   });
 
   it("creates, reads and updates a runbook", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await agentRunbook(server, token, twoSteps);
     expect(created).toMatchObject({
@@ -171,7 +169,7 @@ describe("agent API", () => {
   });
 
   it("refuses a host outside the token's list", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken("lead", "alice", [1]);
     const hosts = await server.agent("GET", "/hosts", token);
     expect(hosts.body.map((h: { id: number }) => h.id)).toEqual([1]);
@@ -200,7 +198,7 @@ describe("agent API", () => {
   });
 
   it("needs at least one host the person can connect to for a token", async () => {
-    server = await startServer();
+    const server = await startServer();
     for (const hostIds of [undefined, [], [99], [1, "2"]]) {
       const made = await server.person("POST", "/tokens", {
         name: "x",
@@ -234,7 +232,7 @@ describe("agent API", () => {
   });
 
   it("changes a token's host list", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken("lead", "alice", [1]);
     const id = (await server.person("GET", "/tokens")).body[0].id;
 
@@ -286,7 +284,7 @@ describe("agent API", () => {
   });
 
   it("refuses bad steps and bad captures", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const noHost = await server.agent("POST", "/runbooks", token, {
       title: "x",
@@ -313,8 +311,35 @@ describe("agent API", () => {
     expect(badName.status).toBe(400);
   });
 
+  it("refuses a body that is not an object", async () => {
+    const server = await startServer();
+    const token = await server.makeToken();
+    const created = await agentRunbook(server, token, twoSteps);
+    const stepIds = created.steps.map((s: { id: number }) => s.id);
+    const calls: Array<[string, string, unknown]> = [
+      ["POST", "/runbooks", [{ title: "x" }]],
+      ["PATCH", `/runbooks/${created.id}`, [{ title: "x" }]],
+      ["POST", `/runbooks/${created.id}/steps`, [{ title: "x" }]],
+      ["POST", `/runbooks/${created.id}/steps`, undefined],
+      ["POST", `/runbooks/${created.id}/reorder`, [...stepIds].reverse()],
+      ["POST", `/runbooks/${created.id}/reorder`, undefined],
+    ];
+    for (const [method, path, body] of calls) {
+      const refused = await server.agent(method, path, token, body);
+      expect(refused.status, `${method} ${path}`).toBe(400);
+      expect(refused.body.error).toBe("body must be an object");
+    }
+    // Nothing changed.
+    const after = await server.agent("GET", `/runbooks/${created.id}`, token);
+    expect(after.body.steps.map((s: { id: number }) => s.id)).toEqual(stepIds);
+    expect(after.body.title).toBe("Restart web");
+    expect((await server.agent("GET", "/runbooks", token)).body).toHaveLength(
+      1,
+    );
+  });
+
   it("keeps runbooks apart between token owners", async () => {
-    server = await startServer();
+    const server = await startServer();
     const alice = await server.makeToken("a", "alice");
     const bob = await server.makeToken("b", "bob");
     const created = await agentRunbook(server, alice, twoSteps);
@@ -325,7 +350,7 @@ describe("agent API", () => {
   });
 
   it("adds, edits, reorders and removes steps that have not run", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await agentRunbook(server, token, twoSteps);
     const added = await server.agent(
@@ -366,7 +391,7 @@ describe("agent API", () => {
   });
 
   it("cannot change, remove or insert before a step that ran", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await agentRunbook(server, token, twoSteps);
     const first = created.steps[0].id;
@@ -404,7 +429,7 @@ describe("agent API", () => {
   });
 
   it("can never run, complete, skip or note", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await agentRunbook(server, token, twoSteps);
     const stepId = created.steps[0].id;
@@ -448,7 +473,7 @@ describe("agent API", () => {
   });
 
   it("hides output and captured values of hidden steps from agents", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await agentRunbook(server, token, {
       title: "Secrets",
@@ -462,13 +487,9 @@ describe("agent API", () => {
         { title: "Use key", hostId: 1, command: "use {{key}}" },
       ],
     });
-    server.setExec(async () => ({
-      stdout: "key=s3cr3t-value\n",
-      stderr: "warn s3cr3t-value",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    server.setExec(async () =>
+      execResult("key=s3cr3t-value\n", { stderr: "warn s3cr3t-value" }),
+    );
     const [read, use] = created.steps;
     // The person hides the first step.
     expect(
@@ -532,7 +553,7 @@ describe("MCP", () => {
   }
 
   it("initializes and lists the tools", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const init = await rpc(server, token, "initialize", {
       protocolVersion: "2025-03-26",
@@ -576,7 +597,7 @@ describe("MCP", () => {
   });
 
   it("creates a runbook and reads it back through tools/call", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const created = await rpc(server, token, "tools/call", {
       name: "create_runbook",
@@ -627,7 +648,7 @@ describe("MCP", () => {
   });
 
   it("needs the token too", async () => {
-    server = await startServer();
+    const server = await startServer();
     const reply = await server.agent("POST", "/mcp", null, {
       jsonrpc: "2.0",
       id: 1,

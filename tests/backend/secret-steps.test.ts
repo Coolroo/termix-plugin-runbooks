@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   agentRunbook,
   auditText,
   everything,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
   type TestServer,
 } from "./helpers";
@@ -13,15 +15,14 @@ import {
   SECRET_FORMATS,
   type SecretFormat,
 } from "../../src/shared/secret-steps";
-import { generateSecret, passphrase, pick } from "../../src/backend/generate";
-import { WORDS } from "../../src/backend/wordlist";
+import {
+  generateSecret,
+  passphrase,
+  pick,
+} from "../../src/backend/secrets/generate";
+import { WORDS } from "../../src/backend/secrets/wordlist";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -40,18 +41,14 @@ const reader = (name: string) => ({
   stdin: { from: "secret", name },
 });
 
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   options: { secrets?: boolean } = { secrets: true },
-) {
-  server = await startServer({ secrets: options.secrets });
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, {
+) =>
+  setupRunbook(steps, {
     title: "Secrets",
-    steps,
+    server: { secrets: options.secrets },
   });
-  return { s: server, token, runbook };
-}
 
 /** Make it or Save, as the page does, with what the view showed. */
 async function secret(
@@ -118,10 +115,10 @@ describe("the step fields", () => {
   });
 
   it("have each format's length bounds and default", async () => {
-    server = await startServer({ secrets: true });
+    const server = await startServer({ secrets: true });
     const token = await server.makeToken();
     const make = (generate: Record<string, unknown>) =>
-      server!.agent("POST", "/runbooks", token, {
+      server.agent("POST", "/runbooks", token, {
         title: "x",
         steps: [{ title: "Make", generate: { name: "x", ...generate } }],
       });
@@ -148,10 +145,10 @@ describe("the step fields", () => {
   });
 
   it("refuse a bad format, name, label, pattern or store with 400", async () => {
-    server = await startServer({ secrets: true });
+    const server = await startServer({ secrets: true });
     const token = await server.makeToken();
     const error = async (step: Record<string, unknown>) => {
-      const made = await server!.agent("POST", "/runbooks", token, {
+      const made = await server.agent("POST", "/runbooks", token, {
         title: "x",
         steps: [{ title: "Step", ...step }],
       });
@@ -201,10 +198,10 @@ describe("the step fields", () => {
   });
 
   it("refuse an agent's step, a command, a host and the other run fields", async () => {
-    server = await startServer({ secrets: true });
+    const server = await startServer({ secrets: true });
     const token = await server.makeToken();
     const error = async (step: Record<string, unknown>) => {
-      const made = await server!.agent("POST", "/runbooks", token, {
+      const made = await server.agent("POST", "/runbooks", token, {
         title: "x",
         steps: [step],
       });
@@ -230,7 +227,7 @@ describe("the step fields", () => {
   });
 
   it("let a later step read a runbook secret by name, and point library and app readers elsewhere", async () => {
-    server = await startServer({ secrets: true });
+    const server = await startServer({ secrets: true });
     const token = await server.makeToken();
     const ok = await server.agent("POST", "/runbooks", token, {
       title: "x",
@@ -415,25 +412,17 @@ describe("Make a secret", () => {
     );
 
     // A later step gets it on standard input; its output hides it.
-    s.setExec(async () => ({
-      stdout: `logged in with ${value.value}\n`,
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult(`logged in with ${value.value}\n`));
     const used = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(used.body.status).toBe("done");
     expect(s.channels[0].stdin).toBe(`${value.value}\n`);
     expect(used.body.stdout).toBe("logged in with [secret:db_password]\n");
     // Every later output hides it, also of a step that does not read it.
-    s.setExec(async () => ({
-      stdout: `password=${value.value}\n`,
-      stderr: `warn ${value.value}`,
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () =>
+      execResult(`password=${value.value}\n`, {
+        stderr: `warn ${value.value}`,
+      }),
+    );
     const other = await runStep(s, runbook.id, runbook.steps[2].id);
     expect(other.body.stdout).toBe("password=[secret:db_password]\n");
     expect(other.body.stderr).toBe("warn [secret:db_password]");
@@ -559,13 +548,7 @@ describe("Ask for a secret", () => {
       `runbook ${runbook.id} step 1 saved secret api_token in the runbook's secrets`,
     );
 
-    s.setExec(async () => ({
-      stdout: `token ${value} ok`,
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult(`token ${value} ok`));
     const used = await runStep(s, runbook.id, runbook.steps[1].id);
     expect(s.channels[0].stdin).toBe(`${value}\n`);
     expect(used.body.stdout).toBe("token [secret:api_token] ok");
@@ -774,7 +757,7 @@ describe("without OpenBao Secrets", () => {
   });
 
   it("does the same while OpenBao Secrets is not connected", async () => {
-    server = await startServer({ secrets: true });
+    const server = await startServer({ secrets: true });
     server.secrets!.connected = false;
     const token = await server.makeToken();
     const runbook = await agentRunbook(server, token, {

@@ -1,35 +1,28 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  agentRunbook,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
+  type ServerOptions,
   type FakeChannel,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
+const startServer = useTestServer();
 
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
-
-async function setup(
+const setup = (
   steps: Array<Record<string, unknown>>,
   extra: Record<string, unknown> = {},
-  options: Parameters<typeof startServer>[0] = {},
-) {
-  server = await startServer(options);
-  const token = await server.makeToken("lead");
-  const runbook = await agentRunbook(server, token, {
+  server: ServerOptions = {},
+) =>
+  setupRunbook(steps, {
     title: "Events",
     owner: { task: "T-1", agent: "session-1", label: "Lead" },
-    steps,
-    ...extra,
+    extra,
+    server,
   });
-  return { s: server, token, runbook };
-}
 
 /** The runbook's events as an agent reads them, oldest first. */
 async function eventsOf(s: TestServer, token: string, runbookId: number) {
@@ -41,13 +34,7 @@ async function eventsOf(s: TestServer, token: string, runbookId: number) {
 const brief = (events: Array<Record<string, unknown>>) =>
   events.map((event) => [event.type, event.stepPosition, event.reason]);
 
-const failing = async () => ({
-  stdout: "",
-  stderr: "boom",
-  code: 1,
-  truncated: false,
-  timedOut: false,
-});
+const failing = async () => execResult("", { stderr: "boom", code: 1 });
 
 describe("agent-turn", () => {
   it("is recorded when an agent step becomes the next step, once", async () => {
@@ -128,13 +115,7 @@ describe("step-failed", () => {
     const [exit, check, terminal, byHand, agent, agentCheck] = runbook.steps;
     s.setExec(failing);
     await runStep(s, runbook.id, exit.id);
-    s.setExec(async () => ({
-      stdout: "nope\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("nope\n"));
     await runStep(s, runbook.id, check.id);
     const sent = await runStep(s, runbook.id, terminal.id, {}, "terminal");
     await s.person("POST", `/runs/${sent.body.id}/complete`, {
@@ -194,13 +175,7 @@ describe("step-failed", () => {
       {},
       { secrets: true },
     );
-    s.setExec(async () => ({
-      stdout: "no token here\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("no token here\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body.status).toBe("failed");
     expect(brief(await eventsOf(s, token, runbook.id))).toEqual([
@@ -210,7 +185,7 @@ describe("step-failed", () => {
 
   it("says interrupted for a run a restart left running", async () => {
     const at = new Date().toISOString();
-    server = await startServer({
+    const server = await startServer({
       seed: (db) => {
         db.sqlite
           .prepare(
@@ -306,7 +281,7 @@ describe("runbook-done and step-done", () => {
   });
 
   it("refuses an unknown notify type", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     for (const notify of [["everything"], "step-done", [1]]) {
       const reply = await server.agent("POST", "/runbooks", token, {

@@ -1,25 +1,21 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   checkHidden,
   checksProblem,
   evaluateChecks,
+  judgeOutput,
   type Check,
   type CheckedRun,
-} from "../../src/backend/checks";
+} from "../../src/backend/checks/checks";
 import {
-  agentRunbook,
+  execResult,
   runStep,
-  startServer,
+  setupRunbook,
+  useTestServer,
   view,
-  type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const exec = (overrides: Partial<CheckedRun> = {}): CheckedRun => ({
   mode: "exec",
@@ -200,7 +196,7 @@ describe("validation", () => {
   });
 
   it("refuses a bad check through the agent API with 400", async () => {
-    server = await startServer();
+    const server = await startServer();
     const token = await server.makeToken();
     const refused = await server.agent("POST", "/runbooks", token, {
       title: "Bad",
@@ -229,12 +225,8 @@ describe("validation", () => {
   });
 });
 
-async function setup(steps: Array<Record<string, unknown>>) {
-  server = await startServer();
-  const token = await server.makeToken();
-  const runbook = await agentRunbook(server, token, { title: "Checks", steps });
-  return { s: server, token, runbook };
-}
+const setup = (steps: Array<Record<string, unknown>>) =>
+  setupRunbook(steps, { title: "Checks" });
 
 describe("checks when a run ends", () => {
   it("a failed check fails the step even on exit code 0", async () => {
@@ -265,13 +257,7 @@ describe("checks when a run ends", () => {
       label: "nginx runs",
     });
 
-    s.setExec(async () => ({
-      stdout: "nginx.service: inactive (dead)\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("nginx.service: inactive (dead)\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body).toMatchObject({
       status: "failed",
@@ -332,13 +318,7 @@ describe("checks when a run ends", () => {
         checks: [{ type: "value", name: "ver", matches: "^1\\." }],
       },
     ]);
-    s.setExec(async () => ({
-      stdout: "version 1.4.0\n",
-      stderr: "",
-      code: 0,
-      truncated: false,
-      timedOut: false,
-    }));
+    s.setExec(async () => execResult("version 1.4.0\n"));
     const ran = await runStep(s, runbook.id, runbook.steps[0].id);
     expect(ran.body).toMatchObject({
       status: "done",
@@ -437,5 +417,50 @@ describe("checkHidden (1.4.1)", () => {
     expect(checkHidden(checks, run, { id: "abc123" }, [])).toEqual(
       evaluateChecks(checks, run, { id: "abc123" }),
     );
+  });
+});
+
+describe("judgeOutput", () => {
+  const step = {
+    checks: [
+      { type: "contains", text: "token=[secret:token]" },
+      { type: "value", name: "host", equals: "web1" },
+    ] as Check[],
+    captures: [{ name: "host", pattern: "host=(\\S+)" }],
+    secretCaptures: [{ name: "token", pattern: "token=(\\S+)" }],
+  };
+  const output = "host=web1 token=s3cr3t\n";
+  const checked = exec({ stdout: output, stderr: "" });
+
+  it("finds the step's secrets first: checks and captures never see them", () => {
+    const judged = judgeOutput(step, "done", checked, output, [
+      { name: "made", value: "web1" },
+    ]);
+    expect(judged.found).toEqual({ values: { token: "s3cr3t" }, missing: [] });
+    expect(judged.hide.map((secret) => secret.name)).toEqual(["made", "token"]);
+    // The made secret hides the captured host too: the value check fails.
+    expect(judged.results?.map((result) => result.ok)).toEqual([true, false]);
+    expect(judged.final).toBe("failed");
+    expect(judged.captured).toEqual({});
+  });
+
+  it("keeps captures, hidden, only when the run ends done", () => {
+    const judged = judgeOutput(step, "done", checked, output, []);
+    expect(judged.final).toBe("done");
+    expect(judged.captured).toEqual({ host: "web1" });
+    const failed = judgeOutput(step, "failed", checked, output, []);
+    expect(failed.final).toBe("failed");
+    expect(failed.captured).toEqual({});
+  });
+
+  it("tests no checks without a checked run, and takes no captures when told", () => {
+    const unchecked = judgeOutput(step, "done", null, output, []);
+    expect(unchecked.results).toBeNull();
+    expect(unchecked.final).toBe("done");
+    const agent = judgeOutput(step, "done", checked, output, [], {
+      captures: false,
+    });
+    expect(agent.captured).toEqual({});
+    expect(agent.results?.map((result) => result.ok)).toEqual([true, false]);
   });
 });

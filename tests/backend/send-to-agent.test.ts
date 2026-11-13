@@ -1,19 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ADMIN_PERMISSIONS,
   agentRunbook,
   auditText,
-  startServer,
+  useTestServer,
   view,
   type TestServer,
 } from "./helpers";
 
-let server: TestServer | null = null;
-
-afterEach(async () => {
-  await server?.close();
-  server = null;
-});
+const startServer = useTestServer();
 
 const ON = {
   notifyEnabled: true,
@@ -27,7 +22,7 @@ async function setup(
   },
 ) {
   const sent: Array<{ body: string }> = [];
-  server = await startServer({
+  const server = await startServer({
     permissions: ADMIN_PERMISSIONS,
     settings,
     fetch: async (_url, init) => {

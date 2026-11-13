@@ -1,67 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import {
-  renderWithApp,
-  type RenderedPluginApp,
-} from "@termix-ssh/plugin-sdk/testing";
-import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
-import * as plugin from "../../src/frontend/index";
-import manifestJson from "../../manifest.json";
-import locales from "../../locales/en.json";
+  card,
+  chip,
+  clickStep,
+  fakeApi,
+  locales,
+  makeRun,
+  makeRunbook,
+  openRunbook,
+  useRenderedApp,
+} from "./helpers";
+import type { SecretStepView, Step } from "../../src/frontend/api-types";
 
-const manifest = manifestJson as unknown as PluginManifest;
+useRenderedApp();
 
-let rendered: RenderedPluginApp | null = null;
-
-afterEach(async () => {
-  await rendered?.deactivate();
-  rendered = null;
+afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const summary = {
-  id: 7,
-  title: "Secrets",
-  status: "open",
-  createdBy: "lead",
-  createdAt: "2026-11-10T10:00:00.000Z",
-  updatedAt: "2026-11-10T10:05:00.000Z",
-  revision: 4,
-  progress: { done: 1, failed: 0, total: 5 },
-};
-
-function step(overrides: Record<string, unknown>) {
-  return {
-    runbookId: 7,
-    body: "",
-    hostId: null,
-    hostName: null,
-    command: null,
-    resolvedCommand: null,
-    commandHash: null,
-    missing: [],
-    expect: "",
-    captures: [],
-    checks: [],
-    hideOutputFromAgents: false,
-    status: "pending",
-    skipReason: null,
-    ownerNote: "",
-    timeoutMs: null,
+const step = (overrides: Partial<Step> & { id: number }) =>
+  clickStep({
     revision: 3,
-    runs: [],
-    wait: null,
-    stdin: null,
     owner: "person",
     where: null,
     generate: null,
     ask: null,
     secretStep: null,
     ...overrides,
-  };
-}
+  });
 
-const ready = (kind: "generate" | "ask", name: string) => ({
+const ready = (kind: "generate" | "ask", name: string): SecretStepView => ({
   kind,
   name,
   mode: "ready",
@@ -71,20 +40,10 @@ const ready = (kind: "generate" | "ask", name: string) => ({
   expiresAt: null,
 });
 
-const data = {
-  ...summary,
-  summary: "",
-  values: {},
-  effectiveValues: [],
-  nextStepId: 2,
-  owner: null,
-  agentLabel: "lead",
-  secretsAvailable: true,
-  secrets: [],
-  steps: [
+const data = makeRunbook(
+  [
     step({
       id: 1,
-      position: 1,
       title: "Made before",
       status: "done",
       generate: {
@@ -99,26 +58,17 @@ const data = {
         expiresAt: "2026-11-17T10:00:00.000Z",
       },
       runs: [
-        {
+        makeRun({
           id: 50,
-          stepId: 1,
-          runbookId: 7,
           mode: "secret",
-          status: "done",
           hostId: null,
           command: "",
           commandHash: "",
-          userId: "alice",
           startedAt: "2026-11-10T10:01:00.000Z",
           finishedAt: "2026-11-10T10:01:00.000Z",
           exitCode: null,
           stdout: null,
           stderr: null,
-          truncated: false,
-          timedOut: false,
-          pastedOutput: null,
-          error: null,
-          captured: {},
           secrets: {
             used: [],
             captured: [
@@ -132,12 +82,11 @@ const data = {
               expiresAt: "2026-11-17T10:00:00.000Z",
             },
           },
-        },
+        }),
       ],
     }),
     step({
       id: 2,
-      position: 2,
       title: "Make the database password",
       generate: {
         name: "db_password",
@@ -149,7 +98,6 @@ const data = {
     }),
     step({
       id: 3,
-      position: 3,
       title: "Paste the API token",
       ask: {
         name: "api_token",
@@ -161,7 +109,6 @@ const data = {
     }),
     step({
       id: 4,
-      position: 4,
       title: "Make the app token",
       generate: {
         name: "app_token",
@@ -182,7 +129,6 @@ const data = {
     }),
     step({
       id: 5,
-      position: 5,
       title: "Log in",
       hostId: 1,
       hostName: "web-1",
@@ -204,34 +150,30 @@ const data = {
       },
     }),
   ],
-};
+  {
+    title: "Secrets",
+    createdAt: "2026-11-10T10:00:00.000Z",
+    updatedAt: "2026-11-10T10:05:00.000Z",
+    progress: { done: 1, failed: 0, total: 5 },
+    nextStepId: 2,
+    owner: null,
+    agentLabel: "lead",
+    secretsAvailable: true,
+    secrets: [],
+  },
+);
 
-function api(post?: (url: string, body: unknown) => Promise<unknown>) {
-  return {
-    get: vi.fn(async (url: string) => ({
-      data: url === "/runbooks" ? [summary] : url === "/colors" ? {} : data,
-    })),
-    post: vi.fn(post ?? (async () => ({ data }))),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  };
-}
-
-const card = (id: number) =>
-  document.querySelector(`[data-step="${id}"]`) as HTMLElement;
-const chip = (id: number) =>
-  card(id).querySelector("[data-kind]:not([data-step])") as HTMLElement;
+const api = (post?: (url: string, body: unknown) => Promise<unknown>) =>
+  fakeApi({
+    detail: data,
+    post,
+  });
 
 async function open(client = api()) {
-  rendered = await renderWithApp(plugin, {
-    manifest,
-    locales,
-    api: client as never,
+  await openRunbook(client, {
+    title: "Secrets",
+    shows: "Make the database password",
   });
-  rendered.renderTab("runbooks", { isVisible: true });
-  fireEvent.click(await screen.findByText("Secrets"));
-  await screen.findByRole("heading", { name: "Make the database password" });
   return client;
 }
 
