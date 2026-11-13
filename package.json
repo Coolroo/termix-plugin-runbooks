@@ -33,7 +33,7 @@
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "i18next": "^26.4.2",
-    "jsdom": "^30.0.1",
+    "jsdom": "^31.0.0",
     "light-my-request": "^6.8.0",
     "prettier": "3.9.9",
     "react": "^19.2.8",
