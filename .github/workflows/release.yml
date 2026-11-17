@@ -43,3 +43,27 @@ jobs:
     secrets:
       TERMIX_PAT: ${{ secrets.TERMIX_PAT }}
       TERMIX_PLUGIN_SIGNING_KEY: ${{ secrets.TERMIX_PLUGIN_SIGNING_KEY }}
+
+  # The shared workflow lists the releases right after it makes the draft, and
+  # GitHub's list can lag, so it may stop at "Publish the release" with "No
+  # draft found" after everything else passed. This job then waits for that
+  # draft and publishes it, as the shared step would have. It does nothing when
+  # the release job failed anywhere else.
+  finish:
+    needs: release
+    if: ${{ failure() && inputs.mode == 'release' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      - name: Publish the draft the release job left
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node .github/release-finish.mjs
