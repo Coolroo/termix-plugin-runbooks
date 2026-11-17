@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-17T06:09:17.000Z",
+  "updatedAt": "2026-11-17T06:33:04.000Z",
   "plugins": [
     {
       "id": "haw",
@@ -27,6 +27,29 @@
       "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.1/haw-1.0.1.tmxplug",
+          "sha256": "a45b756695f20dfb637329160e18051b4cc523ecce6eac2b19fbd87eb14cecf0",
+          "signature": "/xGglDgmcOsPp8hO2lDaeCVKUyNePhNB53MsHWtx8vn8DBpQPU2BeL7/vSKQFDqG+DH65fMCx7y4OoWRZ2xYCQ==",
+          "size": 60220,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.1",
+          "notes": "### Changed\n\n- The VM list keeps up by itself: while the tab is on screen, it reads each host's VMs again 2 seconds after the last read ended, so a VM that starts, stops or changes on the host shows without a click. A read never starts while another one or a power action is still running.",
+          "publishedAt": "2026-11-17T06:33:04Z"
+        },
         {
           "version": "1.0.0",
           "api": "1",
