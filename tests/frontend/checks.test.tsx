@@ -17,7 +17,7 @@ useRenderedApp();
 
 const summary = makeSummary({
   title: "Restart web",
-  progress: { done: 0, failed: 1, total: 2 },
+  progress: { done: 0, failed: 1, total: 2, notNeeded: 0 },
 });
 
 const checks: Check[] = [
@@ -156,5 +156,33 @@ describe("checks in the UI", () => {
         exitCode: 0,
       }),
     );
+  });
+});
+
+describe("checks with values (BUG-007)", () => {
+  it("shows the checks with their values filled in, on the card and in the Run confirm", async () => {
+    const filled = makeRunbook(
+      [
+        step({
+          id: 1,
+          title: "Check the image",
+          checks: [{ type: "contains", text: "app:{{ver}}@sha256:" }],
+          resolvedChecks: [{ type: "contains", text: "app:0.11.0@sha256:" }],
+        }),
+      ],
+      { ...summary, nextStepId: 1 },
+    );
+    await openRunbook(fakeApi({ list: [summary], detail: filled }), {
+      title: "Restart web",
+      shows: "Check the image",
+    });
+    expect(states(card(1))).toEqual([
+      ["pending", "○the output contains 'app:0.11.0@sha256:'"],
+    ]);
+    fireEvent.click(within(card(1)).getByText(locales.step.run));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByText("the output contains 'app:0.11.0@sha256:'"),
+    ).toBeTruthy();
   });
 });

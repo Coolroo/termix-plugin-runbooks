@@ -114,6 +114,21 @@ export const steps = defineTable(
     // JSON { name, label, pattern, store }: an Ask for a secret step
     // (1.4.2), whose value a person pastes once. Null: not such a step.
     ask: text(),
+    // either | terminal | run: whether Run, Send to terminal or both may
+    // start the command (1.4.6). Null on older steps: either.
+    runIn: varchar(16),
+    // One line for the person: why runIn is not either (1.4.6).
+    runInReason: varchar(255),
+    // JSON: the step's when rule (1.4.6), steps by id. Null: no rule, the
+    // step is always needed. Its state is never stored.
+    whenJson: text(),
+    // JSON { options, multiple, min, max, value }: a Decision step (1.4.6),
+    // where a person chooses from these options. Null: not such a step.
+    decision: text(),
+    // True: Run opens a terminal (pty) for the command, so a person can
+    // type into programs that read one, such as sudo (1.4.6). Null on
+    // older steps: false.
+    interactive: boolean(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -167,6 +182,12 @@ export const runs = defineTable(
     // Seconds of the step's wait timer still left when the person started
     // it anyway (1.2.0). Null: not early.
     startedEarlySeconds: integer(),
+    // JSON array of { at, chars, hidden, ended }: what a person typed into
+    // the running command, by size only. The text is never here (1.4.6).
+    inputsJson: text(),
+    // JSON { message, secretsMissing, secretNotStored, slowCaptures }: the
+    // parts that error was made from, so agents get it built (1.4.6).
+    errorPartsJson: text(),
   },
   {
     indexes: [

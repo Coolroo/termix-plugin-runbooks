@@ -8,6 +8,7 @@ import type {
   NewStep,
   RunbookOwner,
   RunbookStatus,
+  RunIn,
   StepOwner,
 } from "./store/types.js";
 import {
@@ -29,13 +30,24 @@ import {
   type GenerateSpec,
 } from "../../shared/secret-steps.js";
 import { isOneLine } from "../../shared/names.js";
+import { DEFAULT_TIMEOUT_MS } from "../../shared/limits.js";
+import { parseDecision, type DecisionSpec } from "../../shared/decisions.js";
 import { InputError } from "../core/errors.js";
 import { strictObject } from "../core/parse.js";
 import { secretCapturesProblem } from "../secrets/secret-view.js";
+import {
+  normalizeWhen,
+  RuleError,
+  type WhenRule,
+} from "../conditions/conditions.js";
 
-/** A step as an author writes it: stdin names an earlier step by position. */
-export type AuthorStep = Omit<NewStep, "stdin"> & {
+/**
+ * A step as an author writes it: stdin and when name earlier steps by
+ * number.
+ */
+export type AuthorStep = Omit<NewStep, "stdin" | "when"> & {
   stdin: StdinSource | null;
+  when?: WhenRule | null;
 };
 
 const RUNBOOK_STATUSES: RunbookStatus[] = ["open", "done", "abandoned"];
@@ -48,7 +60,7 @@ export const LIMITS = {
   command: 32_000,
   ownerNote: 20_000,
   stepsPerRunbook: 200,
-  timeoutDefault: 120_000,
+  timeoutDefault: DEFAULT_TIMEOUT_MS,
   timeoutMin: 1_000,
   timeoutMax: 600_000,
   waitMin: 1,
@@ -61,9 +73,11 @@ export const LIMITS = {
   agentOutputBytes: 65_536,
   amendReason: 500,
   where: 80,
+  runInReason: 200,
 };
 
 const STEP_OWNERS: StepOwner[] = ["person", "agent"];
+const RUN_IN: RunIn[] = ["either", "terminal", "run"];
 
 /** A runbook holds at most LIMITS.stepsPerRunbook steps, amendments too. */
 export function checkStepCount(count: number): void {
@@ -167,6 +181,11 @@ const STEP_FIELDS = [
   "where",
   "generate",
   "ask",
+  "runIn",
+  "runInReason",
+  "when",
+  "decision",
+  "interactive",
 ];
 
 /**
@@ -304,6 +323,54 @@ export function parseStepInput(
       }
     }
   }
+  if (has("runIn")) {
+    const runIn = raw.runIn ?? "either";
+    if (!RUN_IN.includes(runIn as RunIn)) {
+      throw new InputError(`runIn must be one of ${RUN_IN.join(", ")}`);
+    }
+    out.runIn = runIn as RunIn;
+  }
+  if (has("runInReason")) {
+    const reason = raw.runInReason;
+    if (reason === null || reason === undefined || reason === "") {
+      out.runInReason = null;
+    } else {
+      const value = text(reason, "runInReason", LIMITS.runInReason).trim();
+      if (!isOneLine(value)) {
+        throw new InputError("runInReason must be one line");
+      }
+      out.runInReason = value === "" ? null : value;
+    }
+  }
+  if (has("when")) {
+    if (raw.when === null || raw.when === undefined) out.when = null;
+    else {
+      try {
+        out.when = normalizeWhen(raw.when);
+      } catch (error) {
+        if (error instanceof RuleError) throw new InputError(error.message);
+        throw error;
+      }
+    }
+  }
+  if (has("decision")) {
+    if (raw.decision === null || raw.decision === undefined) {
+      out.decision = null;
+    } else {
+      try {
+        out.decision = parseDecision(raw.decision);
+      } catch (error) {
+        throw new InputError((error as Error).message);
+      }
+    }
+  }
+  if (has("interactive")) {
+    const interactive = raw.interactive ?? false;
+    if (typeof interactive !== "boolean") {
+      throw new InputError("interactive must be true or false");
+    }
+    out.interactive = interactive;
+  }
   if (has("hideOutputFromAgents")) {
     const hide = raw.hideOutputFromAgents ?? false;
     if (typeof hide !== "boolean") {
@@ -349,6 +416,11 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
     where: parsed.where ?? null,
     generate: parsed.generate ?? null,
     ask: parsed.ask ?? null,
+    runIn: parsed.runIn ?? "either",
+    runInReason: parsed.runInReason ?? null,
+    when: parsed.when ?? null,
+    decision: parsed.decision ?? null,
+    interactive: parsed.interactive ?? false,
   };
   checkStepShape(step);
   return step;
@@ -373,7 +445,18 @@ export function checkStepShape(step: {
   where?: string | null;
   generate?: GenerateSpec | null;
   ask?: AskSpec | null;
+  runIn?: RunIn;
+  runInReason?: string | null;
+  decision?: DecisionSpec | null;
+  interactive?: boolean;
+  hideOutputFromAgents?: boolean;
 }): void {
+  checkRunInShape(step);
+  checkInteractiveShape(step);
+  if (step.decision) {
+    checkDecisionShape(step);
+    return;
+  }
   if (step.generate || step.ask) {
     checkSecretStepShape(step);
     return;
@@ -419,6 +502,113 @@ export function checkStepShape(step: {
     step.captures.map((capture) => capture.name),
   );
   if (problem) throw new InputError(problem);
+}
+
+/**
+ * Only a step Termix runs, on a host, may refuse Run or Send to terminal
+ * (1.4.6), and Send to terminal cannot give a command its standard input.
+ */
+function checkRunInShape(step: Parameters<typeof checkStepShape>[0]): void {
+  const runIn = step.runIn ?? "either";
+  if (step.runInReason && runIn === "either") {
+    throw new InputError('runInReason needs runIn "terminal" or "run"');
+  }
+  if (runIn === "either") return;
+  if (
+    step.owner === "agent" ||
+    step.where ||
+    step.generate ||
+    step.ask ||
+    step.command === null
+  ) {
+    throw new InputError(
+      `runIn "${runIn}" needs a command Termix runs on a host: leave it out for an agent step, a step run outside Termix, a secret step or a step with no command`,
+    );
+  }
+  if (runIn === "terminal" && step.stdin) {
+    throw new InputError(
+      'runIn "terminal" cannot have stdin: Send to terminal cannot give the command its standard input; use Run',
+    );
+  }
+}
+
+/**
+ * An interactive step (1.4.6) gets a terminal when it is Run, so only a
+ * step Termix runs on a host may be one. With a terminal, stdout and stderr
+ * are one stream, so no check reads stderr; and the person types the input,
+ * so the step has no stdin. Its output must show while it runs, so it
+ * cannot capture a secret (that output is held until the end).
+ */
+function checkInteractiveShape(
+  step: Parameters<typeof checkStepShape>[0],
+): void {
+  if (!step.interactive) return;
+  if (
+    step.owner === "agent" ||
+    step.where ||
+    step.generate ||
+    step.ask ||
+    step.decision ||
+    step.command === null
+  ) {
+    throw new InputError(
+      "interactive needs a command Termix runs on a host: leave it out for an agent step, a step run outside Termix, a secret step, a decision step or a step with no command",
+    );
+  }
+  if (step.runIn === "terminal") {
+    throw new InputError(
+      'interactive is for Run: a step with runIn "terminal" already runs in a terminal; leave one out',
+    );
+  }
+  if (step.stdin) {
+    throw new InputError(
+      "interactive cannot have stdin: the person types the input; leave one out",
+    );
+  }
+  if ((step.secretCaptures ?? []).length > 0) {
+    throw new InputError(
+      "interactive cannot have secretCaptures: their output is held until the end, so the person could not see a prompt",
+    );
+  }
+  const stderr = (step.checks ?? []).find(
+    (check) => "stream" in check && check.stream === "stderr",
+  );
+  if (stderr) {
+    throw new InputError(
+      'interactive steps have one output stream: a check cannot read stream "stderr"; use "stdout" or "any"',
+    );
+  }
+}
+
+/**
+ * A Decision step (1.4.6): a person chooses from its options. It runs no
+ * command, and only a person decides (D7, the owner's choice).
+ */
+function checkDecisionShape(step: Parameters<typeof checkStepShape>[0]): void {
+  if (step.owner === "agent") {
+    throw new InputError(
+      "a decision step is for a person: leave out owner, or use an agent step to find something out",
+    );
+  }
+  const extra: Array<[boolean, string]> = [
+    [step.command !== null, "command"],
+    [step.hostId !== null, "hostId"],
+    [Boolean(step.where), "where"],
+    [Boolean(step.stdin), "stdin"],
+    [step.captures.length > 0, "captures"],
+    [(step.secretCaptures ?? []).length > 0, "secretCaptures"],
+    [(step.checks ?? []).length > 0, "checks"],
+    [Boolean(step.generate || step.ask), "generate or ask"],
+    [Boolean(step.waitAfterPreviousSeconds || step.waitReason), "a wait timer"],
+    // A choice is the author's own text, never a secret (BUG-010).
+    [Boolean(step.hideOutputFromAgents), "hideOutputFromAgents"],
+  ];
+  const found = extra.find(([present]) => present);
+  if (found) {
+    throw new InputError(
+      `a decision step cannot have ${found[1]}: the person only chooses an option`,
+    );
+  }
 }
 
 /**

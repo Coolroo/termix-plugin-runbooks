@@ -127,7 +127,12 @@ describe("amend a step with a fixed version (replace)", () => {
     expect(check.status).toBe(200);
     expect(check.body.status).toBe("done");
     const shown = await view(s, runbook.id);
-    expect(shown.progress).toEqual({ done: 3, failed: 0, total: 3 });
+    expect(shown.progress).toEqual({
+      done: 3,
+      failed: 0,
+      total: 3,
+      notNeeded: 0,
+    });
   });
 
   it("keeps a hidden step's output hidden in its fixed version", async () => {

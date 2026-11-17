@@ -81,7 +81,9 @@ type RunDefaults =
   | "truncated"
   | "timedOut"
   | "pastedOutput"
-  | "error";
+  | "error"
+  | "inputs"
+  | "errorParts";
 
 export async function createStore(db: PluginDatabase) {
   const runbooks: Table = await db.define(runbooksDef);
@@ -266,6 +268,11 @@ export async function createStore(db: PluginDatabase) {
       outsideWhere: step.where,
       generate: step.generate ? JSON.stringify(step.generate) : null,
       ask: step.ask ? JSON.stringify(step.ask) : null,
+      runIn: step.runIn && step.runIn !== "either" ? step.runIn : null,
+      runInReason: step.runInReason ?? null,
+      whenJson: step.when ? JSON.stringify(step.when) : null,
+      decision: step.decision ? JSON.stringify(step.decision) : null,
+      interactive: step.interactive ?? false,
       endedAt: null,
       revision: 1,
       createdAt: at,
@@ -292,7 +299,8 @@ export async function createStore(db: PluginDatabase) {
     const set: Record<string, unknown> = {
       updatedAt: now(),
       // The API's "where" is the column outsideWhere (WHERE is SQL).
-      ...columns(patch, { where: "outsideWhere" }),
+      // "when" is the column whenJson (WHEN is SQL too).
+      ...columns(patch, { where: "outsideWhere", when: "whenJson" }),
     };
     if (options.edit) set.revision = current.revision + 1;
     await (await client()).update(steps).set(set).where(eq(steps.id, id));
@@ -368,6 +376,7 @@ export async function createStore(db: PluginDatabase) {
     input: Omit<RunRow, "id" | RunDefaults> &
       Partial<Pick<RunRow, RunDefaults>>,
   ): Promise<number> {
+    const { inputs, errorParts, ...rest } = input;
     return insertId(runs, {
       finishedAt: null,
       exitCode: null,
@@ -377,7 +386,9 @@ export async function createStore(db: PluginDatabase) {
       timedOut: false,
       pastedOutput: null,
       error: null,
-      ...input,
+      ...rest,
+      inputsJson: inputs?.length ? JSON.stringify(inputs) : null,
+      errorPartsJson: errorParts ? JSON.stringify(errorParts) : null,
       // A manual run has no host; the column takes none.
       hostId: input.hostId ?? 0,
       note: input.note ?? null,
@@ -397,7 +408,9 @@ export async function createStore(db: PluginDatabase) {
       await client()
     )
       .update(runs)
-      .set(columns(patch))
+      .set(
+        columns(patch, { inputs: "inputsJson", errorParts: "errorPartsJson" }),
+      )
       .where(eq(runs.id, id));
   }
 

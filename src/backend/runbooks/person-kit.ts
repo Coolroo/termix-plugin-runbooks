@@ -12,12 +12,19 @@ import { runbookResource, stepResource } from "../core/audit.js";
 import { idParam, refuseApiKey, requireSignedIn } from "../core/http.js";
 import type { RunbookRow, RunRow, StepRow } from "./store/types.js";
 import { now, type Store } from "./store/store.js";
-import { loadBundle, personView, type RunbookBundle } from "./view.js";
+import {
+  loadBundle,
+  personView,
+  typedSizes,
+  type RunbookBundle,
+} from "./view.js";
 import {
   blockingProblem,
+  conditionProblem,
   requireActionable,
   requireRevision,
   requireValues,
+  runInProblem,
   staleProblem,
   waitProblem,
 } from "./gates.js";
@@ -30,6 +37,7 @@ import type { Events } from "../agents/events.js";
 import { isSshHost } from "../../shared/hosts.js";
 import { isOutsideStep, stepLabel } from "../../shared/steps.js";
 import type { RepeatConflict, RunSummary } from "../../shared/api.js";
+import { notNeededIds, type StepCondition } from "../conditions/conditions.js";
 
 const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** How long a failed delete of a closed runbook's secrets waits to retry. */
@@ -134,7 +142,7 @@ export function createPersonKit(
   /** One run as the person view shows it, live output included. */
   async function shownRun(runId: number) {
     const run = await store.getRun(runId);
-    return run ? live.show([run])[0] : null;
+    return run ? typedSizes(live.show([run])[0], actor()) : null;
   }
 
   async function hostNamer() {
@@ -198,7 +206,7 @@ export function createPersonKit(
     step: StepRow,
     bundle: RunbookBundle,
     input: Record<string, unknown>,
-    options: { agentChecked?: boolean } = {},
+    options: { agentChecked?: boolean; via: "run" | "terminal" },
   ) {
     requireActionable(step, bundle, { agentOk: options.agentChecked });
     if (isOutsideStep(step)) {
@@ -207,6 +215,10 @@ export function createPersonKit(
     if (step.hostId === null || step.command === null) {
       throw new InputError("this step has no command to run", 400);
     }
+    // The author said how it starts (1.4.6): before the questions a person
+    // could answer, since no answer changes it.
+    const refused = runInProblem(step, options.via);
+    if (refused) throw refused;
     const stdin = stepStdin(step, bundle.steps);
     const resolved = resolveStep(step, valuesObject(bundle.values), stdin);
     requireRevision(step, input);
@@ -219,8 +231,20 @@ export function createPersonKit(
       "you cannot connect to this host",
       "; Runbooks runs commands over SSH only",
     );
+    // A step its rule says is not needed (1.4.6), unless "Run anyway".
+    const condition = conditionProblem(
+      step,
+      bundle,
+      input.conditionAnyway === true,
+    );
+    if (condition.problem) throw condition.problem;
     if (input.outOfOrder !== true) {
-      const blocking = blockingProblem(step, bundle.steps);
+      const blocking = blockingProblem(
+        step,
+        bundle.steps,
+        "",
+        notNeededIds(bundle.conditions),
+      );
       if (blocking) throw blocking;
     }
     // The author asked to wait after the previous step ended.
@@ -230,7 +254,7 @@ export function createPersonKit(
       const sameStep = bundle.runsByStep.get(step.id)?.[0];
       const since = new Date(Date.now() - REPEAT_WINDOW_MS).toISOString();
       const recent =
-        sameStep ?? (await store.lastRunOfHash(resolved.hash!, since));
+        sameStep ?? (await store.lastRunOfHash(resolved.runHash!, since));
       if (recent) {
         throw new InputError(
           sameStep
@@ -254,11 +278,32 @@ export function createPersonKit(
       hostId: step.hostId,
       host,
       command: resolved.command!,
-      hash: resolved.hash!,
+      /** The run's identity, kept with it (not the approved hash). */
+      hash: resolved.runHash!,
+      /** The checks with their values filled in (BUG-007). */
+      checks: resolved.checks,
       stdin,
       /** Seconds of the wait the person chose to skip, if any. */
       skippedWait: wait.skippedSeconds,
+      /** The rule the person chose to pass over (1.4.6), if any. */
+      overridden: condition.overridden,
     };
+  }
+
+  /** Audits a start of a step its when rule says is not needed (1.4.6). */
+  async function auditNotNeeded(
+    req: Request,
+    step: StepRow,
+    overridden: StepCondition | null,
+  ) {
+    if (!overridden) return;
+    await audit(
+      req,
+      "runbooks_step_not_needed_started",
+      step,
+      `runbook ${step.runbookId} step ${stepLabel(step)} started although it is not needed (${overridden.reason})`,
+      true,
+    );
   }
 
   /** Audits a start before the runbook's wait was over. */
@@ -370,6 +415,7 @@ export function createPersonKit(
     runSummary,
     checkRunnable,
     auditSkippedWait,
+    auditNotNeeded,
     removeSecrets,
     storedNote,
     audit,

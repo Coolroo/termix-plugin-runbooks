@@ -93,6 +93,8 @@ export function runSummaryKey(
       return done ? "run.outsideDone" : "run.outsideFailed";
     case "agent":
       return done ? "run.agentDone" : "run.agentFailed";
+    case "decision":
+      return "run.decided";
     case "exec":
       return "run.byExec";
     default:

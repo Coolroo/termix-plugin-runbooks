@@ -60,25 +60,30 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 
 ### A step
 
-| Field                      | Type            | What it is                                                                                                   |
-| -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `title`                    | string          | Required. Up to 200 characters.                                                                              |
-| `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                      |
-| `body`                     | markdown        | What to do and why, shown before the command. May use `{{name}}` (1.4.3).                                    |
-| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                     |
-| `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                              |
-| `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix).  |
-| `expect`                   | markdown        | What the person should see when it works. May use `{{name}}` (1.4.3).                                        |
-| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                   |
-| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                             |
-| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                           |
-| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                                  |
-| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).                  |
-| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                                         |
-| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).                  |
-| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets).           |
-| `generate`                 | object or null  | A Make a secret step (1.4.2). See [Make a secret and Ask for a secret](#make-a-secret-and-ask-for-a-secret). |
-| `ask`                      | object or null  | An Ask for a secret step (1.4.2). See the same section.                                                      |
+| Field                      | Type            | What it is                                                                                                          |
+| -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `title`                    | string          | Required. Up to 200 characters.                                                                                     |
+| `owner`                    | string          | `"person"` (the default) or `"agent"`. See [Agent steps](#agent-steps).                                             |
+| `body`                     | markdown        | What to do and why, shown before the command. May use `{{name}}` (1.4.3).                                           |
+| `hostId`                   | integer or null | A host from `/hosts`. Leave it out for a manual step (text only) or a step with `where`.                            |
+| `command`                  | string or null  | The shell command. Needs `hostId`, or `where` for a command run outside Termix.                                     |
+| `where`                    | string or null  | Where the person runs `command` outside Termix, up to 80 characters. See [Outside Termix](#outside-termix).         |
+| `expect`                   | markdown        | What the person should see when it works. May use `{{name}}` (1.4.3).                                               |
+| `captures`                 | array           | `[{ "name": "version", "pattern": "nginx/(\\S+)" }]`: values to take from standard output.                          |
+| `checks`                   | array           | Rules tested on the output when the run ends; see [Checks](#checks). At most 20.                                    |
+| `hideOutputFromAgents`     | boolean         | Hide the output from agents. An agent can set it but not clear it.                                                  |
+| `timeoutMs`                | integer or null | Time limit, 1000 to 600000. Default 120000.                                                                         |
+| `waitAfterPreviousSeconds` | integer or null | Seconds to wait after the previous step ended, 1 to 86400. See [Wait timers](#wait-timers).                         |
+| `waitReason`               | string or null  | Why to wait, up to 500 characters. Needs `waitAfterPreviousSeconds`.                                                |
+| `stdin`                    | object or null  | Where a Run takes the command's standard input from. See [Standard input](#standard-input).                         |
+| `secretCaptures`           | array           | `[{ "name": "api_token", "pattern": "token: (\\S+)" }]`: secrets to keep. See [Secrets](#secrets).                  |
+| `generate`                 | object or null  | A Make a secret step (1.4.2). See [Make a secret and Ask for a secret](#make-a-secret-and-ask-for-a-secret).        |
+| `ask`                      | object or null  | An Ask for a secret step (1.4.2). See the same section.                                                             |
+| `runIn`                    | string          | `"either"` (the default), `"terminal"` or `"run"` (1.4.6). See [Run or Send to terminal](#run-or-send-to-terminal). |
+| `runInReason`              | string or null  | Why, one line, up to 200 characters, shown to the person. Needs `runIn` `"terminal"` or `"run"`.                    |
+| `when`                     | object or null  | When the step is needed, as a rule on earlier steps (1.4.6). See [Conditional steps](#conditional-steps).           |
+| `decision`                 | object or null  | A Decision step: options the person chooses from (1.4.6). See [Decision steps](#decision-steps).                    |
+| `interactive`              | boolean         | Run opens a terminal (pty), for sudo, ssh and other prompts (1.4.6). See [Typed input](#typed-input).               |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Amend it instead (see [Amendments](#amendments)).
 
@@ -184,7 +189,7 @@ Runbooks records what happens to a runbook that its agent may want to hear about
 
 `reason` for `step-failed`: `exit` (the command exited non-zero, timed out or could not connect), `check` (a check failed), `stopped` (a person pressed Stop), `interrupted` (Termix or Runbooks restarted while it ran), `secret` (a secret capture found nothing or could not be stored) and `manual` (a person marked it failed, or the agent ended its step with `outcome: "failed"`).
 
-Creating or changing a runbook or its steps is not an event, and neither is a note, hiding output, or starting a run. `agent-turn` is recorded once per change that makes an agent step next, not when you create a runbook whose first step is yours.
+Creating or changing a runbook or its steps is not an event, and neither is a note, hiding output, or starting a run. `agent-turn` is recorded once per change that makes an agent step next, not when you create a runbook whose first step is yours. A step its `when` rule says is not needed (1.4.6) counts as ended: an agent step after it can be next, and an agent step that is not needed never is.
 
 `GET /runbooks/{id}` lists the runbook's latest 100 events, newest first, as `events`:
 
@@ -204,7 +209,7 @@ Creating or changing a runbook or its steps is not an event, and neither is a no
 
 ### Values and placeholders
 
-`{{name}}` in a command is replaced by the value of `name`, as plain text, with no shell quoting. Values come from the runbook's `values` object first, then from captures of earlier steps in step order; a later value wins. Names match `[A-Za-z_][A-Za-z0-9_.-]*`. A step whose placeholders have no value cannot run, and its `missing` field names them.
+`{{name}}` in a command is replaced by the value of `name`, as plain text, with no shell quoting. Values come from the runbook's `values` object first, then from captures of earlier steps in step order; a later value wins. Names match `[A-Za-z_][A-Za-z0-9_.-]*`. A step whose placeholders, in its command or its checks (see "Checks"), have no value cannot run, and its `missing` field names them.
 
 Since 1.4.3, `{{name}}` works in `body`, `expect` and `where` too, with the same values. A click step can say "Open the admin console and find `{{ts_ip}}`". `GET /runbooks/{id}` (MCP `get_runbook`) returns each step's text as written and as the person sees it:
 
@@ -216,11 +221,13 @@ Since 1.4.3, `{{name}}` works in `body`, `expect` and `where` too, with the same
 | `textMissing`    | Names that `body`, `expect` and `where` use and that have no value yet; `[]` when none. |
 
 - A value that is not set yet stays as `{{name}}` in these fields, as in a command. The person sees "(value ts_ip: not set yet)" there, and the step's "Values missing" line names it.
-- A missing value in the text never stops a step. A click step can still be marked done or failed. Only `missing`, the command's values, stops a Run.
+- A missing value in the text never stops a step. A click step can still be marked done or failed. Only `missing`, the values of the command and its checks, stops a Run.
 - `body` and `expect` are Markdown, and a value can be command output, so a value shows as text: outside code, its Markdown characters are escaped with a backslash, its line breaks become spaces, and a bare address in it (`://`, `www.`, `@`) gets an empty HTML comment `<!---->`, which the page drops, so it cannot add a link, an image, a heading, emphasis or HTML. Inside a code span or a code block, the value goes in as it is. A value with backticks gets a longer code span, and a value with a fence line gets a longer fence. A Copy button on a code block copies the filled-in text.
 - To make a link from a value, write the link: `[admin console]({{url}})`, `https://{{ip}}:8443/` or `<https://{{host}}/>`. In a link destination the value is escaped and its spaces are percent-encoded; in an autolink its spaces, `<` and `>` are.
 - `where` is plain text: values go in as they are.
-- A value from a step with `hideOutputFromAgents` shows as `[hidden by owner]` in an agent's view, as in `effectiveValues`.
+- A value from a step with `hideOutputFromAgents` shows as `[hidden by owner]` in an agent's view, as in `effectiveValues`. Once such a step ends done, each of its captures shows that way, whether it matched or not.
+- A step whose `stdin` is a hidden step's output, or a value a hidden step captures, is hidden too: its output and captures read `[hidden by owner]`, though its own `hideOutputFromAgents` is `false`.
+- A run's `command` and its check results' `label` and `detail` are filled from the step with the values you saw when it ran, so a hidden value reads `[hidden by owner]` there and your own text stays as you wrote it.
 - Secrets are never values. A secret step, `secretCaptures` and `stdin` from a secret never fill a `{{name}}`, and captured values have secrets removed before they are kept. Use `{{name}}` only for values that may show on the page.
 
 A capture is a JavaScript regular expression, in multiline mode, with exactly one capturing group. It runs on the first 256 KB of standard output (or the pasted terminal output); the first match's group becomes the value.
@@ -235,6 +242,16 @@ A capture is a JavaScript regular expression, in multiline mode, with exactly on
 | `contains`, `notContains` | `text`, `stream`                                               | the stream has (or does not have) `text`                                                    |
 | `matches`, `notMatches`   | `pattern` (JavaScript regular expression, multiline), `stream` | the stream matches (or does not match) `pattern`                                            |
 | `value`                   | `name` (a capture of this step), `equals` or `matches`         | the captured value equals `equals` or matches `matches`; with neither, that it was captured |
+
+Checks take `{{name}}` values, the same values as the command (1.4.6). `text` in `contains` and `notContains` and `equals` in a `value` check get the value as it is. A pattern (`matches`, `notMatches` and `matches` in a `value` check) gets it as literal text, escaped, so a value `1.2.3` matches only `1.2.3` and `^v{{ver}}$` still works. A step whose checks name a value that is not set cannot run, as with its command: `missing` names it, and Run, Send to terminal, Mark done, Done on a step run outside Termix and `complete_step` with `done` answer 409 `missing-values`. The run's check results show the filled-in text. An agent step's checks get the values you see, and a check there that uses a value a hidden step captures is refused (400).
+
+```json
+{
+  "type": "contains",
+  "text": "registry:5443/app:{{ver}}@sha256:",
+  "label": "the new image runs"
+}
+```
 
 `stream` is `stdout`, `stderr` or `any` (the default: either one). Every check may have a `label`, which the person sees instead of a generated description. A step may have at most 20 checks; a wrong one is refused with 400 and names it, such as `steps[0]: checks[1]: pattern is not a valid regular expression`. Checks need a command. A pattern stops after 250 ms and then counts as failed.
 
@@ -295,7 +312,7 @@ A command that reads its standard input gets it from one source, set as `stdin` 
 - The run is refused with 409 `stdin-missing` while that step has no finished run, or its last run failed. Add `"allowFailed": true` to the source to take the output of a failed run too. A step with no command has no output to give.
 - At most 256 KB.
 - The hash the person approves covers the source (not the input itself), so changing the source makes an open page stale.
-- Agents see the source, and on each run `stdin: { ...source, "bytes": 1229 }`, never the input.
+- Agents see the source, and on each run `stdin: { ...source, "bytes": 1229 }`, never the input. A hidden step's run, and a run that read a secret, have no `bytes`.
 
 Read a config, then check it:
 
@@ -306,6 +323,174 @@ Read a config, then check it:
     "stdin": { "from": "step", "step": 1, "stream": "stdout" } }
 ]
 ```
+
+### Conditional steps
+
+A step that is needed only after some results ("only if step 8 or 9 failed", "skip this if step 1 printed X") gets a `when` rule (1.4.6) instead of a line in its title or body. The rule reads **earlier steps only**, so it can never wait on a later step or loop.
+
+```json
+{
+  "title": "Way back",
+  "hostId": 3,
+  "command": "app rollback",
+  "when": {
+    "any": [
+      { "step": 8, "status": "failed" },
+      { "step": 9, "status": "failed" }
+    ]
+  }
+}
+```
+
+```json
+{
+  "title": "Turn on HTTPS certificates",
+  "hostId": 3,
+  "command": "app https on",
+  "when": {
+    "step": 1,
+    "output": { "type": "contains", "text": "HTTPS certificates: OFF" }
+  }
+}
+```
+
+| Rule                                                      | Holds when                                                                                                                 |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `{ "step": N, "status": "done" }`                         | step N ended that way: `done`, `failed`, `skipped`, `not-needed`, or `ran` (it has a finished run, whatever the result)    |
+| `{ "step": N, "output": <check> }`                        | step N's latest finished run passes the check: any [check](#checks) type, `{{name}}` values filled in, with secrets hidden |
+| `{ "value": "name", "equals": "..." }` or `"matches"`     | the runbook value (the author's or a capture) has this value; with neither, that it is set                                 |
+| `{ "step": N, "chose": "rollback" }`                      | the person chose that option in [decision step](#decision-steps) N; a decision skipped or not made matches none            |
+| `{ "all": [...] }`, `{ "any": [...] }`, `{ "not": rule }` | combines rules, at most 4 levels deep and 20 rules in a step's `when`                                                      |
+
+- `step` is a number such as `3`, or `"3a"` for an amendment, as in `stdin`. A rule that names this step, a later step, a step that is not there, or a value check on a value the step does not capture is refused with 400, naming where in the rule.
+- A rule that names a step an amendment replaced reads the replacement (`9` reads `9a`), as long as the replacement is before the step with the rule.
+- An output rule on a step with no finished run (skipped, or no command) does not hold; test its `status` for that case. For a terminal run it reads the pasted output, for a decision the chosen ids, one per line.
+- A rule reads the runbook's own values and the values that steps **before** it captured, never a later step's: `{ "value": "mode" }` on step 2 does not change when step 4 captures `mode` again, and nor does `{{mode}}` in its output rule.
+- A step a rule names cannot be removed (409 `when`) or moved after the step with the rule (400). Change the rule first with `update_step`; `when: null` removes it.
+- **A rule cannot read hidden output.** Every rule reads what you see: the output and captured values of a step with `hideOutputFromAgents` read `[hidden by owner]`, and a hidden value reads `[hidden by owner]` wherever another step's output or capture holds it, and in `{{name}}`. This holds for every rule, also one written before the person hid the step. Writing one is refused (400): an output rule on a hidden step, a value such a step captures, or such a value as `{{name}}` in an output rule.
+- To branch on what a hidden step printed, give that step a check, and give the later step a status rule. The check reads the real output when the person runs the step, and the person approves it with the command:
+
+  ```json
+  { "title": "Read the token", "hostId": 1, "command": "show-token",
+    "hideOutputFromAgents": true,
+    "checks": [{ "type": "contains", "text": "scope: admin" }] },
+  { "title": "Ask for an admin token", "when": { "step": 1, "status": "failed" } }
+  ```
+
+- A change to a step's `captures`, `decision` or `interactive` that breaks a rule that reads the step (a capture or option it names, a hidden value, `stream: "stderr"` on an interactive step) is refused with 409 `when`; change the rule first. An amendment with `kind: "replace"` is checked the same way, since a rule that names the replaced step reads the replacement.
+- An output rule with `stream: "stderr"` on an interactive step is refused (400): its stdout and stderr are one stream.
+- An output rule on a decision step that is not done (reopened, or skipped) does not hold: the step has no choice, so no output.
+- `condition.rule` and `condition.reason` show `[hidden by owner]` in place of a value from a hidden step.
+- A Decision step cannot have `hideOutputFromAgents` (400).
+
+Runbooks works out each rule's state every time the runbook is read, and never stores it, so reopening an earlier step and running it again changes the answer. Each step has `condition` (`null` without a rule):
+
+```json
+"condition": { "state": "not-met", "rule": "step 8 failed or step 9 failed",
+               "reason": "step 8 is done and step 9 is done", "notNeeded": true }
+```
+
+- `state` is `waiting` (a step it names has not ended, or a value it reads is not set while an earlier step is pending), `met` or `not-met`. `reason` says why, and never quotes output.
+- A pending step that never ran and whose rule is `not-met` is **not needed** (`notNeeded: true`). It counts as ended: for the order (later steps do not wait for it), for `nextStepId`, for `progress` (`notNeeded` counts them), for `agent-turn` (an agent step that is not needed gets no event, and the next agent step does) and for a wait timer (`waitAfterPreviousSeconds` counts from the last step before it that is needed).
+- The person sees a waiting step with "Only if step 8 failed or step 9 failed", and a step that is not needed as one grey line with the reason.
+- The person can still start a step that is not needed: Run, Send to terminal, Make it or Save, and Done or Failed are refused with 409 `not-needed` (with `rule` and `reason`) until they confirm "Run anyway?" (`conditionAnyway: true`). That start is audited, once every other question passed. `complete_step` on an agent step that is not needed is refused with 409 `not-needed`.
+- A step that already ran is history: its rule no longer makes it not needed.
+- Patterns cost time. Runbooks keeps what a pattern said of a finished run (and of a value), so each is tested once, and the patterns of one read share a limit of 500 ms (each still stops at its own 250 ms, and does not match then). A rule whose pattern the shared limit stopped is `waiting`, with the reason "not worked out yet", until a later read gets to it. Keep patterns simple.
+
+### Decision steps
+
+When the way on depends on a person's judgment ("only if needed", "if the lead says so"), give the person a **Decision** step (1.4.6): options you write, chosen with radio buttons or check boxes, never free text. Later steps read the choice with a `when` rule, so the same choice always gives the same runbook.
+
+```json
+{
+  "title": "Which way do we go?",
+  "body": "Step 11 failed. Choose how to go on.",
+  "decision": {
+    "options": [
+      {
+        "id": "retry",
+        "label": "Fix it and try again",
+        "description": "The agent amends step 11."
+      },
+      { "id": "rollback", "label": "Go back to the old release" },
+      { "id": "stop", "label": "Stop here and keep it as it is" }
+    ],
+    "value": "path"
+  }
+}
+```
+
+```json
+{
+  "title": "Roll back",
+  "hostId": 3,
+  "command": "app deploy --way {{path}}",
+  "when": { "step": 12, "chose": "rollback" }
+}
+```
+
+| Field      | What it is                                                                                                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `options`  | 2 to 10, each `{ id, label, description? }`: `id` is 1 to 40 of `a-z`, `0-9` and `-`; `label` one line, up to 120 characters; `description` short Markdown, up to 1000 |
+| `multiple` | `false` (the default): radio buttons, exactly one choice. `true`: check boxes, from `min` (default 1) to `max` (default all)                                           |
+| `value`    | Optional: a runbook value that gets the chosen ids, joined with commas in your order, for later commands (`{{path}}`); it has no value while the step is not done      |
+
+- A decision step has no host, command, checks, captures, stdin or wait timer, and it is always a person's: `owner: "agent"` is refused (400). Agents read decisions; they never make them.
+- The person presses **Confirm** (`POST /steps/{id}/decide` with `{ revision, chosen }`). The step ends done with a run in mode `decision` whose `stdout` is the chosen ids, one per line, so `stdin` and output rules can read it too. `step-done` (when `notify` lists it) has the note "chose rollback".
+- `get_runbook` shows `decision` and, while the step is done, `choice: { chosen, by, at }`.
+- **Reopen** lets the person choose again. Steps that already ran on the old choice stay as they are; the page names them before it reopens. Steps that have not run follow the new choice.
+- A rule `{ "step": N, "chose": "<id>" }` must name an earlier decision step and one of its option ids (400 otherwise). For several options, combine rules: `{ "all": [ { "step": 5, "chose": "dns" }, { "step": 5, "chose": "tls" } ] }`. A decision that was skipped matches no `chose` rule; test `{ "step": 5, "status": "skipped" }` for that.
+
+### Run or Send to terminal
+
+A step that Termix runs has two buttons: **Run** starts the command over a connection of its own, and **Send to terminal** types it into a terminal for the person. When only one of them works, say so with `runIn` (1.4.6) instead of a line in the title or body: people press Run anyway.
+
+| `runIn`              | The person sees          | The server                                   |
+| -------------------- | ------------------------ | -------------------------------------------- |
+| `"either"` (default) | Run and Send to terminal | takes both                                   |
+| `"terminal"`         | Send to terminal only    | refuses Run with 409 `terminal-only`         |
+| `"run"`              | Run only                 | refuses Send to terminal with 409 `run-only` |
+
+- Use `"terminal"` for a command that opens a browser or must run in the person's own shell, such as `bao login -method=oidc`. A command that only asks for a password or a token can stay a Run: the person types into it from the page (see [Typed input](#typed-input)).
+- `runInReason` is one line the person sees next to the button, such as "it opens your browser". The 409 answer carries it as `reason`.
+- Only a step with `hostId` and `command` may set `"terminal"` or `"run"`. An agent step, a step run outside Termix, a secret step and a step with no command are refused with 400.
+- `"terminal"` cannot have `stdin` (400): Send to terminal cannot give a command its standard input. A step with `stdin` already refuses Send to terminal (409 `stdin-run-only`).
+- The refusal comes before the questions about the order, the wait timer and a repeat, since no answer to them changes it.
+
+```json
+{
+  "title": "Sign in to OpenBao",
+  "hostId": 3,
+  "command": "bao login -method=oidc",
+  "runIn": "terminal",
+  "runInReason": "it opens your browser"
+}
+```
+
+### Typed input
+
+While a Run runs, the person who started it can type into the command from the runbook page (1.4.6): a line under the live output with **Send** (Enter) and **End input**, and an eye to hide what they type. This works on every Run without `stdin`, for programs that read standard input: `read`, `sudo -S`, many scripts. Write the step as a Run; do not tell the person to use Send to terminal and paste the output back.
+
+Some programs read a terminal, not standard input, and stop with "a terminal is required" without one: `sudo` (without `-S`), `ssh` with a password, `ansible --ask-become-pass`. Set `interactive: true` on such a step, and its Run opens a terminal (pty) for the command.
+
+```json
+{
+  "title": "Run the playbook",
+  "hostId": 3,
+  "command": "ansible-playbook site.yml --ask-become-pass",
+  "interactive": true,
+  "checks": [{ "type": "contains", "text": "failed=0" }]
+}
+```
+
+- With a terminal, stdout and stderr come as one stream, in `stdout`. A check with `stream: "stderr"` is refused with 400; use `"stdout"` or `"any"`. Line ends, colour codes and title codes are taken out before the output is kept or checked.
+- `interactive` cannot have `stdin` (the person types the input), `secretCaptures` (their output is held until the end, so the person could not see a prompt) or `runIn: "terminal"` (400). It works with `runIn: "run"` and with `when`.
+- Only a step with `hostId` and `command` may set it (400 otherwise).
+- A program with echo on (a shell, `read -r`) prints what the person types, and that is part of the output. A program that asks for a password turns echo off. Text sent hidden, 4 characters or longer, is replaced with `[secret:typed]` in the output and in what the checks read.
+- The time the command waits for input counts toward `timeoutMs`. Give a step that waits for a person enough time.
+- **Send** ends the line as a terminal's Enter does: CR on an interactive step (Windows OpenSSH with PowerShell's `Read-Host` may not take LF as Enter; Linux reads CR as LF), LF on any other Run. **End input** sends Ctrl-D on an interactive step (twice in mid-line, the first hands over the line as typed). Ctrl-D is the Linux and Unix end of input: on a Windows host it may not end the input, so do not write a Windows step that waits for it; end such a command another way (a blank line, or a word it reads as the end).
+- A pager waits for a key with a terminal: write `--no-pager` (`systemctl`, `journalctl`, `git`) in an interactive step's command.
+- What the person types is never stored or shown to agents. A run has `inputCount`, the number of times the person typed or ended the input. Agents cannot type into a run.
 
 ### Secrets
 
@@ -454,7 +639,7 @@ A run in the answer looks like this:
 
 `mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
 
-While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. Agents cannot stop a run.
+While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. A failed run of a hidden step has `error: "[hidden by owner]"` whatever the reason, and its run that ended done has `error: null`. Agents cannot stop a run.
 
 ## MCP
 

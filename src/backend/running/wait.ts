@@ -9,17 +9,25 @@ import type { StepWait } from "../../shared/api.js";
  * order). The timer starts when that step last ended: its latest run
  * finished, or it was marked done or skipped. A pending previous step has
  * not ended. A replaced step is not the step before: its replacement stands
- * in its place. Null for a step with no wait, or with no step before it.
+ * in its place. Nor is a step its rule says is not needed (1.4.6), in
+ * `notNeeded`: it never ran. Null for a step with no wait, or with no step
+ * before it.
  */
 export function waitState(
   step: StepRow,
   steps: StepRow[],
   runsByStep: Map<number, readonly RunRow[]>,
+  notNeeded: ReadonlySet<number> = new Set(),
   at = Date.now(),
 ): StepWait | null {
   if (!step.waitAfterPreviousSeconds) return null;
   const previous = steps
-    .filter((other) => isBefore(other, step) && other.status !== "replaced")
+    .filter(
+      (other) =>
+        isBefore(other, step) &&
+        other.status !== "replaced" &&
+        !notNeeded.has(other.id),
+    )
     .sort((a, b) => compareSteps(b, a))[0];
   if (!previous) return null;
   const base = {

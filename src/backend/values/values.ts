@@ -70,6 +70,24 @@ export function commandHash(
     .digest("hex");
 }
 
+/**
+ * The hash a person approves (BUG-008): the run's command hash, and the
+ * checks with their values when a check uses one, so a value that changes
+ * between the confirm box and the run gives 409 stale. Steps whose checks
+ * use no value keep the command hash.
+ */
+export function approvalHash(
+  runHash: string,
+  rawChecks: unknown[],
+  filledChecks: unknown[],
+): string {
+  if (placeholders(JSON.stringify(rawChecks)).length === 0) return runHash;
+  return crypto
+    .createHash("sha256")
+    .update(`${runHash}\n\0checks ${JSON.stringify(filledChecks)}`, "utf8")
+    .digest("hex");
+}
+
 /** Checks author values. Returns an error message, or null. */
 export function checkValues(input: unknown): string | null {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -132,10 +150,10 @@ export function checkCaptures(input: unknown): string | null {
 export function applyCaptures(
   captures: Capture[],
   output: string | null | undefined,
-): { values: Values; errors: string[] } {
+): { values: Values; slow: string[] } {
   const values: Values = {};
-  const errors: string[] = [];
-  if (!output || captures.length === 0) return { values, errors };
+  const slow: string[] = [];
+  if (!output || captures.length === 0) return { values, slow };
   const input = output.slice(0, CAPTURE_INPUT_LIMIT);
   const sandbox = vm.createContext({ input, pattern: "" });
   for (const capture of captures) {
@@ -150,10 +168,10 @@ export function applyCaptures(
         values[capture.name] = found.slice(0, MAX_VALUE_LENGTH);
       }
     } catch {
-      errors.push(`capture "${capture.name}" did not finish`);
+      slow.push(capture.name);
     }
   }
-  return { values, errors };
+  return { values, slow };
 }
 
 /**
@@ -209,6 +227,34 @@ export function testPattern(
   } catch {
     return null;
   }
+}
+
+/**
+ * A time limit that many patterns share (BUG-008): each gets the captures'
+ * limit at most, and none once the total is spent. `cuts` counts the
+ * patterns that stopped because the total ran out, not at their own limit:
+ * their answer is not known, so a caller does not keep it.
+ */
+export class PatternBudget {
+  private readonly deadline: number;
+  cuts = 0;
+
+  constructor(totalMs: number) {
+    this.deadline = Date.now() + totalMs;
+  }
+
+  /** testPattern within what is left. */
+  test = (pattern: string, input: string): boolean | null => {
+    const left = this.deadline - Date.now();
+    const limit = Math.min(CAPTURE_TIME_LIMIT_MS, left);
+    if (limit <= 0) {
+      this.cuts += 1;
+      return null;
+    }
+    const hit = testPattern(pattern, input, limit);
+    if (hit === null && limit < CAPTURE_TIME_LIMIT_MS) this.cuts += 1;
+    return hit;
+  };
 }
 
 /**

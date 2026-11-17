@@ -47,7 +47,7 @@ function runbook(canSendToAgent: boolean, status: RunbookStatus = "open") {
     ],
     {
       title: "Look",
-      progress: { done: 0, failed: 0, total: 2 },
+      progress: { done: 0, failed: 0, total: 2, notNeeded: 0 },
       status,
       nextStepId: 1,
       owner: { task: "T-3", label: "Lead" },

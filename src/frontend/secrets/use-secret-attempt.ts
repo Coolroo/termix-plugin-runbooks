@@ -71,6 +71,15 @@ export function useSecretAttempt({
                   steps: blockingText(conflict.blocking),
                 }),
               );
+            case "not-needed":
+              return again(
+                t("notNeeded.title"),
+                t("notNeeded.anyway"),
+                t("notNeeded.hint", {
+                  rule: conflict.rule,
+                  reason: conflict.reason,
+                }),
+              );
           }
         },
         // The page may now show the steps to do it by hand.

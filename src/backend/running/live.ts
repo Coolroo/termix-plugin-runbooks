@@ -9,7 +9,8 @@ import type { RunRow } from "../runbooks/store/types.js";
 import { now, type Store } from "../runbooks/store/store.js";
 import type { StreamName } from "./stream-exec.js";
 import { SYSTEM, type Events } from "../agents/events.js";
-import type { Run } from "../../shared/api.js";
+import type { Run, RunInput } from "../../shared/api.js";
+import { noErrorParts } from "./run-error.js";
 
 const FLUSH_MS = 2000;
 export const INTERRUPTED = "interrupted: Termix restarted while it ran";
@@ -37,8 +38,28 @@ export interface LiveRun {
   held: boolean;
   /** Ends the command; null until the command started. */
   stop: (() => void) | null;
+  /**
+   * Types into the command (1.4.6); null until the command started, and
+   * for a run that got its standard input from `stdin`.
+   */
+  input: LiveInput | null;
+  /** What was typed into it, by size only (1.4.6). */
+  inputs: RunInput[];
   /** Settles when the run is finished and written. */
   done: Promise<void>;
+}
+
+/** A running command's standard input, as the input route uses it. */
+export interface LiveInput {
+  /** It takes input now: started, not ended, input not ended. */
+  open: () => boolean;
+  /**
+   * Writes the text. A hidden text is hidden in the output first, so its
+   * echo never shows. False when the command does not take input now.
+   */
+  send: (text: string, hidden: boolean) => boolean;
+  /** Ends the command's input. False as for send. */
+  end: () => boolean;
 }
 
 interface Entry extends LiveRun {
@@ -82,6 +103,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
       stdout: entry.stdout,
       stderr: entry.stderr,
       truncated: entry.truncated,
+      ...(entry.inputs.length ? { inputs: [...entry.inputs] } : {}),
     };
     entry.flushing = entry.flushing
       .then(async () => {
@@ -122,6 +144,8 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
         interrupted: null,
         held: false,
         stop: null,
+        input: null,
+        inputs: [],
         done: Promise.resolve(),
         dirty: false,
         lastFlushAt: Date.now(),
@@ -146,6 +170,14 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
       const entry = runs.get(runId);
       if (!entry) return;
       entry.lastOutputAt = now();
+    },
+
+    /** A person typed into it, or ended its input: by size only. */
+    typed(runId: number, input: RunInput): void {
+      const entry = runs.get(runId);
+      if (!entry) return;
+      entry.inputs.push(input);
+      schedule(entry);
     },
 
     truncated(runId: number): void {
@@ -208,8 +240,10 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
           stdout: entry.stdout,
           stderr: entry.stderr,
           truncated: entry.truncated,
+          inputs: [...entry.inputs],
           running: true,
           outputHeld: entry.held,
+          acceptsInput: entry.input?.open() ?? false,
           lastOutputAt: entry.lastOutputAt,
           elapsedMs: Math.max(0, at - started),
           silentMs: Math.max(0, at - last),
@@ -236,6 +270,7 @@ export async function sweepInterrupted(
       status: "failed",
       finishedAt: now(),
       error: INTERRUPTED,
+      errorParts: noErrorParts(INTERRUPTED),
     });
     const step = await store.getStep(run.stepId);
     if (step) {

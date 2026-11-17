@@ -3,7 +3,9 @@
 import type { Router } from "express";
 import { body, wrap } from "../core/http.js";
 import { parseStatus } from "./parse.js";
-import { runbookSummary } from "./view.js";
+import { loadNotNeeded, runbookSummary } from "./view.js";
+import { RULE_TIME_BUDGET_MS } from "../conditions/conditions.js";
+import { PatternBudget } from "../values/values.js";
 import { pathId, type PersonKit } from "./person-kit.js";
 import { nextKind } from "../../shared/step-kinds.js";
 import type { RunbookListEntry } from "../../shared/api.js";
@@ -27,14 +29,22 @@ export function registerRunbookList(router: Router, kit: PersonKit): void {
     wrap(async (req) => {
       const rows = await store.listRunbooks({});
       const out: RunbookListEntry[] = [];
+      // One time limit for every runbook's rules (BUG-008).
+      const budget = new PatternBudget(RULE_TIME_BUDGET_MS);
       for (const runbook of rows) {
         const steps = await store.listSteps(runbook.id);
         // A runbook an agent closed still has its secrets: delete them now.
         await removeSecrets(req, runbook, steps);
-        // The kind of the next step (1.4.1): the list shows its color.
+        // The kind of the next step (1.4.1): the list shows its color. A
+        // step that is not needed (1.4.6) is never the next one.
+        const notNeeded = await loadNotNeeded(store, runbook.id, steps, budget);
         out.push({
-          ...runbookSummary(runbook, steps),
-          nextKind: nextKind(steps),
+          ...runbookSummary(runbook, steps, notNeeded),
+          nextKind: nextKind(
+            steps.map((step) =>
+              notNeeded.has(step.id) ? { ...step, status: "not-needed" } : step,
+            ),
+          ),
         });
       }
       const order = { open: 0, done: 1, abandoned: 2 } as const;

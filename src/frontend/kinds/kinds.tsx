@@ -117,11 +117,13 @@ export function KindColorsProvider({
 export type CardState = "current" | "pending" | "done" | "failed" | "grey";
 
 export function cardState(
-  step: Pick<Step, "status">,
+  step: Pick<Step, "status"> & { condition?: Step["condition"] },
   isNext: boolean,
 ): CardState {
   if (step.status === "failed") return "failed";
   if (step.status === "replaced" || step.status === "skipped") return "grey";
+  // 1.4.6: its when rule says it is not needed: it counts as ended.
+  if (step.condition?.notNeeded) return "grey";
   if (isNext) return "current";
   return step.status === "done" ? "done" : "pending";
 }

@@ -31,6 +31,8 @@ export interface StepActions {
     note: string,
     output?: string,
   ) => void;
+  /** Confirm on a Decision step (1.4.6), with the chosen option ids. */
+  decide: (step: Step, chosen: string[]) => void;
   /** Asks for a note and sends the step to the runbook's agent (1.4.0). */
   sendToAgent: (step: Step) => void;
   /**
@@ -44,6 +46,16 @@ export interface StepActions {
     outcome: "done" | "failed",
     exitCode: number | null,
   ) => void;
+  /**
+   * Types into a running command (1.4.6), then ends its input when `end`.
+   * Resolves true when the server took it.
+   */
+  input: (
+    run: Run,
+    text: string,
+    hidden: boolean,
+    end: boolean,
+  ) => Promise<boolean>;
 }
 
 export function StepButtons({
@@ -87,6 +99,14 @@ export function StepButtons({
   const [reason, setReason] = useState("");
   const agentStep = isAgentStep(step);
   const replaced = step.status === "replaced";
+  // The author may allow only one of them (1.4.6): the other is not shown.
+  const runIn = step.runIn ?? "either";
+  const runInLine =
+    runIn === "either"
+      ? null
+      : step.runInReason
+        ? t(`runIn.${runIn}Why`, { reason: step.runInReason })
+        : t(`runIn.${runIn}`);
   return (
     <>
       {(runbookOpen || canSendToAgent) && (
@@ -115,34 +135,41 @@ export function StepButtons({
             step.hostId !== null &&
             step.command !== null && (
               <>
-                <Button
-                  size="sm"
-                  variant={notYet ? "outline" : "default"}
-                  className={cn(notYet && "opacity-60")}
-                  data-not-yet={notYet || undefined}
-                  disabled={!runnable || busy || blocked}
-                  onClick={() => actions.run(step, notYet ? waitLeft : 0)}
-                >
-                  {t("step.run")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn(notYet && "opacity-60")}
-                  data-not-yet={notYet || undefined}
-                  disabled={
-                    !runnable || busy || blocked || Boolean(sendRefused)
-                  }
-                  title={sendRefused ?? undefined}
-                  onClick={() => actions.send(step, notYet ? waitLeft : 0)}
-                >
-                  {t("step.send")}
-                </Button>
+                {runIn !== "terminal" && (
+                  <Button
+                    size="sm"
+                    variant={notYet ? "outline" : "default"}
+                    className={cn(notYet && "opacity-60")}
+                    data-not-yet={notYet || undefined}
+                    disabled={!runnable || busy || blocked}
+                    onClick={() => actions.run(step, notYet ? waitLeft : 0)}
+                  >
+                    {t("step.run")}
+                  </Button>
+                )}
+                {runIn !== "run" && (
+                  <Button
+                    size="sm"
+                    variant={
+                      runIn === "terminal" && !notYet ? "default" : "outline"
+                    }
+                    className={cn(notYet && "opacity-60")}
+                    data-not-yet={notYet || undefined}
+                    disabled={
+                      !runnable || busy || blocked || Boolean(sendRefused)
+                    }
+                    title={sendRefused ?? undefined}
+                    onClick={() => actions.send(step, notYet ? waitLeft : 0)}
+                  >
+                    {t("step.send")}
+                  </Button>
+                )}
               </>
             )}
           {runbookOpen &&
             !agentStep &&
             !step.secretStep &&
+            !step.decision &&
             step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (
@@ -172,7 +199,8 @@ export function StepButtons({
                 {t("step.reopen")}
               </Button>
             ))}
-          {runbookOpen && (
+          {/* A decision has no output to hide (BUG-010). */}
+          {runbookOpen && (!step.decision || step.hideOutputFromAgents) && (
             <Button
               size="sm"
               variant="ghost"
@@ -198,6 +226,12 @@ export function StepButtons({
             </Button>
           )}
         </div>
+      )}
+
+      {runbookOpen && runInLine && !replaced && step.status === "pending" && (
+        <p className="mt-1 text-xs text-muted-foreground" data-run-in={runIn}>
+          {runInLine}
+        </p>
       )}
 
       {runbookOpen && sendRefused && step.status === "pending" && (

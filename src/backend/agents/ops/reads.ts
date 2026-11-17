@@ -1,7 +1,12 @@
 /** What an agent reads: its runbooks, one runbook, its values and events. */
 
 import type { Store } from "../../runbooks/store/store.js";
-import { loadBundle, openPath, runbookSummary } from "../../runbooks/view.js";
+import {
+  loadBundle,
+  loadNotNeeded,
+  openPath,
+  runbookSummary,
+} from "../../runbooks/view.js";
 import { parseStatus } from "../../runbooks/parse.js";
 import type { LiveRuns } from "../../running/live.js";
 import { InputError } from "../../core/errors.js";
@@ -16,6 +21,8 @@ import {
   RUNBOOK_EVENTS,
 } from "../events.js";
 import type { Access, AgentCaller } from "./access.js";
+import { RULE_TIME_BUDGET_MS } from "../../conditions/conditions.js";
+import { PatternBudget } from "../../values/values.js";
 
 export type Reads = ReturnType<typeof createReads>;
 
@@ -101,9 +108,16 @@ export function createReads(
       status,
     });
     const out: Array<RunbookSummary & { openPath: string }> = [];
+    // One time limit for every runbook's rules (BUG-008).
+    const budget = new PatternBudget(RULE_TIME_BUDGET_MS);
     for (const runbook of rows) {
+      const steps = await store.listSteps(runbook.id);
       out.push({
-        ...runbookSummary(runbook, await store.listSteps(runbook.id)),
+        ...runbookSummary(
+          runbook,
+          steps,
+          await loadNotNeeded(store, runbook.id, steps, budget),
+        ),
         openPath: openPath(runbook.id),
       });
     }

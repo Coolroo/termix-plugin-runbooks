@@ -36,6 +36,7 @@ export type {
   StepWait,
   TokenInfo,
 } from "../shared/api";
+export type { StepCondition, WhenRule } from "../shared/conditions";
 
 /** A session as the SSH Terminal plugin's terminal.listSessions lists it. */
 export interface TerminalSession {
@@ -72,6 +73,7 @@ const CONFLICTS: ReadonlySet<unknown> = new Set([
   "repeat",
   "wait",
   "order",
+  "not-needed",
   "stale",
 ]);
 

@@ -59,7 +59,7 @@ function server() {
       ],
       {
         title: "Deploy",
-        progress: { done: 0, failed: 0, total: 1 },
+        progress: { done: 0, failed: 0, total: 1, notNeeded: 0 },
         nextStepId: 2,
       },
     );

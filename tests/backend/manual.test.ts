@@ -51,7 +51,12 @@ describe("Done and Failed for a step with no command", () => {
       status: "failed",
       note: null,
     });
-    expect(failed.body.progress).toEqual({ done: 1, failed: 1, total: 2 });
+    expect(failed.body.progress).toEqual({
+      done: 1,
+      failed: 1,
+      total: 2,
+      notNeeded: 0,
+    });
     expect(
       s.mock.audits.filter((a) => a.action === "runbooks_step_manual"),
     ).toHaveLength(2);

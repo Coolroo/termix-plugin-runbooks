@@ -5,9 +5,10 @@
 
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
+import { OPTION_ID } from "../../../shared/decisions.js";
 
 const VALUE_SYNTAX =
-  "Commands may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook's value of that name: the author's values first, then values captured from earlier steps' output (a later capture wins). The person sees the resolved command before running it; a step whose placeholders have no value cannot run.";
+  'Commands and checks may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook\'s value of that name: the author\'s values first, then values captured from earlier steps\' output (a later capture wins). In a check, contains and notContains text and a value check\'s equals get the value as it is, and a pattern (matches, notMatches, a value check\'s matches) gets it as literal text, escaped, so {"type":"contains","text":"image:{{ver}}@sha256:"} works. The person sees the resolved command before running it; a step whose placeholders, in its command or its checks, have no value cannot run.';
 
 const TEXT_VALUES =
   "{{name}} values work here too, with the command's values: get_runbook returns the text as written and resolved (resolvedBody, resolvedExpect, resolvedWhere; textMissing names values not set yet, which show to the person as not set and do not stop the step). In Markdown a value shows as text (its Markdown is escaped), and inside a code span or code block as it is. Secrets are never values.";
@@ -20,7 +21,14 @@ const CHECKS_HELP =
   '{"type":"exitCode","equals":0} (Run only; a terminal run has an exit code only if the person entered one); ' +
   '{"type":"contains","text":"active (running)","stream":"stdout"} or notContains (stream stdout, stderr or any, default any; a terminal run has only its pasted output); ' +
   '{"type":"matches","pattern":"^Status: (ok|ready)$"} or notMatches (a JavaScript regular expression, multiline, with a time limit); ' +
-  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step. Checks read the output with its secrets hidden, as the person sees it: test for "token: [secret:api_token]", never for part of a secret.';
+  '{"type":"value","name":"version","matches":"^1\\\\.2\\\\."} (a value this step captures; equals or matches, or neither to require that it was captured). At most 20 per step. Checks take {{name}} values as commands do: text as it is, a pattern as escaped literal text, and a check whose value is not set stops the step from running. Checks read the output with its secrets hidden, as the person sees it: test for "token: [secret:api_token]", never for part of a secret.';
+
+const WHEN_HELP =
+  "When the step is needed (1.4.6), as a rule on earlier steps only; use it instead of 'only if step 8 failed' in the title or body. Leaves: " +
+  '{"step":8,"status":"failed"} (status done, failed, skipped, ran or not-needed; step 3 or "3a"), ' +
+  '{"step":1,"output":{"type":"contains","text":"HTTPS certificates: OFF"}} (any check type, on that step\'s latest finished run, secrets hidden; {{name}} values work), ' +
+  '{"value":"mode","equals":"fast"} or "matches" (a runbook value), {"step":5,"chose":"rollback"} (an option the person chose in a decision step). Combine with {"all":[...]}, {"any":[...]} and {"not":rule}, at most 4 levels and 20 rules. ' +
+  "Runbooks works the state out each time the runbook is read: waiting (a step it names has not ended), met, or not-met. A pending step whose rule is not met reads as not needed and counts as ended for the order, the next step, the progress and agent-turn. A rule that names a step an amendment replaced reads the replacement. get_runbook shows when and condition { state, rule, reason, notNeeded } on each step. A step a rule names cannot be removed or moved after the step with the rule. A rule cannot read a step whose output is hidden from agents, or a value such a step captures (also as {{name}}): test its status instead. An output rule cannot read stream stderr of an interactive step.";
 
 const WAIT_HELP =
   "A step may ask the person to wait after the step before it ended (its run finished, or it was marked done or skipped): waitAfterPreviousSeconds (1 to 86400) and an optional short waitReason. For example, restart a service in one step, then give the health-check step waitAfterPreviousSeconds 120 and waitReason 'let the service restart'. The person sees a countdown, and starting early takes an extra confirm. get_runbook shows waitUntil on a step while its timer runs.";
@@ -273,6 +281,59 @@ const STEP_SCHEMA = {
         "Why to wait, shown with the countdown, such as 'let the service restart'. Needs waitAfterPreviousSeconds.",
     },
     stdin: STDIN_SCHEMA,
+    runIn: {
+      type: ["string", "null"],
+      enum: ["either", "terminal", "run", null],
+      description:
+        'How the person may start the command (1.4.6): "either" (the default: Run or Send to terminal), "terminal" (Send to terminal only, such as a sign-in that opens a browser or waits for typed input; Run is refused) or "run" (Run only; Send to terminal is refused). Only for a step with a host and a command; "terminal" cannot have stdin. Use it instead of writing "use Send to terminal" in the title or body.',
+    },
+    when: {
+      type: ["object", "null"],
+      description: `${WHEN_HELP}`,
+    },
+    decision: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["options"],
+      description:
+        'A Decision step (1.4.6): the person chooses from these options with radio buttons (or check boxes with multiple: true) and presses Confirm; no free text, and only a person decides. Later steps read the choice in when: {"step":5,"chose":"rollback"}. The choice is a run of mode decision whose output is the chosen ids, one per line; value, when set, names a runbook value that holds the chosen ids joined with commas. A decision step has no host, command, checks, captures, stdin or wait timer. Use it for "only if needed" or "if the lead says so" instead of text.',
+      properties: {
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 10,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "label"],
+            properties: {
+              id: { type: "string", pattern: OPTION_ID.source },
+              label: { type: "string", maxLength: 120 },
+              description: {
+                type: ["string", "null"],
+                maxLength: 1000,
+                description: "Short Markdown under the label.",
+              },
+            },
+          },
+        },
+        multiple: { type: "boolean" },
+        min: { type: "integer", minimum: 1 },
+        max: { type: "integer", minimum: 1 },
+        value: { type: ["string", "null"], pattern: NAME.source },
+      },
+    },
+    runInReason: {
+      type: ["string", "null"],
+      maxLength: 200,
+      description:
+        "One line the person sees next to the one button, such as 'it waits for you to sign in in the browser'. Needs runIn terminal or run.",
+    },
+    interactive: {
+      type: "boolean",
+      description:
+        "Run opens a terminal (pty) for the command (1.4.6), so the person can type into programs that read one: sudo, ssh, ansible --ask-become-pass. Any Run without stdin already lets the person type into standard input (read, sudo -S); set this only for a program that needs a terminal. stdout and stderr then come as one stream: no check may read stderr. Cannot have stdin, secretCaptures or runIn terminal.",
+    },
     generate: {
       type: ["object", "null"],
       additionalProperties: false,

@@ -95,6 +95,12 @@ export function registerSendRoutes(router: Router, kit: PersonKit): void {
       if (typeof hidden !== "boolean") {
         throw new InputError("hidden must be true or false");
       }
+      // A choice is the author's own text, never a secret (BUG-010).
+      if (hidden && step.decision) {
+        throw new InputError(
+          "a decision step has no output to hide: agents see the options and the choice",
+        );
+      }
       await store.updateStep(step.id, { hideOutputFromAgents: hidden });
       await store.touchRunbook(step.runbookId);
       await store.persist();

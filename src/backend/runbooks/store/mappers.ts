@@ -7,8 +7,12 @@ import { parseJson, type Capture, type Values } from "../../values/values.js";
 import type { Check, CheckResult } from "../../checks/checks.js";
 import type { StoredStdin } from "../../running/stdin.js";
 import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
+import type { StoredRule } from "../../conditions/conditions.js";
+import type { DecisionSpec } from "../../../shared/decisions.js";
 import type {
   RunbookOwner,
+  RunErrorParts,
+  RunInput,
   RunSecrets,
   RunStdin,
   TokenHost,
@@ -98,6 +102,12 @@ export function toStep(row: Record<string, unknown>): StepRow {
     ask: parseJson<AskSpec | null>(row.ask, null),
     owner: row.owner === "agent" ? "agent" : "person",
     where: (row.outsideWhere as string | null | undefined) || null,
+    runIn:
+      row.runIn === "terminal" || row.runIn === "run" ? row.runIn : "either",
+    runInReason: (row.runInReason as string | null | undefined) || null,
+    when: parseJson<StoredRule | null>(row.whenJson, null),
+    decision: parseJson<DecisionSpec | null>(row.decision, null),
+    interactive: Boolean(row.interactive),
     suffix: (row.suffix as string | null | undefined) || null,
     amendsStepId: optNumber(row.amendsStepId),
     amendKind:
@@ -119,7 +129,8 @@ export function toRun(row: Record<string, unknown>): RunRow {
       row.mode === "manual" ||
       row.mode === "agent" ||
       row.mode === "outside" ||
-      row.mode === "secret"
+      row.mode === "secret" ||
+      row.mode === "decision"
         ? null
         : Number(row.hostId),
     note: (row.note as string | null | undefined) ?? null,
@@ -131,6 +142,8 @@ export function toRun(row: Record<string, unknown>): RunRow {
     checks: parseJson<CheckResult[] | null>(row.checks, null),
     stdin: parseJson<RunStdin | null>(row.stdin, null),
     secrets: parseJson<RunSecrets | null>(row.secrets, null),
+    inputs: parseJson<RunInput[]>(row.inputsJson, []),
+    errorParts: parseJson<RunErrorParts | null>(row.errorPartsJson, null),
   };
 }
 
@@ -144,6 +157,8 @@ export function toToken(row: Record<string, unknown>): TokenRow {
 
 /** Columns the store keeps as JSON text. */
 const JSON_COLUMNS = new Set([
+  "when",
+  "decision",
   "generate",
   "ask",
   "captures",
@@ -152,4 +167,6 @@ const JSON_COLUMNS = new Set([
   "stdin",
   "secrets",
   "secretCaptures",
+  "inputs",
+  "errorParts",
 ]);

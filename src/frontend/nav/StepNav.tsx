@@ -224,11 +224,18 @@ export interface NavSteps {
   nextIndex: number;
 }
 
-/** The runbook's steps, worked out once per render for the whole page. */
-export function useNavSteps(runbook: Runbook | null): NavSteps {
+/**
+ * The runbook's steps, worked out once per render for the whole page.
+ * With `hideNotNeeded` (1.4.6), the steps not needed are left out of the
+ * cards, the rail and the bar.
+ */
+export function useNavSteps(
+  runbook: Runbook | null,
+  hideNotNeeded = false,
+): NavSteps {
   const colorFor = useColorFor();
   if (!runbook) return { steps: [], nextIndex: -1 };
-  const steps = runbook.steps.map((step, index): NavStep => {
+  const all = runbook.steps.map((step, index): NavStep => {
     const kindRunbook = kindRunbookOf(runbook, index);
     const kind = kindOf(step, kindRunbook);
     const color = colorFor(kind.id);
@@ -245,6 +252,11 @@ export function useNavSteps(runbook: Runbook | null): NavSteps {
       mark: kindStyle.stateColor(state, color),
     };
   });
+  const steps = hideNotNeeded
+    ? all
+        .filter((item) => !item.step.condition?.notNeeded)
+        .map((item, index) => ({ ...item, index }))
+    : all;
   const nextIndex = steps.findIndex(
     (item) => item.step.id === runbook.nextStepId,
   );

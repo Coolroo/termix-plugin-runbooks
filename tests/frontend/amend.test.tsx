@@ -95,7 +95,7 @@ const data = makeRunbook(
     title: "Deploy",
     createdAt: "2026-11-09T10:00:00.000Z",
     updatedAt: "2026-11-09T10:05:00.000Z",
-    progress: { done: 1, failed: 0, total: 4 },
+    progress: { done: 1, failed: 0, total: 4, notNeeded: 0 },
     amendedPending: 1,
     nextStepId: 4,
     owner: { label: "Lead agent" },

@@ -5,7 +5,7 @@
 
 import type { AmendKind } from "../../runbooks/store/types.js";
 import { now, type Store } from "../../runbooks/store/store.js";
-import { amendmentView } from "../../runbooks/view.js";
+import { amendmentView, loadBundle } from "../../runbooks/view.js";
 import {
   checkStepCount,
   completeStep,
@@ -13,7 +13,14 @@ import {
   parseStepInput,
   type AuthorStep,
 } from "../../runbooks/parse.js";
-import { blockingProblem } from "../../runbooks/gates.js";
+import {
+  blockingProblem,
+  conditionProblem,
+  requireValues,
+} from "../../runbooks/gates.js";
+import { hiddenValueNames, notNeededIds } from "../../conditions/conditions.js";
+import { agentValues } from "../agent-view.js";
+import { fillChecks } from "../../../shared/checks.js";
 import { judgeOutput } from "../../checks/checks.js";
 import { stepResource } from "../../core/audit.js";
 import { InputError } from "../../core/errors.js";
@@ -29,7 +36,12 @@ import type { Events } from "../events.js";
 import type { Access, AgentCaller } from "./access.js";
 import type { Reads } from "./reads.js";
 import type { AgentAudit } from "./ops.js";
-import { checkSecretReads, objectBody, toStored } from "./authoring.js";
+import {
+  checkSecretReads,
+  objectBody,
+  recheckReaders,
+  toStored,
+} from "./authoring.js";
 
 export function createComplete(
   store: Store,
@@ -69,15 +81,35 @@ export function createComplete(
         { code: "ended" },
       );
     }
-    const steps = await store.listSteps(runbook.id);
-    const blocking = blockingProblem(step, steps, "; it is not your turn yet");
+    const bundle = (await loadBundle(store, runbook.id))!;
+    // An agent never starts a step its rule says is not needed (1.4.6):
+    // only a person may, after "Run anyway?".
+    const condition = conditionProblem(step, bundle, false);
+    if (condition.problem) throw condition.problem;
+    const blocking = blockingProblem(
+      step,
+      bundle.steps,
+      "; it is not your turn yet",
+      notNeededIds(bundle.conditions),
+    );
     if (blocking) throw blocking;
     const parsed = parseCompletion(input);
+    // Checks get the runbook's values (BUG-007): done cannot test a check
+    // whose value is not set. The agent ran the command, not Termix. They
+    // are the values the agent sees (BUG-011): with the real ones, the
+    // agent could test guesses of a hidden value as its own output.
+    const { checks, missing } = fillChecks(
+      step.checks,
+      Object.fromEntries(
+        agentValues(bundle).map((entry) => [entry.name, entry.value]),
+      ),
+    );
+    if (parsed.outcome === "done") requireValues(missing);
     // An agent step has no secrets to find today; the order is the same as
     // a person's run anyway: checks see the output with secrets hidden.
     // Mark failed tests no checks; an agent step takes no captures.
     const { results, final } = judgeOutput(
-      step,
+      { ...step, checks },
       parsed.outcome,
       parsed.outcome === "done"
         ? {
@@ -197,7 +229,31 @@ export function createComplete(
     const last = Math.max(-1, ...group.map((s) => suffixIndex(s.suffix)));
     const own = { position: step.position, suffix: suffixAt(last + 1) };
     checkSecretReads([...steps, { ...fresh, ...own }]);
-    const stored = toStored(fresh, own, steps, "step: ");
+    const stored = toStored(
+      fresh,
+      own,
+      steps,
+      "step: ",
+      hiddenValueNames([...steps, fresh]),
+    );
+    if (parsed.kind === "replace") {
+      // A rule that names the step reads its replacement now (D1), so it
+      // must fit the replacement, as for a patch (BUG-010).
+      const replacement = {
+        ...step,
+        captures: stored.captures,
+        decision: stored.decision ?? null,
+        hideOutputFromAgents: stored.hideOutputFromAgents,
+        interactive: stored.interactive ?? false,
+      };
+      recheckReaders(
+        steps.map((other) => (other.id === step.id ? replacement : other)),
+        step,
+        replacement,
+        await store.stepsWithRuns(steps.map((other) => other.id)),
+        own,
+      );
+    }
     const by = caller.token.name;
     let newId = 0;
     await events.around(runbook.id, by, async () => {

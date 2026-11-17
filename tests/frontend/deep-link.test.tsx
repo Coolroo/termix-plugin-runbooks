@@ -27,7 +27,7 @@ const runbook = makeRunbook([], {
   id: 12,
   title: "Rotate logs",
   revision: 1,
-  progress: { done: 0, failed: 0, total: 0 },
+  progress: { done: 0, failed: 0, total: 0, notNeeded: 0 },
   summary: "Rotate the **logs**.",
 });
 

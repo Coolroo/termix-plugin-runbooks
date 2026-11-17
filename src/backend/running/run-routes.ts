@@ -9,17 +9,18 @@ import { pathId, type PersonKit } from "../runbooks/person-kit.js";
 import { LIMITS } from "../runbooks/parse.js";
 import {
   agentStepProblem,
+  conditionProblem,
   requireActionable,
   requireRevision,
   requireValues,
 } from "../runbooks/gates.js";
-import { valuesObject } from "../values/effective.js";
-import { resolve } from "../values/values.js";
+import { agentCommand, valuesObject } from "../values/effective.js";
 import { judgeOutput, type CheckResult } from "../checks/checks.js";
 import { isAgentStep, isOutsideStep, stepLabel } from "../../shared/steps.js";
 import { redact } from "./redact.js";
 import { describeStdin, stepStdin } from "./stdin.js";
-import { createRunner, MAX_OUTPUT_BYTES } from "./runner.js";
+import { createRunner, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
+import { MAX_TYPED_BYTES } from "../../shared/limits.js";
 
 /** How long Stop waits for the run to be written before it answers. */
 const STOP_WAIT_MS = 5000;
@@ -41,6 +42,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
     stepContext,
     checkRunnable,
     auditSkippedWait,
+    auditNotNeeded,
     storedNote,
     audit,
   } = kit;
@@ -73,7 +75,9 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       let handedOff = false;
       try {
         const { step, bundle } = await stepContext(stepId);
-        const target = await checkRunnable(step, bundle, body(req));
+        const target = await checkRunnable(step, bundle, body(req), {
+          via: "run",
+        });
         // Without a stored key, a connection with no person to ask accepts
         // whatever key the server shows. Refuse rather than trust it.
         if (!target.host.hostKeyFingerprint) {
@@ -84,6 +88,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
           : null;
         const hidden = await madeSecretTexts(step, bundle);
         await auditSkippedWait(req, step, target.skippedWait);
+        await auditNotNeeded(req, step, target.overridden);
         const startedAt = now();
         const runId = await store.insertRun({
           stepId: step.id,
@@ -121,6 +126,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
             by: actor(),
             hostId: target.hostId,
             command: target.command,
+            checks: target.checks,
             stdin: input?.bytes,
             used: input?.secret ? [input.secret] : [],
             hidden,
@@ -210,8 +216,10 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         }
         const target = await checkRunnable(step, bundle, body(req), {
           agentChecked: true,
+          via: "terminal",
         });
         await auditSkippedWait(req, step, target.skippedWait);
+        await auditNotNeeded(req, step, target.overridden);
         const runId = await store.insertRun({
           stepId: step.id,
           runbookId: step.runbookId,
@@ -273,10 +281,15 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       }
       const step = await store.getStep(run.stepId);
       if (!step) throw new InputError("step not found", 404);
-      const hidden = await madeSecretTexts(
+      const bundle = await bundleFor(step.runbookId);
+      // Checks get the values the runbook has now (BUG-007); Mark done
+      // cannot test a check whose value is not set.
+      const { checks, missing } = agentCommand(
         step,
-        await bundleFor(step.runbookId),
+        valuesObject(bundle.values),
       );
+      if (outcome === "done") requireValues(missing);
+      const hidden = await madeSecretTexts(step, bundle);
       const { final, stored } = await finishRun(
         run.id,
         step,
@@ -296,6 +309,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
                   pastedOutput: pasted,
                 }
               : undefined,
+          checks,
           by: actor(),
           reason: "manual",
           hidden,
@@ -311,6 +325,107 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         true,
       );
       return store.getRun(run.id);
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/runs/{id}/input:
+   *   post:
+   *     summary: Type into a running command
+   *     description: >
+   *       Body { text, hidden?, end? } (1.4.6). Writes text to the running
+   *       command's standard input as it is (the page adds the line end: LF, or CR
+   *       for an interactive step, where a trailing LF becomes CR),
+   *       then ends the input when end is true: EOF, or Ctrl-D for an
+   *       interactive step. Only the person who started the run; refused
+   *       for a Termix API key. The text is never stored or logged: the run
+   *       keeps { at, chars, hidden, ended }, and a hidden text of 4
+   *       characters or more is hidden in its output as [secret:typed].
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       400: { description: No text and no end, or more than 4 KB }
+   *       403: { description: Another person started the run }
+   *       409: { description: Not running, input from stdin, or input ended }
+   */
+  router.post(
+    "/runs/:id/input",
+    ...act,
+    wrap(async (req) => {
+      const run = await store.getRun(pathId(req));
+      if (!run) throw new InputError("run not found", 404);
+      const input = body(req);
+      const text = input.text ?? "";
+      if (typeof text !== "string") {
+        throw new InputError("text must be a string");
+      }
+      for (const flag of ["hidden", "end"] as const) {
+        if (input[flag] !== undefined && typeof input[flag] !== "boolean") {
+          throw new InputError(`${flag} must be true or false`);
+        }
+      }
+      const hidden = input.hidden === true;
+      const end = input.end === true;
+      if (text === "" && !end) {
+        throw new InputError("type some text, or end the input");
+      }
+      if (Buffer.byteLength(text, "utf8") > MAX_TYPED_BYTES) {
+        throw new InputError(
+          `at most ${MAX_TYPED_BYTES / 1024} KB at once`,
+          400,
+          { code: "too-long" },
+        );
+      }
+      const record = run.status === "running" ? live.get(run.id) : undefined;
+      if (run.mode !== "exec" || !record) {
+        throw new InputError("this run is not running", 409, {
+          code: "not-running",
+        });
+      }
+      if (run.stdin) {
+        throw new InputError(
+          `this run got its input from ${describeStdin(run.stdin)}: it takes no typed input`,
+          409,
+          { code: "stdin-source" },
+        );
+      }
+      // D6: only the person who started it, who sees what they answer.
+      if (run.userId !== actor()) {
+        throw new InputError(
+          `only ${run.userId}, who started this run, can type into it`,
+          403,
+          { code: "not-your-run" },
+        );
+      }
+      const closed = () =>
+        new InputError(
+          "the command takes no input now: it has not started yet, or its input was ended",
+          409,
+          { code: "input-closed" },
+        );
+      if (!record.input?.open()) throw closed();
+      const step = await store.getStep(run.stepId);
+      if (!step) throw new InputError("step not found", 404);
+      if (text !== "" && !record.input.send(text, hidden)) throw closed();
+      if (end && !record.input.end()) throw closed();
+      const chars = [...text.replace(LINE_END, "")].length;
+      live.typed(run.id, { at: now(), chars, hidden, ended: end });
+      // The size and the flags only: never the text.
+      const what =
+        text === ""
+          ? "input ended"
+          : `input sent: ${chars} characters${hidden ? ", hidden" : ""}${
+              end ? ", then input ended" : ""
+            }`;
+      await audit(
+        req,
+        "runbooks_step_input",
+        step,
+        `runbook ${step.runbookId} step ${stepLabel(step)} run ${run.id}: ${what}`,
+        true,
+      );
+      return shownRun(run.id);
     }),
   );
 
@@ -339,6 +454,13 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       claimed(pathId(req), async (stepId) => {
         const { step, bundle } = await stepContext(stepId);
         requireActionable(step, bundle);
+        if (step.decision) {
+          throw new InputError(
+            "this is a decision step: choose an option and press Confirm",
+            400,
+            { code: "decision" },
+          );
+        }
         const outside = isOutsideStep(step);
         if (!outside && (step.hostId !== null || step.command !== null)) {
           throw new InputError(
@@ -348,6 +470,13 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         const input = body(req);
         const outcome = parseOutcome(input.outcome);
         const note = optionalText(input.note, "note", LIMITS.ownerNote) ?? "";
+        // A step its rule says is not needed (1.4.6), unless "anyway".
+        const condition = conditionProblem(
+          step,
+          bundle,
+          input.conditionAnyway === true,
+        );
+        if (condition.problem) throw condition.problem;
         // A step run outside Termix: the command the person copied, the
         // output they pasted, and the revision they saw.
         let command = "";
@@ -357,9 +486,10 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         let final: "done" | "failed" = outcome;
         if (outside) {
           requireRevision(step, input);
-          const resolved = resolve(step.command!, valuesObject(bundle.values));
+          // The command's values and the checks' (BUG-007).
+          const resolved = agentCommand(step, valuesObject(bundle.values));
           requireValues(resolved.missing);
-          command = resolved.text;
+          command = resolved.command!;
           const output =
             optionalText(input.output, "output", MAX_OUTPUT_BYTES, {
               bytes: true,
@@ -379,7 +509,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
           // is finishRun's anyway: find the secrets, then check the output
           // with them hidden (1.4.1).
           const judged = judgeOutput(
-            step,
+            { ...step, checks: resolved.checks },
             outcome,
             {
               mode: "terminal",
@@ -394,6 +524,8 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
           pasted = output === "" ? null : redact(output, judged.hide);
           ({ results, captured, final } = judged);
         }
+        // Every question passed: the step ends now (BUG-008).
+        await auditNotNeeded(req, step, condition.overridden);
         const at = now();
         await events.endStep(step, {
           status: final,

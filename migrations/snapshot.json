@@ -181,6 +181,23 @@
         "ask": {
           "type": "text"
         },
+        "runIn": {
+          "type": "varchar",
+          "length": 16
+        },
+        "runInReason": {
+          "type": "varchar",
+          "length": 255
+        },
+        "whenJson": {
+          "type": "text"
+        },
+        "decision": {
+          "type": "text"
+        },
+        "interactive": {
+          "type": "boolean"
+        },
         "revision": {
           "type": "integer",
           "notNull": true
@@ -293,6 +310,12 @@
         },
         "startedEarlySeconds": {
           "type": "integer"
+        },
+        "inputsJson": {
+          "type": "text"
+        },
+        "errorPartsJson": {
+          "type": "text"
         }
       },
       "indexes": [

@@ -12,8 +12,15 @@ import {
 } from "../ui/format";
 import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
+import { RunInput } from "../running/RunInput";
 import type { StepActions } from "./StepButtons";
-import type { Run } from "../api-types";
+import type { Run, Step } from "../api-types";
+
+/** What typing into a running command needs (1.4.6). */
+interface InputProps {
+  step?: Pick<Step, "interactive" | "timeoutMs">;
+  onInput?: StepActions["input"];
+}
 
 /** A silence this long is shown as a warning: the command may be stuck. */
 const SILENCE_WARN_MS = 30_000;
@@ -50,8 +57,11 @@ function LiveOutput({ label, text }: { label: string; text: string }) {
   );
 }
 
-/** The running command: elapsed time, silence, and its output so far. */
-function LiveRun({ run }: { run: Run }) {
+/**
+ * The running command: elapsed time, silence, its output so far, and the
+ * line to type into it.
+ */
+function LiveRun({ run, step, onInput }: { run: Run } & InputProps) {
   const { t } = useTranslation();
   useTick();
   // The server's counts were true when this run was fetched; time moves on
@@ -88,6 +98,9 @@ function LiveRun({ run }: { run: Run }) {
       )}
       <LiveOutput label={t("run.stdout")} text={run.stdout ?? ""} />
       <LiveOutput label={t("run.stderr")} text={run.stderr ?? ""} />
+      {step && onInput && (
+        <RunInput run={run} step={step} elapsedMs={elapsed} onInput={onInput} />
+      )}
     </div>
   );
 }
@@ -107,10 +120,12 @@ function Output({ label, text }: { label: string; text: string | null }) {
 export function RunDetails({
   run,
   onComplete,
+  step,
+  onInput,
 }: {
   run: Run;
   onComplete?: StepActions["complete"];
-}) {
+} & InputProps) {
   const { t } = useTranslation();
   const [pasted, setPasted] = useState("");
   const [exitCode, setExitCode] = useState("");
@@ -156,7 +171,8 @@ export function RunDetails({
       </div>
       {run.mode !== "manual" &&
         run.mode !== "agent" &&
-        run.mode !== "secret" && (
+        run.mode !== "secret" &&
+        run.mode !== "decision" && (
           <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
             $ {run.command}
           </pre>
@@ -175,7 +191,7 @@ export function RunDetails({
       )}
       {run.error && <p className="mt-1 text-destructive">{run.error}</p>}
       {run.running ? (
-        <LiveRun run={run} />
+        <LiveRun run={run} step={step} onInput={onInput} />
       ) : (
         <>
           <Output label={t("run.stdout")} text={run.stdout} />
@@ -183,6 +199,11 @@ export function RunDetails({
         </>
       )}
       <Output label={t("run.pasted")} text={run.pastedOutput} />
+      {(run.inputs?.length ?? 0) > 0 && (
+        <p className="mt-1 text-muted-foreground" data-run-inputs>
+          {t("run.input.count", { count: run.inputs.length })}
+        </p>
+      )}
       {(run.secrets?.used.length ?? 0) > 0 && (
         <p className="mt-1 text-muted-foreground" data-run-secrets-used>
           {t("secrets.runUsed", { names: run.secrets!.used.join(", ") })}

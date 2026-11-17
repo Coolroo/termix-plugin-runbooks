@@ -7,6 +7,7 @@
 import {
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
@@ -69,11 +70,20 @@ export function RunbookDetail({
     [effective],
   );
 
+  // "Hide not needed" (1.4.6, D2), remembered in this browser.
+  const [hideNotNeeded, setHideNotNeeded] = useState(readHideNotNeeded);
+  const toggleHideNotNeeded = (hide: boolean) => {
+    setHideNotNeeded(hide);
+    writeHideNotNeeded(hide);
+  };
+  // Each step's kind, color and state, once for the cards, rail and bar.
+  const navSteps = useNavSteps(runbook, hideNotNeeded);
   // The rail and the bar follow the steps on screen (1.4.4).
   const scroller = useRef<HTMLDivElement>(null);
-  const nav = useStepNav(scroller, runbook?.steps ?? []);
-  // Each step's kind, color and state, once for the cards, rail and bar.
-  const navSteps = useNavSteps(runbook);
+  const nav = useStepNav(
+    scroller,
+    navSteps.steps.map((item) => item.step),
+  );
   const bar = useBarContext(
     runbook,
     navSteps,
@@ -115,6 +125,21 @@ export function RunbookDetail({
               <span className="text-xs text-muted-foreground">
                 {runbookMeta(t, runbook)}
               </span>
+              {(runbook.progress.notNeeded ?? 0) > 0 && (
+                <label
+                  className="flex items-center gap-1 text-xs text-muted-foreground"
+                  data-hide-not-needed
+                >
+                  <input
+                    type="checkbox"
+                    checked={hideNotNeeded}
+                    onChange={(event) =>
+                      toggleHideNotNeeded(event.target.checked)
+                    }
+                  />
+                  {t("notNeeded.hide")}
+                </label>
+              )}
               <span className="ml-auto flex gap-2">
                 {open ? (
                   <>
@@ -230,4 +255,25 @@ export function RunbookDetail({
       {hasSteps && bar && <NextStepBar ctx={bar} />}
     </div>
   );
+}
+
+/** Where the page remembers "Hide not needed" (1.4.6). */
+const HIDE_NOT_NEEDED_KEY = "termix-runbooks.hideNotNeeded";
+
+/** Whether this browser hides steps that are not needed. */
+function readHideNotNeeded(): boolean {
+  try {
+    return window.localStorage.getItem(HIDE_NOT_NEEDED_KEY) === "1";
+  } catch {
+    // No storage here (a private window, blocked site data): show them.
+    return false;
+  }
+}
+
+function writeHideNotNeeded(hide: boolean): void {
+  try {
+    window.localStorage.setItem(HIDE_NOT_NEEDED_KEY, hide ? "1" : "0");
+  } catch {
+    // Not remembered; the switch still works on this page.
+  }
 }

@@ -59,7 +59,7 @@ const runbook = makeRunbook(
     title: "Tailnet",
     createdAt: "2026-11-11T10:00:00.000Z",
     updatedAt: "2026-11-11T10:05:00.000Z",
-    progress: { done: 0, failed: 0, total: 4 },
+    progress: { done: 0, failed: 0, total: 4, notNeeded: 0 },
     values: { ts_ip: "100.64.0.7" },
     effectiveValues: [
       { name: "ts_ip", value: "100.64.0.7", source: "author" },

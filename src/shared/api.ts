@@ -9,6 +9,8 @@
  */
 
 import type { Check, CheckResult } from "./checks.js";
+import type { StepCondition, WhenRule } from "./conditions.js";
+import type { DecisionChoice, DecisionSpec } from "./decisions.js";
 import type { AskField, ByHand, GenerateField } from "./secret-steps.js";
 
 export type {
@@ -24,10 +26,15 @@ export type RunbookStatus = "open" | "done" | "abandoned";
 export type StepStatus = "pending" | "done" | "failed" | "skipped" | "replaced";
 /** Who does a step (1.4.0): a person runs it, an agent completes it. */
 export type StepOwner = "person" | "agent";
+/**
+ * Where a step's command may run (1.4.6): either (Run or Send to terminal),
+ * terminal (Send to terminal only) or run (Run only).
+ */
+export type RunIn = "either" | "terminal" | "run";
 /** How an amendment amends its step (1.4.0). */
 export type AmendKind = "replace" | "substep";
 export type RunMode =
-  "exec" | "terminal" | "manual" | "agent" | "outside" | "secret";
+  "exec" | "terminal" | "manual" | "agent" | "outside" | "secret" | "decision";
 export type RunStatus = "running" | "awaiting-output" | "done" | "failed";
 
 /** The agent and task a runbook belongs to (1.4.0), as the agent set it. */
@@ -121,6 +128,19 @@ export interface RunSecrets {
   };
 }
 
+/**
+ * One input a person typed into a running command (1.4.6), or End input:
+ * when, how many characters, and whether it was hidden. Never the text.
+ */
+export interface RunInput {
+  at: string;
+  /** Null for anyone but the person who typed (BUG-010). */
+  chars: number | null;
+  hidden: boolean;
+  /** The person ended the command's input (EOF, or Ctrl-D with a pty). */
+  ended: boolean;
+}
+
 /** A run as it is stored, and as the routes that end a run send it. */
 export interface RunRecord {
   id: number;
@@ -153,6 +173,26 @@ export interface RunRecord {
   note: string | null;
   /** Seconds of the wait still left when it started anyway (1.2.0). */
   startedEarlySeconds: number | null;
+  /** What the person typed into it, by size only (1.4.6); empty for none. */
+  inputs: RunInput[];
+  /** The parts that `error` was made from (1.4.6); null for none or older. */
+  errorParts: RunErrorParts | null;
+}
+
+/**
+ * Why a run failed, in parts (BUG-014): Termix's own words apart from the
+ * capture and secret names the author wrote, so that agents get an error
+ * built from them, never a whole text masked after the fact.
+ */
+export interface RunErrorParts {
+  /** Termix's words: a stop, an interruption, an exec error; or null. */
+  message: string | null;
+  /** Secret captures that found no match. */
+  secretsMissing: string[];
+  /** A secret capture that could not be stored, and why. */
+  secretNotStored: { name: string; why: string } | null;
+  /** Captures whose pattern did not finish in time. */
+  slowCaptures: string[];
 }
 
 /** A run as a runbook shows it: with what a running command printed. */
@@ -167,6 +207,12 @@ export interface Run extends RunRecord {
   silentMs: number | null;
   /** The output shows only when the run ends: it captures a secret. */
   outputHeld?: boolean;
+  /**
+   * For a running run (1.4.6): the person who started it can type into it
+   * now. False before the command started, after End input, and for a run
+   * that got its standard input from `stdin`.
+   */
+  acceptsInput?: boolean;
 }
 
 /** A run in a 409 repeat answer: who ran it, when, and how it ended. */
@@ -254,7 +300,7 @@ export interface Step extends AmendmentView {
   command: string | null;
   resolvedCommand: string | null;
   commandHash: string | null;
-  /** Names the command uses that have no value: it cannot run. */
+  /** Names the command and its checks use that have no value: it cannot run. */
   missing: string[];
   expect: string;
   /** 1.4.3: body, expect and where with their values filled in. */
@@ -264,8 +310,20 @@ export interface Step extends AmendmentView {
   /** 1.4.3: names body, expect and where use that have no value. */
   textMissing: string[];
   captures: Array<{ name: string; pattern: string }>;
+  /** 1.4.6: Run and Send to terminal, or only one of them. */
+  runIn: RunIn;
+  /** 1.4.6: why, in one line, for the person; null when not given. */
+  runInReason: string | null;
+  /** 1.4.6: Run opens a terminal (pty), so programs like sudo can ask. */
+  interactive: boolean;
+  /** 1.4.6: when the step is needed, steps by number; null: always. */
+  when: WhenRule | null;
+  /** 1.4.6: what its rule says now; null for a step without one. */
+  condition: StepCondition | null;
   /** Rules tested on the output when a run ends. */
   checks: Check[];
+  /** The checks with their values filled in (BUG-007); a name with no value stays as written. */
+  resolvedChecks: Check[];
   hideOutputFromAgents: boolean;
   status: StepStatus;
   skipReason: string | null;
@@ -289,6 +347,15 @@ export interface Step extends AmendmentView {
   ask: AskField | null;
   /** 1.4.2: what a secret step shows; null on any other step. */
   secretStep: SecretStepView | null;
+  /** 1.4.6: a Decision step's options; null on any other step. */
+  decision: DecisionSpec | null;
+  /** 1.4.6: what the person chose, while the step is done; else null. */
+  choice: DecisionChoice | null;
+  /**
+   * 1.4.6: steps whose when rule reads this decision and that already ran
+   * (D8: Reopen names them).
+   */
+  decisionRan: StepName[];
   /** Each time a person sent it to the agent, newest first (1.4.0). */
   sent: SentToAgent[];
   revision: number;
@@ -299,6 +366,8 @@ export interface Progress {
   done: number;
   failed: number;
   total: number;
+  /** 1.4.6: pending steps whose when rule does not hold; they count as ended. */
+  notNeeded: number;
 }
 
 /** A runbook's own fields and progress, in every view of it. */
@@ -383,8 +452,21 @@ export interface TokenInfo {
  * and a step that changed. `error` says it in words.
  */
 export type ConflictBody = { error: string } & (
-  RepeatConflict | WaitConflict | OrderConflict | StaleConflict
+  | RepeatConflict
+  | WaitConflict
+  | OrderConflict
+  | StaleConflict
+  | NotNeededConflict
 );
+
+/** 1.4.6: the step's when rule says it is not needed; ask "Run anyway?". */
+export interface NotNeededConflict {
+  code: "not-needed";
+  /** The rule in words. */
+  rule: string;
+  /** Why it does not hold now. */
+  reason: string;
+}
 
 export interface RepeatConflict {
   code: "repeat";

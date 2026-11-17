@@ -20,6 +20,7 @@
     "empty": "No runbooks yet.",
     "emptyHint": "An agent with a Runbooks token proposes them; they show up here.",
     "meta": "{{done}}/{{total}} done · by {{author}} · {{time}}",
+    "metaNotNeeded": "{{done}}/{{total}} done · {{notNeeded}} not needed · by {{author}} · {{time}}",
     "failed": "{{count}} failed",
     "amended": "amended",
     "next": "Next: {{kind}}"
@@ -94,6 +95,12 @@
     "agentCommandOn": "What the agent will run on {{host}}",
     "sendToAgent": "Send to agent"
   },
+  "runIn": {
+    "terminal": "Send to terminal only: this step runs in a terminal.",
+    "terminalWhy": "Send to terminal only: {{reason}}.",
+    "run": "Run only: this step does not go to a terminal.",
+    "runWhy": "Run only: {{reason}}."
+  },
   "sendAgent": {
     "title": "Send step {{position}} to {{label}}?",
     "hint": "The agent is told to look at this step. It reads your note in Runbooks; the notice itself carries no output or note.",
@@ -119,6 +126,7 @@
     "manualFailed": "Marked failed by {{user}} at {{time}}",
     "agentDone": "Done by the agent {{user}} at {{time}}",
     "agentFailed": "Marked failed by the agent {{user}} at {{time}}",
+    "decided": "Chosen by {{user}} at {{time}}",
     "note": "Note: {{note}}",
     "startedEarly": "started {{time}} early",
     "pasteFirst": "Paste the output first: at least one line.",
@@ -143,13 +151,54 @@
     "noOutputYet": "No output yet.",
     "exitPlaceholder": "Exit code (optional)",
     "secretMade": "Made secret {{name}} by {{user}} at {{time}}",
-    "secretSaved": "Saved secret {{name}} by {{user}} at {{time}}"
+    "secretSaved": "Saved secret {{name}} by {{user}} at {{time}}",
+    "input": {
+      "label": "Type into the command",
+      "placeholder": "Type here, then press Enter",
+      "placeholderHidden": "Hidden: type here, then press Enter",
+      "send": "Send",
+      "end": "End input",
+      "endHint": "Tells the command there is no more input (Ctrl-D)",
+      "show": "Show what you type",
+      "hide": "Hide what you type",
+      "prompt": "The command asks for a password",
+      "left": "{{time}} left before the time limit",
+      "hiddenHint": "Hidden: shown as [secret:typed] in the output.",
+      "hiddenShort": "Hidden here only: text shorter than 4 characters is not hidden in the output.",
+      "echoHint": "A command may print what you type. Hide it for a password.",
+      "notYours": "Only {{user}}, who started this run, can type into it.",
+      "ended": "Input ended.",
+      "count_one": "Typed into once (never stored)",
+      "count_other": "Typed into {{count}} times (never stored)"
+    }
   },
   "repeat": {
     "titleStep": "This step already ran. Run it again?",
     "titleHash": "This command ran on this host in the last 24 hours. Run it again?",
     "last": "Last run by {{user}} at {{time}}, exit {{exit}}.",
     "again": "Run again"
+  },
+  "decision": {
+    "chose": "You chose: {{labels}}",
+    "by": "by {{by}} at {{time}}",
+    "confirm": "Confirm",
+    "pickOne": "Choose one option.",
+    "pickCount": "Choose {{count}} options.",
+    "pickRange": "Choose {{min}} to {{max}} options.",
+    "reopenTitle": "Choose again?",
+    "reopenHint": "These steps already ran on the old choice and stay as they are: {{steps}}. Steps that have not run yet follow the new choice.",
+    "reopen": "Reopen and choose again"
+  },
+  "notNeeded": {
+    "title": "Run anyway?",
+    "hint": "This step is not needed: {{reason}}. Its rule: only if {{rule}}. Start it anyway?",
+    "anyway": "Run anyway",
+    "line": "not needed: {{reason}}",
+    "onlyIf": "Only if {{rule}}",
+    "readsHidden": "This rule can't see hidden output: it reads what agents see, [hidden by owner]. Test the step's status instead, with a check on that step.",
+    "hide": "Hide not needed",
+    "badge": "Not needed",
+    "collapse": "Hide"
   },
   "order": {
     "title": "Earlier steps are still pending",
@@ -256,6 +305,11 @@
     "hint": "Runbooks sends the command a TERM signal where the server accepts one, then closes its session. The run is kept as failed, with the output so far. A command that ignores the signal may keep running on the host.",
     "confirm": "Stop"
   },
+  "captures": {
+    "title": "Captures",
+    "value": "value {{name}}",
+    "secret": "secret {{name}}"
+  },
   "checks": {
     "title": "Checks",
     "state": {
@@ -310,6 +364,7 @@
   },
   "kind": {
     "run": "Run on {{host}}",
+    "terminal": "Terminal on {{host}}",
     "lead": "{{label}}'s step",
     "agent": "Agent",
     "outside": "Run outside Termix",
@@ -322,14 +377,17 @@
       "app": "In an app",
       "finish": "Finish",
       "makeSecret": "Make a secret",
-      "askSecret": "Ask for a secret"
+      "askSecret": "Ask for a secret",
+      "decision": "Decision"
     },
     "mark": {
       "secret": "Secret",
-      "wait": "Wait"
+      "wait": "Wait",
+      "interactive": "Interactive"
     },
     "makeSecret": "Make a secret",
-    "askSecret": "Ask for a secret"
+    "askSecret": "Ask for a secret",
+    "decision": "Decide"
   },
   "secretStep": {
     "makeWhat": "Make secret {{name}}: {{what}}",

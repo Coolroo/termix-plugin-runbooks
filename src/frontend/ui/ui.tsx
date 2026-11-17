@@ -203,9 +203,12 @@ export function runbookMeta(
   t: Translate,
   runbook: Pick<RunbookSummary, "progress" | "createdBy" | "updatedAt">,
 ): string {
-  return t("list.meta", {
+  // 1.4.6: steps whose when rule says they are not needed.
+  const notNeeded = runbook.progress.notNeeded ?? 0;
+  return t(notNeeded > 0 ? "list.metaNotNeeded" : "list.meta", {
     done: runbook.progress.done,
     total: runbook.progress.total,
+    notNeeded,
     author: runbook.createdBy,
     time: formatTime(runbook.updatedAt),
   });

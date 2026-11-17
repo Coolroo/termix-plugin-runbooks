@@ -32,7 +32,7 @@ afterEach(() => {
 function fakeClient() {
   const channel = new FakeChannel();
   const client: ExecClient = {
-    exec: (_command, callback) =>
+    exec: (_command, _options, callback) =>
       callback(undefined, channel as unknown as ExecChannel),
   };
   return { client, channel };

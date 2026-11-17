@@ -7,10 +7,12 @@ import { now } from "../runbooks/store/store.js";
 import { pathId, type PersonKit } from "../runbooks/person-kit.js";
 import {
   blockingProblem,
+  conditionProblem,
   requireActionable,
   requireRevision,
   waitProblem,
 } from "../runbooks/gates.js";
+import { notNeededIds } from "../conditions/conditions.js";
 import { matchesWhole } from "../values/values.js";
 import { libraryRef } from "../running/stdin.js";
 import { stepLabel } from "../../shared/steps.js";
@@ -79,6 +81,7 @@ export function registerSecretRoutes(router: Router, kit: PersonKit): void {
     stepContext,
     runSummary,
     auditSkippedWait,
+    auditNotNeeded,
     audit,
   } = kit;
 
@@ -127,8 +130,19 @@ export function registerSecretRoutes(router: Router, kit: PersonKit): void {
         } else {
           value = "";
         }
+        const condition = conditionProblem(
+          step,
+          bundle,
+          input.conditionAnyway === true,
+        );
+        if (condition.problem) throw condition.problem;
         if (input.outOfOrder !== true) {
-          const blocking = blockingProblem(step, bundle.steps);
+          const blocking = blockingProblem(
+            step,
+            bundle.steps,
+            "",
+            notNeededIds(bundle.conditions),
+          );
           if (blocking) throw blocking;
         }
         const wait = waitProblem(step, bundle, input.waitAnyway === true);
@@ -222,6 +236,7 @@ export function registerSecretRoutes(router: Router, kit: PersonKit): void {
           touch: dest.to === "runbook" ? { secretsStoredAt: at } : {},
         });
         await auditSkippedWait(req, step, wait.skippedSeconds);
+        await auditNotNeeded(req, step, condition.overridden);
         await audit(
           req,
           "runbooks_step_secret",

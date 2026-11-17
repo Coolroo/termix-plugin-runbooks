@@ -12,7 +12,8 @@
 import type { EventRow, RunbookRow, StepRow } from "../runbooks/store/types.js";
 import { now, type Store } from "../runbooks/store/store.js";
 import { InputError } from "../core/errors.js";
-import { openPath } from "../runbooks/view.js";
+import { loadBundle, nextStep, openPath } from "../runbooks/view.js";
+import { anyCutOff, notNeededIds } from "../conditions/conditions.js";
 import { isAgentStep, stepLabel, type StepNumber } from "../../shared/steps.js";
 
 const EVENT_TYPES = [
@@ -76,11 +77,24 @@ export function wanted(runbook: RunbookRow, type: EventType): boolean {
 
 /**
  * The step whose turn it is, if it is an agent's: the first pending step of
- * an open runbook, when its owner is the agent. Every step before it ended.
+ * an open runbook that is needed (1.4.6), when its owner is the agent.
+ * Every step before it ended, or is not needed. Undefined when the time
+ * limit cut a rule, so the steps not needed are not known yet (BUG-010).
  */
-function agentTurn(runbook: RunbookRow, steps: StepRow[]): StepRow | null {
+async function agentTurn(
+  store: Store,
+  runbook: RunbookRow,
+): Promise<StepRow | null | undefined> {
   if (runbook.status !== "open") return null;
-  const next = steps.find((step) => step.status === "pending");
+  const steps = await store.listSteps(runbook.id);
+  let notNeeded = new Set<number>();
+  if (steps.some((step) => step.when)) {
+    const bundle = await loadBundle(store, runbook.id);
+    if (!bundle) return null;
+    if (anyCutOff(bundle.conditions)) return undefined;
+    notNeeded = notNeededIds(bundle.conditions);
+  }
+  const next = nextStep(steps, notNeeded);
   return next && isAgentStep(next) ? next : null;
 }
 
@@ -120,10 +134,12 @@ export type Events = ReturnType<typeof createEvents>;
 export function createEvents(store: Store) {
   let delivery: Delivery | null = null;
 
-  async function turn(runbookId: number): Promise<number | null> {
+  /** The agent step whose turn it is; undefined when not known yet. */
+  async function turn(runbookId: number): Promise<number | null | undefined> {
     const runbook = await store.getRunbook(runbookId);
     if (!runbook) return null;
-    return agentTurn(runbook, await store.listSteps(runbookId))?.id ?? null;
+    const step = await agentTurn(store, runbook);
+    return step === undefined ? undefined : (step?.id ?? null);
   }
 
   /** Writes one event; queues it for the webhook when wanted and on. */
@@ -155,7 +171,10 @@ export function createEvents(store: Store) {
 
   /**
    * Runs a change to a runbook's steps or status, then records
-   * "agent-turn" when the change made an agent step the next one.
+   * "agent-turn" when the change made an agent step the next one. When the
+   * time limit cut a rule before or after, the turn is not known, and no
+   * agent-turn is sent (BUG-010): a wrong one would call the agent to a
+   * step that may not be needed.
    */
   async function around<T>(
     runbookId: number,
@@ -165,8 +184,8 @@ export function createEvents(store: Store) {
     const before = await turn(runbookId);
     const result = await fn();
     const runbook = await store.getRunbook(runbookId);
-    if (runbook) {
-      const after = agentTurn(runbook, await store.listSteps(runbookId));
+    if (runbook && before !== undefined) {
+      const after = await agentTurn(store, runbook);
       if (after && after.id !== before) {
         await record({ runbook, stepId: after.id, type: "agent-turn", by });
         await store.persist();
@@ -181,6 +200,7 @@ export function createEvents(store: Store) {
     status: "done" | "failed",
     reason: FailReason | null,
     by: string,
+    note: string | null = null,
   ): Promise<void> {
     const runbook = await store.getRunbook(step.runbookId);
     if (!runbook) return;
@@ -193,7 +213,7 @@ export function createEvents(store: Store) {
         by,
       });
     } else if (effectiveNotify(runbook).includes("step-done")) {
-      await record({ runbook, stepId: step.id, type: "step-done", by });
+      await record({ runbook, stepId: step.id, type: "step-done", by, note });
     }
   }
 
@@ -243,6 +263,8 @@ export function createEvents(store: Store) {
         run?: () => Promise<unknown>;
         keepReplaced?: boolean;
         touch?: RunbookPatch | false;
+        /** 1.4.6: what step-done carries, such as a decision's choice. */
+        note?: string | null;
       },
     ): Promise<void> {
       await around(step.runbookId, end.by, async () => {
@@ -256,7 +278,7 @@ export function createEvents(store: Store) {
             ? { endedAt: end.at }
             : { status: end.status, skipReason: null, endedAt: end.at },
         );
-        await stepEnded(step, end.status, end.reason, end.by);
+        await stepEnded(step, end.status, end.reason, end.by, end.note ?? null);
         if (end.touch !== false) {
           await store.touchRunbook(step.runbookId, end.touch);
           await store.persist();

@@ -368,11 +368,13 @@ describe("standard input from a library secret", () => {
     await vi.waitFor(() => expect(channel).not.toBeNull());
     channel!.out("abc s3cr");
     let run = await shownRun(s, runbook.id, started.body.id);
-    // What may be the start of a value is held back until more arrives.
-    expect(run.stdout).toBe("");
+    // What may be the start of a value is held back until more arrives;
+    // the rest shows at once (1.4.6).
+    expect(run.stdout).toBe("abc ");
+    expect(JSON.stringify(run)).not.toContain("s3cr");
     channel!.out("3t-value def\n");
     run = await shownRun(s, runbook.id, started.body.id);
-    expect(run.stdout).toBe("abc [secret:shared/registry/password]");
+    expect(run.stdout).toBe("abc [secret:shared/registry/password] def\n");
     expect(JSON.stringify(run)).not.toContain("s3cr");
     channel!.exit(0);
     run = await waitForRun(s, runbook.id, started.body.id);

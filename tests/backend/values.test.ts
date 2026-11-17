@@ -59,7 +59,7 @@ describe("values", () => {
       "a".repeat(40) + "!",
     );
     expect(slow.values).toEqual({});
-    expect(slow.errors[0]).toMatch(/did not finish/);
+    expect(slow.slow).toEqual(["x"]);
     expect(Date.now() - started).toBeLessThan(5000);
   });
 });
@@ -180,11 +180,18 @@ describe("resolved commands and their hashes", () => {
       text: entry.text,
       missing: entry.missing,
     });
-    const step = { command: entry.command, hostId: 7 } as StepRow;
+    const step = {
+      command: entry.command,
+      hostId: 7,
+      checks: [],
+    } as unknown as StepRow;
+    // With no checks, the approved hash is the run's own (BUG-008).
     expect(resolveStep(step, entry.values)).toEqual({
       command: entry.text,
       hash: entry.hash,
+      runHash: entry.hash,
       missing: entry.missing,
+      checks: [],
     });
     expect(
       resolveStep(step, entry.values, {

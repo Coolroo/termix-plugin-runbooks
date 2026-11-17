@@ -22,6 +22,7 @@ import { registerColorsRoute } from "../kinds/colors-route.js";
 import { registerRunRoutes } from "../running/run-routes.js";
 import { registerSecretRoutes } from "../secrets/secret-routes.js";
 import { registerStepRoutes } from "./step-routes.js";
+import { registerDecisionRoutes } from "../decisions/decision-routes.js";
 import { registerSendRoutes } from "../agents/send-route.js";
 import { registerTokenRoutes } from "../agents/token-routes.js";
 
@@ -43,6 +44,7 @@ export function registerPersonRoutes(
   registerRunRoutes(router, kit);
   registerSecretRoutes(router, kit);
   registerStepRoutes(router, kit);
+  registerDecisionRoutes(router, kit);
   registerSendRoutes(router, kit);
   registerTokenRoutes(router, kit);
 }

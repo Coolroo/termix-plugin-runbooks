@@ -31,6 +31,7 @@ const PAST_FLAG: Record<AskedConflict["code"], string> = {
   repeat: "confirmRepeat",
   wait: "waitAnyway",
   order: "outOfOrder",
+  "not-needed": "conditionAnyway",
 };
 
 /** What the hooks of one runbook view share: made once, in useRunbook. */

@@ -4,6 +4,8 @@
  * the shapes and the words, which both sides use.
  */
 
+import { fillPlain, uniqueNames, type TextValues } from "./fill.js";
+
 export type CheckStream = "stdout" | "stderr" | "any";
 
 export type Check =
@@ -71,4 +73,67 @@ export function describeCheck(check: Check): string {
       }
       return `value ${check.name} is captured`;
   }
+}
+
+/** A value as literal text in a regular expression (BUG-007). */
+export function escapePattern(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+/** A step's checks with their values filled in. */
+export interface FilledChecks {
+  checks: Check[];
+  /** Names the checks use that have no value, in order of first use. */
+  missing: string[];
+}
+
+/**
+ * Fills {{name}} in checks with the values the command gets (BUG-007): as
+ * plain text in `contains` and `notContains` text and a value check's
+ * `equals`, and as escaped literal text in a pattern (`matches`,
+ * `notMatches`, a value check's `matches`), so a value with a dot matches
+ * only a dot. A name with no value stays as written and is in `missing`: a
+ * step whose checks miss a value cannot run, as with its command.
+ */
+export function fillChecks(
+  checks: readonly Check[],
+  values: TextValues,
+): FilledChecks {
+  const missing: string[][] = [];
+  const escaped = Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, escapePattern(value)]),
+  );
+  const plain = (text: string) => {
+    const filled = fillPlain(text, values);
+    missing.push(filled.missing);
+    return filled.text;
+  };
+  const pattern = (text: string) => {
+    const filled = fillPlain(text, escaped);
+    missing.push(filled.missing);
+    return filled.text;
+  };
+  const filled = checks.map((check): Check => {
+    switch (check.type) {
+      case "exitCode":
+        return check;
+      case "contains":
+      case "notContains":
+        return { ...check, text: plain(check.text) };
+      case "matches":
+      case "notMatches":
+        return { ...check, pattern: pattern(check.pattern) };
+      case "value":
+        return {
+          ...check,
+          ...(check.equals !== undefined
+            ? { equals: plain(check.equals) }
+            : {}),
+          ...(check.matches !== undefined
+            ? { matches: pattern(check.matches) }
+            : {}),
+        };
+    }
+  });
+  return { checks: filled, missing: uniqueNames(...missing) };
 }

@@ -4,9 +4,10 @@
  */
 
 import type { RunRow, RunbookRow, StepRow } from "../runbooks/store/types.js";
-import { commandHash, resolve, type Values } from "./values.js";
+import { approvalHash, commandHash, resolve, type Values } from "./values.js";
 import { stdinKey, type StdinSource } from "../running/stdin.js";
-import { fillStepText } from "../../shared/fill.js";
+import { fillStepText, uniqueNames } from "../../shared/fill.js";
+import { fillChecks, type Check } from "../../shared/checks.js";
 import type { EffectiveValue } from "../../shared/api.js";
 
 /**
@@ -23,22 +24,32 @@ export function effectiveValues(
     out.set(name, { name, value, source: "author" });
   }
   for (const step of steps) {
-    const stepRuns = [...(runsByStep.get(step.id) ?? [])].sort(
-      (a, b) => a.id - b.id,
-    );
-    for (const run of stepRuns) {
-      for (const [name, value] of Object.entries(run.captured ?? {})) {
-        out.set(name, {
-          name,
-          value,
-          source: "capture",
-          stepId: step.id,
-          runId: run.id,
-        });
-      }
+    for (const { name, value, runId } of stepCaptures(step, runsByStep)) {
+      out.set(name, { name, value, source: "capture", stepId: step.id, runId });
     }
   }
   return out;
+}
+
+/**
+ * The values a step's runs captured, oldest run first. A decision's value
+ * counts only while the step is done (BUG-008): a decision reopened, or
+ * skipped after that, has no choice, as stepChoice says.
+ */
+export function stepCaptures(
+  step: Pick<StepRow, "id" | "status">,
+  runsByStep: Map<number, readonly RunRow[]>,
+): Array<{ name: string; value: string; runId: number }> {
+  return [...(runsByStep.get(step.id) ?? [])]
+    .sort((a, b) => a.id - b.id)
+    .filter((run) => run.mode !== "decision" || step.status === "done")
+    .flatMap((run) =>
+      Object.entries(run.captured ?? {}).map(([name, value]) => ({
+        name,
+        value,
+        runId: run.id,
+      })),
+    );
 }
 
 export function valuesObject(map: Map<string, EffectiveValue>): Values {
@@ -49,14 +60,23 @@ export function valuesObject(map: Map<string, EffectiveValue>): Values {
 
 export interface ResolvedStep {
   command: string | null;
+  /** What the person approves: the command and the filled checks. */
   hash: string | null;
+  /**
+   * The run's identity, kept with the run: the host, the command and the
+   * input's source. A repeat is the same command, whatever its checks.
+   */
+  runHash: string | null;
+  /** Names the command and the checks use that have no value. */
   missing: string[];
+  /** The checks with their values filled in (BUG-007). */
+  checks: Check[];
 }
 
 /**
  * The command as it runs, and the hash a person approves: the host, the
  * command and, for a step with standard input, the input's source (never
- * the input itself).
+ * the input itself), with the checks when they use values (BUG-008).
  */
 export function resolveStep(
   step: StepRow,
@@ -64,15 +84,26 @@ export function resolveStep(
   stdin: StdinSource | null = null,
 ): ResolvedStep {
   if (step.command === null || step.hostId === null) {
-    return { command: null, hash: null, missing: [] };
+    return {
+      command: null,
+      hash: null,
+      runHash: null,
+      missing: [],
+      checks: step.checks,
+    };
   }
   const resolved = resolve(step.command, values);
+  const checks = fillChecks(step.checks, values);
+  const missing = uniqueNames(resolved.missing, checks.missing);
+  const runHash = missing.length
+    ? null
+    : commandHash(step.hostId, resolved.text, stdin ? stdinKey(stdin) : null);
   return {
     command: resolved.text,
-    hash: resolved.missing.length
-      ? null
-      : commandHash(step.hostId, resolved.text, stdin ? stdinKey(stdin) : null),
-    missing: resolved.missing,
+    hash: runHash && approvalHash(runHash, step.checks, checks.checks),
+    runHash,
+    missing,
+    checks: checks.checks,
   };
 }
 
@@ -114,7 +145,22 @@ export function resolveText(
  * will run. Never a hash: nothing in Termix runs it.
  */
 export function agentCommand(step: StepRow, values: Values): ResolvedStep {
-  if (step.command === null) return { command: null, hash: null, missing: [] };
+  if (step.command === null) {
+    return {
+      command: null,
+      hash: null,
+      runHash: null,
+      missing: [],
+      checks: step.checks,
+    };
+  }
   const resolved = resolve(step.command, values);
-  return { command: resolved.text, hash: null, missing: resolved.missing };
+  const checks = fillChecks(step.checks, values);
+  return {
+    command: resolved.text,
+    hash: null,
+    runHash: null,
+    missing: uniqueNames(resolved.missing, checks.missing),
+    checks: checks.checks,
+  };
 }

@@ -94,6 +94,24 @@ describe("secret captures in the UI", () => {
     );
   });
 
+  it("shows each capture's pattern in the Run confirm, as checks (BUG-014)", async () => {
+    const data = runbook();
+    data.steps[1].captures = [{ name: "user", pattern: "user: (\\w+)" }];
+    await open(api(data));
+    fireEvent.click(within(card(2)).getByText(locales.step.run));
+    const dialog = await screen.findByRole("alertdialog");
+    const rows = [...dialog.querySelectorAll("[data-confirm-capture]")];
+    expect(
+      rows.map((row) => [
+        row.getAttribute("data-confirm-capture"),
+        row.textContent,
+      ]),
+    ).toEqual([
+      ["value", "value useruser: (\\w+)"],
+      ["secret", "secret db_passwordpw: (\\S+)"],
+    ]);
+  });
+
   it("blocks Run and Send without the service, and says why", async () => {
     const data = runbook({ secretsAvailable: false });
     data.steps[1].secretsProblem =

@@ -111,8 +111,16 @@ export interface Reply {
 export interface TestServer {
   db: TestDb;
   mock: MockPluginContext;
-  /** Every command started: the host, the command and the connect options. */
-  execCalls: Array<{ host: unknown; command: string; options?: unknown }>;
+  /**
+   * Every command started: the host, the command, the connect options and
+   * the exec options (1.4.6: a pty for an interactive step).
+   */
+  execCalls: Array<{
+    host: unknown;
+    command: string;
+    options?: unknown;
+    execOptions?: { pty?: unknown };
+  }>;
   /** Commands answer with this whole result: stdout, stderr, then the exit. */
   setExec: (fn: ExecFn) => void;
   /** Commands are driven by hand through their channel instead. */
@@ -226,9 +234,15 @@ export async function startServer(
     const client = {
       exec: (
         command: string,
+        execOptions: { pty?: unknown },
         callback: (error: Error | undefined, channel: FakeChannel) => void,
       ) => {
-        execCalls.push({ host: h, command, options: connectOptions });
+        execCalls.push({
+          host: h,
+          command,
+          options: connectOptions,
+          execOptions,
+        });
         const channel = new FakeChannel();
         channels.push(channel);
         if (channelFn) {

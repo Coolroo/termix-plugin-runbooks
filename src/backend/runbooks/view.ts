@@ -36,6 +36,15 @@ import {
   secretStepView,
   stdinByHand,
 } from "../secrets/secret-view.js";
+import { ranOnChoice, stepChoice } from "../decisions/decisions.js";
+import {
+  evaluateConditions,
+  notNeededIds,
+  RuleCache,
+  showWhen,
+  type StepCondition,
+} from "../conditions/conditions.js";
+import type { PatternBudget } from "../values/values.js";
 
 export interface RunbookBundle {
   runbook: RunbookRow;
@@ -43,16 +52,32 @@ export interface RunbookBundle {
   runs: ShownRun[];
   runsByStep: Map<number, ShownRun[]>;
   values: Map<string, EffectiveValue>;
+  /** 1.4.6: each when rule's state now, by step id; never stored. */
+  conditions: Map<number, StepCondition>;
+}
+
+/** What when rules said of finished runs, for each store (BUG-008). */
+const ruleCaches = new WeakMap<Store, RuleCache>();
+
+function ruleCache(store: Store): RuleCache {
+  let cache = ruleCaches.get(store);
+  if (!cache) {
+    cache = new RuleCache();
+    ruleCaches.set(store, cache);
+  }
+  return cache;
 }
 
 /**
  * A runbook with its steps and runs. With `live`, running runs carry the
- * output that has arrived so far.
+ * output that has arrived so far. `budget` is the time its rules' patterns
+ * may take, shared when a list reads many runbooks; a new one otherwise.
  */
 export async function loadBundle(
   store: Store,
   runbookId: number,
   live?: LiveRuns,
+  budget?: PatternBudget,
 ): Promise<RunbookBundle | null> {
   const runbook = await store.getRunbook(runbookId);
   if (!runbook) return null;
@@ -65,16 +90,50 @@ export async function loadBundle(
     list.push(run);
     runsByStep.set(run.stepId, list);
   }
+  const values = effectiveValues(runbook, steps, runsByStep);
   return {
     runbook,
     steps,
     runs,
     runsByStep,
-    values: effectiveValues(runbook, steps, runsByStep),
+    values,
+    conditions: evaluateConditions(steps, runsByStep, runbook.values, {
+      budget,
+      cache: ruleCache(store),
+    }),
   };
 }
 
-export function progress(steps: StepRow[]): Progress {
+/**
+ * The steps not needed now (1.4.6), for a reader that has only the steps:
+ * the runs are read only when a step has a when rule. A list passes one
+ * `budget` for all its runbooks (BUG-008).
+ */
+export async function loadNotNeeded(
+  store: Store,
+  runbookId: number,
+  steps: StepRow[],
+  budget?: PatternBudget,
+): Promise<Set<number>> {
+  if (!steps.some((step) => step.when)) return new Set();
+  const bundle = await loadBundle(store, runbookId, undefined, budget);
+  return bundle ? notNeededIds(bundle.conditions) : new Set();
+}
+
+/** The first pending step that is needed: the next one. */
+export function nextStep(
+  steps: StepRow[],
+  notNeeded: ReadonlySet<number>,
+): StepRow | undefined {
+  return steps.find(
+    (step) => step.status === "pending" && !notNeeded.has(step.id),
+  );
+}
+
+export function progress(
+  steps: StepRow[],
+  notNeeded: ReadonlySet<number> = new Set(),
+): Progress {
   // A replaced step ended: its replacement does its work.
   const finished = steps.filter(
     (step) =>
@@ -86,6 +145,10 @@ export function progress(steps: StepRow[]): Progress {
     done: finished,
     failed: steps.filter((step) => step.status === "failed").length,
     total: steps.length,
+    // Pending steps whose rule does not hold: ended, but not done.
+    notNeeded: steps.filter(
+      (step) => step.status === "pending" && notNeeded.has(step.id),
+    ).length,
   };
 }
 
@@ -101,6 +164,7 @@ export function openPath(runbookId: number): string {
 export function runbookSummary(
   runbook: RunbookRow,
   steps: StepRow[],
+  notNeeded: ReadonlySet<number> = new Set(),
 ): RunbookSummary {
   return {
     id: runbook.id,
@@ -110,7 +174,7 @@ export function runbookSummary(
     createdAt: runbook.createdAt,
     updatedAt: runbook.updatedAt,
     revision: runbook.revision,
-    progress: progress(steps),
+    progress: progress(steps, notNeeded),
     // Amendments that have not run yet (1.4.0): the list shows "amended".
     amendedPending: steps.filter(
       (step) => step.amendKind !== null && step.status === "pending",
@@ -190,6 +254,22 @@ export function agentLabel(runbook: RunbookRow): string {
   return runbook.owner?.label ?? runbook.createdBy;
 }
 
+/**
+ * A run as `userId` sees it: how much was typed into it shows only to the
+ * person who typed, the one who started it (BUG-010). A password's length
+ * is for nobody else.
+ */
+export function typedSizes(
+  run: ShownRun,
+  userId: string | null | undefined,
+): ShownRun {
+  if (run.inputs.length === 0 || run.userId === userId) return run;
+  return {
+    ...run,
+    inputs: run.inputs.map((input) => ({ ...input, chars: null })),
+  };
+}
+
 /** The whole runbook as the Termix UI shows it. */
 export function personView(
   bundle: RunbookBundle,
@@ -198,7 +278,8 @@ export function personView(
 ): Runbook {
   const { runbook, steps, runsByStep } = bundle;
   const values = valuesObject(bundle.values);
-  const next = steps.find((step) => step.status === "pending");
+  const notNeeded = notNeededIds(bundle.conditions);
+  const next = nextStep(steps, notNeeded);
   const states = secretStates(bundle);
   const stdinView = (step: StepRow, source: StdinSource): StdinView => {
     const found = stdinText(source, step, steps, runsByStep, values);
@@ -225,7 +306,7 @@ export function personView(
     };
   };
   return {
-    ...runbookSummary(runbook, steps),
+    ...runbookSummary(runbook, steps, notNeeded),
     summary: runbook.summary,
     values: runbook.values,
     effectiveValues: [...bundle.values.values()],
@@ -250,6 +331,12 @@ export function personView(
         ...amendmentView(step, steps),
         generate: step.generate ? showGenerate(step.generate) : null,
         ask: step.ask ? showAsk(step.ask) : null,
+        // 1.4.6: the rule by step numbers, and what it says now.
+        when: step.when ? showWhen(step.when, steps) : null,
+        condition: bundle.conditions.get(step.id) ?? null,
+        // 1.4.6: a Decision step's choice, and the steps that ran on it.
+        choice: stepChoice(step, runsByStep),
+        decisionRan: ranOnChoice(step, steps, runsByStep),
         secretStep: secretStepView(step, options, states),
         stdin: source ? stdinView(step, source) : null,
         // A step that captures secrets cannot run without the service.
@@ -261,10 +348,13 @@ export function personView(
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
         missing: resolved.missing,
+        resolvedChecks: resolved.checks,
         // 1.4.3: values in the step's text, as in its command.
         ...resolveText(step, values),
-        wait: waitState(step, steps, runsByStep),
-        runs: runsByStep.get(step.id) ?? [],
+        wait: waitState(step, steps, runsByStep, notNeeded),
+        runs: (runsByStep.get(step.id) ?? []).map((run) =>
+          typedSizes(run, options.userId),
+        ),
         // Each time a person sent this step to the agent, with the note.
         sent: (options.sent ?? [])
           .filter((event) => event.stepId === step.id)

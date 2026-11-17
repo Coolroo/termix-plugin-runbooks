@@ -25,7 +25,7 @@ import {
   usePromptRequest,
 } from "./prompts";
 import type { Flags, RunbookKit } from "./use-runbook";
-import type { Run, Step } from "../api-types";
+import type { Run, Runbook, Step } from "../api-types";
 
 export function useStepActions(
   app: TermixApp,
@@ -38,6 +38,7 @@ export function useStepActions(
   const confirm = useConfirm();
   const {
     runbook,
+    setRunbook,
     watched,
     load,
     withBusy,
@@ -71,6 +72,18 @@ export function useStepActions(
     askEarlyPrompt({
       title: earlyTitle(t, leftMs, reason),
       details: withDetails ? runDetails(t, step) : commandDetails(t, step),
+    });
+
+  /**
+   * Asks before starting a step its rule says is not needed (1.4.6, D3):
+   * Cancel first. Resolves true for Run anyway.
+   */
+  const askNotNeeded = (conflict: { rule: string; reason: string }) =>
+    confirm({
+      title: t("notNeeded.title"),
+      description: t("notNeeded.hint", { ...conflict }),
+      confirmLabel: t("notNeeded.anyway"),
+      destructive: false,
     });
 
   /** Posts a run or a send, asking about a repeat, a wait or the order. */
@@ -120,6 +133,8 @@ export function useStepActions(
                 confirmLabel: t("order.anyway"),
                 destructive: false,
               });
+            case "not-needed":
+              return askNotNeeded(conflict);
           }
         },
       },
@@ -175,16 +190,81 @@ export function useStepActions(
     skip: (step, reason) => postRunbook(`/steps/${step.id}/skip`, { reason }),
 
     manual: (step, outcome, note, output) =>
-      postRunbook(`/steps/${step.id}/manual`, {
-        outcome,
-        note,
-        // A step run outside Termix: bound to the revision shown.
-        ...(isOutsideStep(step)
-          ? { output: output ?? "", revision: step.revision }
-          : {}),
+      void withBusy(async () => {
+        // A step that is not needed asks "Run anyway?" first (1.4.6).
+        const data = await sendAsking(
+          async (flags) =>
+            (
+              await api.post<Runbook>(`/steps/${step.id}/manual`, {
+                outcome,
+                note,
+                // A step run outside Termix: bound to the revision shown.
+                ...(isOutsideStep(step)
+                  ? { output: output ?? "", revision: step.revision }
+                  : {}),
+                ...flags,
+              })
+            ).data,
+          {
+            question: (conflict) =>
+              conflict.code === "not-needed" ? askNotNeeded(conflict) : null,
+          },
+        );
+        if (data) setRunbook(data);
       }),
 
-    reopen: (step) => postRunbook(`/steps/${step.id}/reopen`),
+    reopen: (step) => {
+      // D8 (1.4.6): a new choice leaves the steps that ran on the old one.
+      if (step.decisionRan.length === 0) {
+        postRunbook(`/steps/${step.id}/reopen`);
+        return;
+      }
+      void withBusy(async () => {
+        const ok = await confirm({
+          title: t("decision.reopenTitle"),
+          description: t("decision.reopenHint", {
+            steps: blockingText(step.decisionRan),
+          }),
+          confirmLabel: t("decision.reopen"),
+          destructive: false,
+        });
+        if (ok) await postAndShow(`/steps/${step.id}/reopen`);
+      });
+    },
+
+    decide: (step, chosen) =>
+      void withBusy(async () => {
+        const data = await sendAsking(
+          async (flags) =>
+            (
+              await api.post<Runbook>(`/steps/${step.id}/decide`, {
+                revision: step.revision,
+                chosen,
+                ...flags,
+              })
+            ).data,
+          {
+            question: (conflict) => {
+              switch (conflict.code) {
+                case "not-needed":
+                  return askNotNeeded(conflict);
+                case "order":
+                  return confirm({
+                    title: t("order.title"),
+                    description: t("order.hint", {
+                      steps: blockingText(conflict.blocking),
+                    }),
+                    confirmLabel: t("order.anyway"),
+                    destructive: false,
+                  });
+                default:
+                  return null;
+              }
+            },
+          },
+        );
+        if (data) setRunbook(data);
+      }),
 
     sendToAgent: (step) =>
       void withBusy(async () => {
@@ -219,6 +299,19 @@ export function useStepActions(
           },
         ),
       ),
+
+    // Not behind the busy flag: Stop stays at hand while a prompt waits.
+    input: async (run, text, hidden, end) => {
+      let ok = false;
+      await postThenLoad<Run>(
+        `/runs/${run.id}/input`,
+        { text, hidden, ...(end ? { end: true } : {}) },
+        () => {
+          ok = true;
+        },
+      );
+      return ok;
+    },
   };
 
   return { actions, early, sending };

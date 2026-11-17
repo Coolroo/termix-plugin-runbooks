@@ -4,10 +4,13 @@ import type { Capture, Values } from "../../values/values.js";
 import type { Check } from "../../checks/checks.js";
 import type { StoredStdin } from "../../running/stdin.js";
 import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
+import type { StoredRule } from "../../conditions/conditions.js";
+import type { DecisionSpec } from "../../../shared/decisions.js";
 import type {
   AmendKind,
   RunbookOwner,
   RunbookStatus,
+  RunIn,
   RunRecord,
   StepOwner,
   StepStatus,
@@ -19,6 +22,7 @@ export type {
   AmendKind,
   RunbookOwner,
   RunbookStatus,
+  RunIn,
   RunSecrets,
   RunStatus,
   StepOwner,
@@ -101,6 +105,16 @@ export interface StepRow {
   generate: GenerateSpec | null;
   /** 1.4.2: an Ask for a secret step; null if not. */
   ask: AskSpec | null;
+  /** 1.4.6: Run, Send to terminal, or both. */
+  runIn: RunIn;
+  /** 1.4.6: why, in one line; null when not given. */
+  runInReason: string | null;
+  /** 1.4.6: when the step is needed, steps by id; null: always. */
+  when: StoredRule | null;
+  /** 1.4.6: a Decision step's options; null if not. */
+  decision: DecisionSpec | null;
+  /** 1.4.6: Run opens a terminal (pty) for the command. */
+  interactive: boolean;
   /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
   suffix: string | null;
   /** 1.4.0: the step this one amends, how, why and by which token. */
@@ -145,4 +159,14 @@ export interface NewStep {
   generate?: GenerateSpec | null;
   /** 1.4.2: Ask for a secret; null or left out for any other step. */
   ask?: AskSpec | null;
+  /** 1.4.6: left out: either. */
+  runIn?: RunIn;
+  /** 1.4.6: left out: none. */
+  runInReason?: string | null;
+  /** 1.4.6: the when rule, steps by id; left out: none. */
+  when?: StoredRule | null;
+  /** 1.4.6: a Decision step; null or left out for any other step. */
+  decision?: DecisionSpec | null;
+  /** 1.4.6: left out: false. */
+  interactive?: boolean;
 }

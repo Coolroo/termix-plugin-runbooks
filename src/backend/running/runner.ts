@@ -14,11 +14,14 @@ import type { RunbookBundle } from "../runbooks/view.js";
 import { secretSpec } from "../secrets/secret-view.js";
 import { SECRET_TTL_MS } from "../secrets/secrets.js";
 import { valuesObject } from "../values/effective.js";
-import { judgeOutput, type CheckedRun } from "../checks/checks.js";
+import { judgeOutput, type Check, type CheckedRun } from "../checks/checks.js";
 import { SYSTEM, type FailReason } from "../agents/events.js";
 import { stepLabel } from "../../shared/steps.js";
-import { streamExec, type ExecClient } from "./stream-exec.js";
+import { MIN_HIDDEN_CHARS } from "../../shared/limits.js";
+import { INTERACTIVE_PTY, streamExec, type ExecClient } from "./stream-exec.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
+import { cleanTerminalText } from "./terminal-text.js";
+import { errorText, hasError, noErrorParts } from "./run-error.js";
 import {
   secretLabel,
   stdinText,
@@ -27,6 +30,23 @@ import {
 } from "./stdin.js";
 
 export const MAX_OUTPUT_BYTES = 262_144;
+
+/** The line end that ends typed input: CR LF, CR (a pty's Enter) or LF. */
+export const LINE_END = /(?:\r\n|\r|\n)$/;
+
+/**
+ * The secrets as a pty's cleaned output holds them (BUG-010): each value
+ * that cleaning changes, cleaned, under the same name. A copy shorter than
+ * MIN_HIDDEN_CHARS would hide unrelated text, so it is left out.
+ */
+export function cleanedCopies(secrets: SecretText[]): SecretText[] {
+  return secrets.flatMap((secret) => {
+    const value = cleanTerminalText(secret.value);
+    return value !== secret.value && [...value].length >= MIN_HIDDEN_CHARS
+      ? [{ name: secret.name, value }]
+      : [];
+  });
+}
 
 /** Holds nothing of its own: every run shares the kit's state. */
 export function createRunner(kit: PersonKit) {
@@ -133,6 +153,8 @@ export function createRunner(kit: PersonKit) {
     patch: Partial<RunRow>,
     options: {
       checked?: CheckedRun;
+      /** The checks with their values filled in (BUG-007): step's otherwise. */
+      checks?: Check[];
       /** Secrets the step read: replaced in everything the run keeps. */
       used?: SecretText[];
       /** Secrets earlier secret steps made (1.4.2): replaced, not "read". */
@@ -147,20 +169,21 @@ export function createRunner(kit: PersonKit) {
     // Secret values found in the output are replaced whatever the outcome;
     // they are stored only from a run that ends done. They are found first,
     // so the checks see the output with its secrets hidden (1.4.1).
-    const judged = judgeOutput(step, outcome, options.checked ?? null, output, [
-      ...used,
-      ...(options.hidden ?? []),
-    ]);
+    const judged = judgeOutput(
+      { ...step, checks: options.checks ?? step.checks },
+      outcome,
+      options.checked ?? null,
+      output,
+      [...used, ...(options.hidden ?? [])],
+    );
     const { found, hide, results } = judged;
     let final = judged.final;
-    const problems: string[] = [];
+    const parts = noErrorParts(patch.error ?? null);
     const stored: Array<{ name: string; expiresAt: string }> = [];
     if (final === "done" && step.secretCaptures.length > 0) {
       if (found.missing.length > 0) {
         final = "failed";
-        problems.push(
-          ...found.missing.map((name) => `secret ${name}: no match`),
-        );
+        parts.secretsMissing = found.missing;
       } else {
         const expiresAt = new Date(Date.now() + SECRET_TTL_MS).toISOString();
         for (const capture of step.secretCaptures) {
@@ -174,11 +197,10 @@ export function createRunner(kit: PersonKit) {
             stored.push({ name: capture.name, expiresAt });
           } catch (error) {
             final = "failed";
-            problems.push(
-              `secret ${capture.name}: could not be stored: ${
-                error instanceof Error ? error.message : "failed"
-              }`,
-            );
+            parts.secretNotStored = {
+              name: capture.name,
+              why: error instanceof Error ? error.message : "failed",
+            };
             break;
           }
         }
@@ -192,13 +214,8 @@ export function createRunner(kit: PersonKit) {
         }
       }
     }
-    const errors = [
-      patch.error,
-      ...problems,
-      ...(final === "done" ? judged.captureErrors : []),
-    ]
-      .filter(Boolean)
-      .join("; ");
+    if (final === "done") parts.slowCaptures = judged.slowCaptures;
+    const errors = errorText(parts);
     const at = now();
     const kept = (text: string | null | undefined) =>
       text === undefined ? undefined : redact(text, hide);
@@ -228,6 +245,17 @@ export function createRunner(kit: PersonKit) {
           captured: final === "done" ? judged.captured : {},
           checks: results,
           error: errors ? redact(errors, hide) : null,
+          // Termix's words with secrets hidden; names as the step has them.
+          errorParts: hasError(parts)
+            ? {
+                ...parts,
+                message: redact(parts.message, hide),
+                secretNotStored: parts.secretNotStored && {
+                  ...parts.secretNotStored,
+                  why: redact(parts.secretNotStored.why, hide),
+                },
+              }
+            : null,
           ...(usedNames.length || stored.length
             ? { secrets: { used: usedNames, captured: stored } }
             : {}),
@@ -253,6 +281,8 @@ export function createRunner(kit: PersonKit) {
       by: string;
       hostId: number;
       command: string;
+      /** The checks with their values filled in (BUG-007). */
+      checks: Check[];
       /** Written to the command's standard input, then ended. */
       stdin?: Buffer;
       /** Secrets the step reads: replaced in its output. */
@@ -268,11 +298,22 @@ export function createRunner(kit: PersonKit) {
         ? `, read secret ${target.used.map((secret) => secret.name).join(", ")}`
         : ""
     }`;
+    // A pty's output is cleaned (terminal-text.ts), so a value with control
+    // characters shows there cleaned: that copy is hidden too (BUG-010).
+    const copies = (list: SecretText[]) =>
+      step.interactive ? cleanedCopies(list) : [];
     // A value split across two pieces of output is still replaced.
     const hide = [...target.used, ...(target.hidden ?? [])];
     const redactors = {
-      stdout: createRedactor(hide),
-      stderr: createRedactor(hide),
+      stdout: createRedactor([...hide, ...copies(hide)]),
+      stderr: createRedactor([...hide, ...copies(hide)]),
+    };
+    // Hidden input the person typed (1.4.6): hidden like a secret, kept in
+    // memory for this run only, never written.
+    const typed: SecretText[] = [];
+    const hiddenAll = () => {
+      const all = [...(target.hidden ?? []), ...typed];
+      return [...all, ...copies([...target.used, ...all])];
     };
     // A secret this step captures is known only once the output is
     // complete, so its output is not shown or written before the end.
@@ -309,8 +350,32 @@ export function createRunner(kit: PersonKit) {
             },
             onTruncate: () => live.truncated(runId),
             stdin: target.stdin,
+            pty: step.interactive ? INTERACTIVE_PTY : undefined,
           });
           record.stop = handle.stop;
+          if (target.stdin === undefined) {
+            record.input = {
+              open: handle.inputOpen,
+              send: (sent, hidden) => {
+                const value = sent.replace(LINE_END, "");
+                // Enter is CR in a terminal (BUG-010): PowerShell's
+                // Read-Host under Windows OpenSSH may take no LF for it.
+                const text =
+                  step.interactive && value !== sent ? `${value}\r` : sent;
+                if (hidden && [...value].length >= MIN_HIDDEN_CHARS) {
+                  // Before the write, so its echo can never show.
+                  const secret = { name: "typed", value };
+                  typed.push(secret);
+                  for (const each of [secret, ...copies([secret])]) {
+                    redactors.stdout.add(each);
+                    redactors.stderr.add(each);
+                  }
+                }
+                return handle.write(Buffer.from(text, "utf8"));
+              },
+              end: handle.endInput,
+            };
+          }
           result = await handle.result;
         }
       } catch (error) {
@@ -326,13 +391,14 @@ export function createRunner(kit: PersonKit) {
             stdout: held ? raw.stdout : partial.stdout,
             stderr: held ? raw.stderr : partial.stderr,
             truncated: partial.truncated,
+            inputs: [...partial.inputs],
             error: record.stoppedBy
               ? `stopped by ${record.stoppedBy}`
               : (record.interrupted ?? message),
           },
           {
             used: target.used,
-            hidden: target.hidden,
+            hidden: hiddenAll(),
             by: target.by,
             reason: record.stoppedBy
               ? "stopped"
@@ -361,12 +427,14 @@ export function createRunner(kit: PersonKit) {
           stdout: result.stdout,
           stderr: result.stderr,
           truncated: result.truncated,
+          inputs: [...record.inputs],
           timedOut: result.timedOut,
           error: stopped
             ? `stopped by ${record.stoppedBy ?? "a person"}`
             : record.interrupted,
         },
         {
+          checks: target.checks,
           checked: {
             mode: "exec",
             exitCode: result.code,
@@ -375,7 +443,7 @@ export function createRunner(kit: PersonKit) {
             pastedOutput: null,
           },
           used: target.used,
-          hidden: target.hidden,
+          hidden: hiddenAll(),
           by: target.by,
           reason: stopped
             ? "stopped"

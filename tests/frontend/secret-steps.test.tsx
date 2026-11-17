@@ -154,7 +154,7 @@ const data = makeRunbook(
     title: "Secrets",
     createdAt: "2026-11-10T10:00:00.000Z",
     updatedAt: "2026-11-10T10:05:00.000Z",
-    progress: { done: 1, failed: 0, total: 5 },
+    progress: { done: 1, failed: 0, total: 5, notNeeded: 0 },
     nextStepId: 2,
     owner: null,
     agentLabel: "lead",

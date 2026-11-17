@@ -68,7 +68,7 @@ function server(
       createdAt: "2026-11-12T10:00:00.000Z",
       updatedAt: "2026-11-12T10:05:00.000Z",
       revision: 3,
-      progress: { done, failed: 0, total },
+      progress: { done, failed: 0, total, notNeeded: 0 },
       nextStepId: done < total && status === "open" ? done + 1 : null,
     }),
     post: async () => ({ data: {} }),

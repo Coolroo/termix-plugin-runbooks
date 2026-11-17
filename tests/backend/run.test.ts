@@ -51,7 +51,12 @@ describe("running a step", () => {
     expect(s.connections).toEqual({ opened: 1, disposed: 1 });
     const shown = await view(s, runbook.id);
     expect(shown.steps[0].status).toBe("done");
-    expect(shown.progress).toEqual({ done: 1, failed: 0, total: 1 });
+    expect(shown.progress).toEqual({
+      done: 1,
+      failed: 0,
+      total: 1,
+      notNeeded: 0,
+    });
     expect(s.mock.audits.some((a) => a.action === "runbooks_step_run")).toBe(
       true,
     );

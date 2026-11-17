@@ -5,3 +5,16 @@
 
 /** The longest note a person may send with a step to the agent. */
 export const MAX_SENT_NOTE = 500;
+
+/** The most a person may type into a running command at once (1.4.6). */
+export const MAX_TYPED_BYTES = 4096;
+
+/**
+ * Hidden input this long or longer is hidden in the run's output as
+ * [secret:typed] (1.4.6). A shorter one (y, a PIN) would hide that text
+ * everywhere in the output.
+ */
+export const MIN_HIDDEN_CHARS = 4;
+
+/** A step's time limit when it gives none, in milliseconds. */
+export const DEFAULT_TIMEOUT_MS = 120_000;

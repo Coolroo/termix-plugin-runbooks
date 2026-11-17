@@ -18,7 +18,7 @@ import { Button, PanePrompt, Textarea } from "@termix-ssh/plugin-sdk/ui";
 import { MAX_SENT_NOTE } from "../../shared/limits";
 import { stepLabel } from "../../shared/steps";
 import type { Translate } from "../../shared/step-kinds";
-import { CodeBlock } from "../ui/ui";
+import { CodeBlock, SectionLabel } from "../ui/ui";
 import { describeStdin, formatTime, hostLabel } from "../ui/format";
 import { ChecksList, checksWords } from "../steps/ChecksList";
 import type { ConflictBody, Step } from "../api-types";
@@ -253,8 +253,48 @@ function stdinPreview(t: Translate, step: Step) {
 }
 
 /**
- * The host, the command, its input, checks and secrets, for a confirm. No
- * hooks: a confirm renders outside the plugin.
+ * The patterns the run applies to the output (BUG-014): each capture and
+ * secret capture with its pattern, as the checks show, so the person sees
+ * what reads the output before it runs.
+ */
+function capturesList(t: Translate, step: Step) {
+  const rows = [
+    ...(step.captures ?? []).map((capture) => ({
+      kind: "value",
+      label: t("captures.value", { name: capture.name }),
+      pattern: capture.pattern,
+    })),
+    ...(step.secretCaptures ?? []).map((capture) => ({
+      kind: "secret",
+      label: t("captures.secret", { name: capture.name }),
+      pattern: capture.pattern,
+    })),
+  ];
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2" data-confirm-captures>
+      <SectionLabel>{t("captures.title")}</SectionLabel>
+      <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+        {rows.map((row, index) => (
+          <li
+            key={index}
+            data-confirm-capture={row.kind}
+            className="flex items-baseline gap-2"
+          >
+            <span className="shrink-0">{row.label}</span>
+            <code className="font-mono break-all text-muted-foreground">
+              {row.pattern}
+            </code>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The host, the command, its input, checks, captures and secrets, for a
+ * confirm. No hooks: a confirm renders outside the plugin.
  */
 export function runDetails(t: Translate, step: Step) {
   return (
@@ -264,7 +304,11 @@ export function runDetails(t: Translate, step: Step) {
         command={step.resolvedCommand ?? ""}
         stdin={stdinPreview(t, step)}
       />
-      <ChecksList checks={step.checks ?? []} words={checksWords(t)} />
+      <ChecksList
+        checks={step.resolvedChecks ?? step.checks ?? []}
+        words={checksWords(t)}
+      />
+      {capturesList(t, step)}
       {(step.secretCaptures ?? []).length > 0 && (
         <span className="text-xs" data-confirm-secrets>
           {t("secrets.confirm", {

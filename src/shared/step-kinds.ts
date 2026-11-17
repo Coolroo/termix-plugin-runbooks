@@ -39,6 +39,12 @@ export interface KindStep {
   generate?: unknown;
   /** 1.4.2: an Ask for a secret step's field; null on any other step. */
   ask?: unknown;
+  /** 1.4.6: either, terminal or run. */
+  runIn?: string | null;
+  /** 1.4.6: a Decision step's options; null on any other step. */
+  decision?: unknown;
+  /** 1.4.6: Run opens a terminal (pty) for the command. */
+  interactive?: boolean;
 }
 
 /** What a kind may know about the runbook around a step. */
@@ -96,6 +102,17 @@ export const BUILT_IN_KINDS: StepKind[] = [
     priority: 50,
   },
   {
+    // 1.4.6: the person chooses one of the author's options.
+    id: "decision",
+    nameKey: "kind.name.decision",
+    icon: "Split",
+    label: (t) => t("kind.decision"),
+    // The plugin's own amber.
+    defaultColor: { light: "#b45309", dark: "#fbbf24" },
+    matches: (step) => Boolean(step.decision),
+    priority: 46,
+  },
+  {
     // 1.4.2: the server makes a new random value when the person clicks.
     id: "make-secret",
     nameKey: "kind.name.makeSecret",
@@ -121,8 +138,9 @@ export const BUILT_IN_KINDS: StepKind[] = [
     id: "run",
     nameKey: "kind.name.run",
     icon: "Play",
+    // 1.4.6: a terminal-only step says so, as its one button does.
     label: (t, step) =>
-      t("kind.run", {
+      t(step.runIn === "terminal" ? "kind.terminal" : "kind.run", {
         host:
           step.hostName ??
           (step.hostId === null
@@ -191,6 +209,13 @@ export const BUILT_IN_MARKS: StepMark[] = [
     labelKey: "kind.mark.wait",
     matches: (step) =>
       (step.waitAfterPreviousSeconds ?? 0) > 0 || Boolean(step.wait),
+  },
+  {
+    // 1.4.6: Run opens a terminal, for prompts such as sudo's.
+    id: "interactive",
+    icon: "Keyboard",
+    labelKey: "kind.mark.interactive",
+    matches: (step) => Boolean(step.interactive),
   },
 ];
 

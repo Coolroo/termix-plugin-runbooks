@@ -8,6 +8,7 @@
 
 import type { StepRow } from "./store/types.js";
 import type {
+  NotNeededConflict,
   OrderConflict,
   StepWait,
   WaitConflict,
@@ -20,6 +21,7 @@ import {
 } from "../../shared/steps.js";
 import { InputError } from "../core/errors.js";
 import { amendmentView, type RunbookBundle } from "./view.js";
+import { notNeededIds, type StepCondition } from "../conditions/conditions.js";
 import { waitState } from "../running/wait.js";
 
 /** Why a person cannot run, send or mark an agent step. */
@@ -57,6 +59,28 @@ export function requireActionable(
   if (step.status === "replaced") throw replacedProblem(step, bundle.steps);
 }
 
+/**
+ * The 409 when the author said the step starts the other way (1.4.6):
+ * Run on a terminal-only step, Send to terminal on a Run-only one.
+ */
+export function runInProblem(
+  step: StepRow,
+  via: "run" | "terminal",
+): InputError | null {
+  if (step.runIn === "either" || step.runIn === via) return null;
+  const why = step.runInReason ? ` (${step.runInReason})` : "";
+  return step.runIn === "terminal"
+    ? new InputError(
+        `this step runs only in a terminal${why}: use Send to terminal`,
+        409,
+        { code: "terminal-only", reason: step.runInReason },
+      )
+    : new InputError(`this step runs only with Run${why}: use Run`, 409, {
+        code: "run-only",
+        reason: step.runInReason,
+      });
+}
+
 /** The 409 for a step that changed since the person saw it. */
 export function staleProblem(): InputError {
   return new InputError("the step changed; reload", 409, { code: "stale" });
@@ -82,16 +106,20 @@ export function requireValues(missing: string[]): void {
 
 /**
  * The 409 order when an earlier step is still pending, or null. A replaced
- * step counts as ended: its status is not pending. `suffix` ends the
- * message.
+ * step counts as ended: its status is not pending. So does a step that is
+ * not needed (1.4.6), in `notNeeded`. `suffix` ends the message.
  */
 export function blockingProblem(
   step: StepRow,
   steps: StepRow[],
   suffix = "",
+  notNeeded: ReadonlySet<number> = new Set(),
 ): InputError | null {
   const blocking = steps.filter(
-    (other) => isBefore(other, step) && other.status === "pending",
+    (other) =>
+      isBefore(other, step) &&
+      other.status === "pending" &&
+      !notNeeded.has(other.id),
   );
   if (blocking.length === 0) return null;
   return new InputError(
@@ -105,16 +133,49 @@ export function blockingProblem(
 }
 
 /**
+ * A step its when rule says is not needed (1.4.6): the 409 not-needed
+ * unless `anyway` (D3, the owner's choice: a person may start it after a
+ * "Run anyway?" question). `overridden` is the condition a start now
+ * passes over, for the audit log; null when the step is needed.
+ */
+export function conditionProblem(
+  step: StepRow,
+  bundle: Pick<RunbookBundle, "conditions">,
+  anyway: boolean,
+): { problem: InputError | null; overridden: StepCondition | null } {
+  const condition = bundle.conditions.get(step.id);
+  if (!condition?.notNeeded) return { problem: null, overridden: null };
+  if (anyway) return { problem: null, overridden: condition };
+  return {
+    problem: new InputError(
+      `step ${stepLabel(step)} is not needed: ${condition.reason}`,
+      409,
+      {
+        code: "not-needed",
+        rule: condition.rule,
+        reason: condition.reason,
+      } satisfies NotNeededConflict,
+    ),
+    overridden: condition,
+  };
+}
+
+/**
  * The wait the author asked for after the previous step, while it runs:
  * the 409 wait unless `waitAnyway`, and the seconds a start now skips
  * (null when no wait runs).
  */
 export function waitProblem(
   step: StepRow,
-  bundle: Pick<RunbookBundle, "steps" | "runsByStep">,
+  bundle: Pick<RunbookBundle, "steps" | "runsByStep" | "conditions">,
   waitAnyway: boolean,
 ): { problem: InputError | null; skippedSeconds: number | null } {
-  const wait = waitState(step, bundle.steps, bundle.runsByStep);
+  const wait = waitState(
+    step,
+    bundle.steps,
+    bundle.runsByStep,
+    notNeededIds(bundle.conditions),
+  );
   const waiting: StepWait | null = wait && wait.remainingMs > 0 ? wait : null;
   if (!waiting) return { problem: null, skippedSeconds: null };
   const remainingSeconds = Math.ceil(waiting.remainingMs / 1000);

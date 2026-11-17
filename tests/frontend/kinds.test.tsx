@@ -74,6 +74,7 @@ describe("kinds of step", () => {
   it("take the highest priority that matches, else the fallback", () => {
     expect(stepKinds().map((kind) => kind.id)).toEqual([
       "lead",
+      "decision",
       "make-secret",
       "ask-secret",
       "run",
@@ -313,7 +314,7 @@ const data = makeRunbook(
     title: "Kinds",
     createdAt: "2026-11-10T10:00:00.000Z",
     updatedAt: "2026-11-10T10:05:00.000Z",
-    progress: { done: 1, failed: 1, total: 8 },
+    progress: { done: 1, failed: 1, total: 8, notNeeded: 0 },
     nextStepId: 4,
     owner: { label: "lead" },
     agentLabel: "lead",

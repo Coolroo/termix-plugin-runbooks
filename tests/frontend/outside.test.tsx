@@ -50,7 +50,7 @@ const data = makeRunbook(
     title: "Laptop setup",
     createdAt: "2026-11-09T10:00:00.000Z",
     updatedAt: "2026-11-09T10:05:00.000Z",
-    progress: { done: 0, failed: 0, total: 3 },
+    progress: { done: 0, failed: 0, total: 3, notNeeded: 0 },
     nextStepId: 1,
     owner: null,
     agentLabel: "lead",

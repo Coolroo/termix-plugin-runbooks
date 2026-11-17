@@ -14,6 +14,7 @@ import { CopyButton } from "../ui/CopyButton";
 import { KindChip, kindStyle, MarkChip } from "../kinds/kinds";
 import type { NavStep } from "../nav/StepNav";
 import { ByHandPlace, SecretStepBody } from "../secrets/SecretStepBody";
+import { DecisionStepBody } from "../decisions/DecisionStepBody";
 import {
   describeStdin,
   formatDuration,
@@ -115,6 +116,9 @@ export function StepCard({
   const [expanded, setExpanded] = useState(false);
   const [outsideOutput, setOutsideOutput] = useState("");
   const replaced = step.status === "replaced";
+  // 1.4.6: its when rule says it is not needed now (D2: one grey line).
+  const condition = step.condition ?? null;
+  const notNeeded = Boolean(condition?.notNeeded);
   // Done on a step with checks needs the output they read (1.4.1).
   const pasteFirst =
     (step.checks ?? []).length > 0 && outsideOutput.trim() === "";
@@ -207,7 +211,46 @@ export function StepCard({
       {step.hideOutputFromAgents && (
         <ListBadge tone="muted">{t("step.hidden")}</ListBadge>
       )}
+      {notNeeded && <ListBadge tone="muted">{t("notNeeded.badge")}</ListBadge>}
     </header>
+  );
+
+  // A pending step whose rule waits on earlier steps says when it is needed.
+  const onlyIfLine = condition &&
+    condition.state === "waiting" &&
+    step.status === "pending" && (
+      <p className="mt-1 text-xs text-muted-foreground" data-only-if>
+        {t("notNeeded.onlyIf", { rule: condition.rule })}
+      </p>
+    );
+
+  // A rule reads what agents see (BUG-010): hidden output is masked for it.
+  const hiddenRuleLine = condition?.readsHidden && (
+    <p className="mt-1 text-xs text-warning" data-rule-reads-hidden>
+      {t("notNeeded.readsHidden")}
+    </p>
+  );
+
+  // An opened not-needed step says why, and folds again.
+  const notNeededLine = notNeeded && condition && (
+    <div
+      className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+      data-not-needed-reason
+    >
+      <span>
+        {t("notNeeded.line", { reason: condition.reason })} ·{" "}
+        {t("notNeeded.onlyIf", { rule: condition.rule })}
+      </span>
+      <button
+        type="button"
+        className="underline"
+        aria-expanded={expanded}
+        data-not-needed-toggle
+        onClick={() => setExpanded(false)}
+      >
+        {t("notNeeded.collapse")}
+      </button>
+    </div>
   );
 
   const replacedLine = replaced && (
@@ -231,6 +274,35 @@ export function StepCard({
       </button>
     </div>
   );
+
+  // A step that is not needed is one grey line until the person opens it.
+  if (notNeeded && !expanded) {
+    return (
+      <section
+        className="border border-dashed border-border px-3 py-1.5 opacity-80"
+        style={kindStyle.card(state, kindColor)}
+        data-step={step.id}
+        data-kind={kind.id}
+        data-state={state}
+        data-not-needed
+        data-collapsed
+        tabIndex={-1}
+      >
+        <button
+          type="button"
+          className="flex w-full flex-wrap items-baseline gap-x-2 text-left text-xs text-muted-foreground"
+          aria-expanded={false}
+          data-not-needed-toggle
+          onClick={() => setExpanded(true)}
+        >
+          <span className="font-mono">{stepLabel(step)}</span>
+          <span>·</span>
+          <span className="font-medium text-foreground/80">{step.title}</span>
+          <span>— {t("notNeeded.line", { reason: condition!.reason })}</span>
+        </button>
+      </section>
+    );
+  }
 
   // A replaced step stays in the history, folded until the person opens it.
   if (replaced && !expanded) {
@@ -266,9 +338,21 @@ export function StepCard({
     >
       {header}
       {replacedLine}
+      {notNeededLine}
+      {onlyIfLine}
+      {hiddenRuleLine}
       <AmendmentNote step={step} />
 
       <Markdown source={text.body} className="mt-2" copyCode />
+
+      {step.decision && (
+        <DecisionStepBody
+          step={step}
+          runbookOpen={runbookOpen && !replaced}
+          busy={busy}
+          onDecide={actions.decide}
+        />
+      )}
 
       {step.secretStep && (
         <SecretStepBody
@@ -408,7 +492,7 @@ export function StepCard({
       {!missingInBlock && missingLine}
 
       <ChecksList
-        checks={step.checks ?? []}
+        checks={step.resolvedChecks ?? step.checks ?? []}
         results={latest && !latest.running ? latest.checks : null}
         words={checksWords(t)}
       />
@@ -504,7 +588,12 @@ export function StepCard({
       {latest && (
         <div className="mt-3 flex flex-col gap-2">
           <SectionLabel>{t("run.latest")}</SectionLabel>
-          <RunDetails run={latest} onComplete={actions.complete} />
+          <RunDetails
+            run={latest}
+            onComplete={actions.complete}
+            step={step}
+            onInput={actions.input}
+          />
           {earlier.length > 0 && (
             <div>
               <button
