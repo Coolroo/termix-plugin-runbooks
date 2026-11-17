@@ -1,6 +1,6 @@
 # Coolroo Plugins: a Termix plugin registry
 
-`index.json` on this branch is a custom Termix plugin registry. It lists two plugins: **Runbooks** ([termix-plugin-runbooks](https://github.com/Coolroo/termix-plugin-runbooks)) and **OpenBao Secrets** ([termix-plugin-openbao-secrets](https://github.com/Coolroo/termix-plugin-openbao-secrets)). Every plugin it lists is signed with one Ed25519 key, whose private half lives in an OpenBao transit engine and cannot be exported.
+`index.json` on this branch is a custom Termix plugin registry. It lists three plugins: **Runbooks** ([termix-plugin-runbooks](https://github.com/Coolroo/termix-plugin-runbooks)), **OpenBao Secrets** ([termix-plugin-openbao-secrets](https://github.com/Coolroo/termix-plugin-openbao-secrets)) and **Hundred Acre Wood** ([termix-plugin-haw](https://github.com/Coolroo/termix-plugin-haw)). Every plugin it lists is signed with one Ed25519 key, whose private half lives in an OpenBao transit engine and cannot be exported.
 
 Add it in Termix: **Plugins**, **Registries**, **Add registry**, paste
 
@@ -20,4 +20,4 @@ then **Check**, and compare the key id before **Trust and add**:
 1. Sign the release file's sha256 with the registry key (Ed25519 over the 32-byte digest, base64), into `<file>.tmxplug.sig`.
 2. `node tools/gen-index.mjs <manifest.json> <CHANGELOG.md> <file.tmxplug> <file.sig> <publicKey> <release url> <publishedAt> new.json`
 3. `node tools/merge-index.mjs new.json index.json index.json` keeps every listed release and puts the new one first.
-4. `node tools/validate.mjs registry-index-schema.json index.json <file.tmxplug>` checks the schema (Termix-Registry's `registry-index-schema.json`), the sha256, the size and the signature.
+4. `node tools/validate.mjs registry-index-schema.json index.json <file.tmxplug>` checks the sha256, the size and the signature. Its own schema check does not know `anyOf`, which the current Termix-Registry schema uses: check the schema with a full JSON Schema 2020-12 validator (for example Ajv) as well.

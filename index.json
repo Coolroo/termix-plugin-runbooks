@@ -4,8 +4,58 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-13T06:41:54.000Z",
+  "updatedAt": "2026-11-17T06:09:17.000Z",
   "plugins": [
+    {
+      "id": "haw",
+      "name": "Hundred Acre Wood",
+      "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
+      "author": "Coolroo",
+      "category": "Infrastructure",
+      "repository": "https://github.com/Coolroo/termix-plugin-haw",
+      "icon": "Trees",
+      "features": [
+        "Add any Termix host as a VM host and choose its interface (Hyper-V in 1.0)",
+        "HAW runs one fixed command on the host, vmctl, as an account that can do nothing else",
+        "Every VM on each host with its state, size, addresses and uptime",
+        "Start, shut down, turn off and restart, with a confirm",
+        "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
+        "Open a VM's console in the Remote Desktop plugin",
+        "Three roles: owner, operator and viewer",
+        "Every action recorded, in HAW and in Termix's audit log"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.0.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.0/haw-1.0.0.tmxplug",
+          "sha256": "3ae39414c353e683280e9ec8e46ddb60ac854ba695bdc1a6e31986cd10cca1a0",
+          "signature": "ezqZmhfTndwetzseP+k9wInZ2JIN9h3AMVMXb/XLgYmdEEY+bqXuYutbrwPCSm4t9ry+IZ/AGe660W/GTZHGDA==",
+          "size": 59532,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.0",
+          "notes": "### Added\n\n- VM hosts: any Termix host, with an interface (Hyper-V). **Add VM host** checks the host with `vmctl info` before it adds it, and shows that interface's one-time setup when vmctl does not answer. A host with no stored host key is refused.\n- The vmctl protocol, version 1: one JSON request on standard input, one JSON reply. Verbs `info`, `list`, `show`, `start`, `stop`, `restart` and `console-info`; `create`, `delete`, `snapshot`, `restore` and `users` answer \"not in this version\".\n- The Hyper-V back end, with `install.ps1` for the one-time setup. `vmctl.ps1` is the forced command of a plain account (key login, no TTY, no forwarding); it hands each request to the task `haw-vmctl-worker`, which runs `vmctl-worker.ps1` as SYSTEM, checks the request again and runs Hyper-V. Windows refuses Hyper-V to a non-admin account over an SSH key login, even in Hyper-V Administrators; the worker keeps the account out of Administrators. The host config holds a name pattern, a protect list and ceilings that the plugin can't change.\n- A fake back end for tests and rehearsals (`vmctl/fake/vmctl-fake.mjs`).\n- The VMs tab: each VM host with its VMs, state, size, addresses and uptime; Start, Shut down, Turn off, Restart and Reset with a confirm; protected and not-managed VMs marked.\n- Consoles through the Remote Desktop plugin, from a Termix host an owner links to the VM.\n- Roles: See VMs (viewer), Power VMs (operator) and Manage VM hosts (owner).\n- The record of actions, in HAW's tables and in Termix's audit log.",
+          "publishedAt": "2026-11-17T06:09:17Z"
+        }
+      ],
+      "contributes": [
+        "permissions",
+        "tabs"
+      ]
+    },
     {
       "id": "runbooks",
       "name": "Runbooks",
