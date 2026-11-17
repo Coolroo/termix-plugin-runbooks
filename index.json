@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-17T06:33:04.000Z",
+  "updatedAt": "2026-11-17T15:38:36.000Z",
   "plugins": [
     {
       "id": "haw",
@@ -27,6 +27,29 @@
       "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.2",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.2/haw-1.0.2.tmxplug",
+          "sha256": "1bf4ada80b5fcec6a813aa74a577c10895c68617a3c444d00e7a26f3fd77819f",
+          "signature": "kJDO/XrR53FUDes4Hm1vS2Xgf0dHPA9PiGllzYH3NR0R3EB1vKqZ+CUuk7zC32cV6V5O9D7QM6M/j5+wR9KYDg==",
+          "size": 69866,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.2",
+          "notes": "### Changed\n\n- A new VM list. Each VM is one item of two lines: its name with the Protected or Not-managed badge, then its state, size and addresses, with the uptime at the right. The buttons sit at the right and move under the name in a narrow pane, so the list never scrolls to the side.\n- A click on a VM opens its details in place: generation, size, checkpoints and ID; each disk with its use; each network with its switch, MAC and addresses; the notes; and the last action HAW recorded on that VM. Turn off and Reset are in the details; the row keeps Start, Shut down, Restart and Console.\n- On a phone, the rows have no buttons. The details show every button the VM allows, large, two to a line.\n- Each host's header shows its VM count, its memory in use as a bar, and a **Limits** button for the name pattern, protect list and ceilings.\n- A filter box (name or address) and **All**, **Running** and **Stopped** buttons with counts, above all hosts.\n\n### Added\n\n- `GET /actions` takes `vmName`, with `hostId`, for the last action on one VM.",
+          "publishedAt": "2026-11-17T15:38:36Z"
+        },
         {
           "version": "1.0.1",
           "api": "1",
