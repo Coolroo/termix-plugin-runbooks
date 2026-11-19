@@ -12,10 +12,27 @@
  */
 
 import type { StepName } from "./api.js";
+import { vmValueNames } from "./vms.js";
 
 export interface StepNumber {
   position: number;
   suffix?: string | null;
+}
+
+/**
+ * The values a step sets, in one place: its captures, its decision's value
+ * and, for a VM step (1.4.7), the VM's state, address, addresses and id.
+ */
+export function stepValueNames(step: {
+  captures?: ReadonlyArray<{ name: string }>;
+  decision?: { value: string | null } | null;
+  vm?: { value: string | null } | null;
+}): string[] {
+  return [
+    ...(step.captures ?? []).map((capture) => capture.name),
+    ...(step.decision?.value ? [step.decision.value] : []),
+    ...vmValueNames(step.vm ?? null),
+  ];
 }
 
 /** "3" for step 3, "3a" for its first amendment. */

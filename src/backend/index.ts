@@ -10,6 +10,7 @@ import {
 } from "./running/live.js";
 import { registerPersonRoutes } from "./runbooks/routes.js";
 import { createSecrets } from "./secrets/secrets.js";
+import { createHaw } from "./vms/haw.js";
 import { createEvents } from "./agents/events.js";
 import { createStore } from "./runbooks/store/store.js";
 import { createStateStore } from "./core/state.js";
@@ -48,9 +49,13 @@ export async function activate(ctx: PluginContext) {
   // OpenBao Secrets is optional: without it, steps that use secrets are
   // refused and everything else works.
   const secrets = createSecrets(ctx);
+  // HAW VM Manager is optional too (1.4.7): without it, VM steps say why
+  // they cannot run and everything else works.
+  const haw = await createHaw(ctx);
   const ops = createAgentOps(store, live, {
     audit: (line) => ctx.audit.record(line),
     events,
+    haw,
   });
 
   const router = ctx.http.router<Router>({
@@ -62,7 +67,16 @@ export async function activate(ctx: PluginContext) {
 
   const agent = createAgentRouter(ctx, store, ops, ctx.manifest.version);
   router.use("/agent", agent.router);
-  registerPersonRoutes(router, ctx, store, live, secrets, events, notifier);
+  registerPersonRoutes(
+    router,
+    ctx,
+    store,
+    live,
+    secrets,
+    events,
+    notifier,
+    haw,
+  );
   registerAdminRoutes(router, ctx, notifier, state);
   // Retries, and anything that was due while Termix was down.
   notifier.start();

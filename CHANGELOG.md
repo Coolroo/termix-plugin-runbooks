@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.7 (unreleased)
+
+### Added
+
+- **VM steps.** A step's `vm: { host, name, action, force?, waitFor?, waitSeconds?, value? }` gives the person one button, and HAW VM Manager (1.0.3 or later, through its service `haw.vms`) does the action on that VM as the person who pressed it, with HAW's roles and the host's own limits (name pattern, protect list, ceilings). `action` is `start`, `stop`, `restart`, `show` or `console`. HAW keeps each action in its record with "via runbooks: runbook 12 step 3". An admin adds `runbooks` to HAW's **Plugins that may act for a person** first; until then, and without HAW, the step says why it cannot run.
+- The step waits for `waitFor` (by default the state the action leads to: `running` for start and restart, `off` for stop; none for show; `null` for no wait), reading the VM every 2 seconds for up to `waitSeconds` (1 to 600, default 300), and fails at the limit with the last state. Its run, in mode `vm`, shows each state as it changes, and ends with the VM's details as JSON and one summary line ("wyatt-pc-builder is running, 192.0.2.10"), which checks (`contains`, `notContains`, `matches`, `notMatches`) and `when` output rules read. `value: "build"` sets `{{build.state}}`, `{{build.id}}` and, when the VM has an address, `{{build.ip}}` (the first IPv4 address, else the first) and `{{build.addresses}}` for later steps.
+- The card shows the host, the VM, its state now (HAW's `show`, read when the card opens, `GET /steps/{id}/vm`), what the action does and how long it waits, and "the host refuses this" for a protected VM's stop or restart and for a VM outside the host's name pattern. The button names the action: **Start VM**, **Shut down VM**, **Restart VM**, **Show VM**, **Open console**; with `force`, **Turn off VM** or **Reset VM** in red, with a question of its own (409 `force`, then `confirmForce: true`). `POST /steps/{id}/vm` keeps the usual questions: the revision, the order, the wait timer, the `when` rule and the repeat guard (the same action on the same VM in the last 24 hours; not for show and console). A host's refusal fails the step with HAW's words; HAW's own refusals (Runbooks not allowed, the person's HAW role, a host HAW does not manage or whose `vmctl` does not offer the verb) refuse the button with 403, 404 or 409 and run nothing. **Stop** ends a wait.
+- **Open console** opens the VM's console host in a Remote Desktop tab, as HAW's own tab does, and the step waits for the person's **Done** or **Failed** (`POST /steps/{id}/vm/end`).
+- A new step kind, **VM action** (indigo, Server), with its own color setting.
+- Agents: `vm` on create, add, change and amend, through REST and MCP, and in `get_runbook`. A VM step has no `hostId`, `command`, `captures`, `secretCaptures`, `stdin`, `timeoutMs` or `interactive` and cannot be an agent step (400); `force` is for stop and restart only; `host` must be one of the token's hosts and, when HAW can say, one HAW manages. `GET /vms` and the MCP tool `list_vms` read, as the token's maker and marked for an agent, the token's VM hosts and the VMs on one; agents never act on a VM. `hideOutputFromAgents` works on a VM step, and the built agent view test has a VM case. The agent API doc has a section "VM steps"; docs/security.md says what a VM step lets a person do.
+- New column `steps.vm` (migration 0019), for SQLite, PostgreSQL and MySQL. The manifest asks for `users:impersonate` (to read HAW for an agent token as its maker) and declares `haw.vms` (`^1.0.0`) as an optional requirement.
+
 ## 1.4.6
 
 ### Added

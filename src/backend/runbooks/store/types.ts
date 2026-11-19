@@ -6,6 +6,7 @@ import type { StoredStdin } from "../../running/stdin.js";
 import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
+import type { VmSpec } from "../../../shared/vms.js";
 import type {
   AmendKind,
   RunbookOwner,
@@ -115,6 +116,8 @@ export interface StepRow {
   decision: DecisionSpec | null;
   /** 1.4.6: Run opens a terminal (pty) for the command. */
   interactive: boolean;
+  /** 1.4.7: a VM step's action through HAW; null if not. */
+  vm: VmSpec | null;
   /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
   suffix: string | null;
   /** 1.4.0: the step this one amends, how, why and by which token. */
@@ -169,4 +172,6 @@ export interface NewStep {
   decision?: DecisionSpec | null;
   /** 1.4.6: left out: false. */
   interactive?: boolean;
+  /** 1.4.7: a VM step; null or left out for any other step. */
+  vm?: VmSpec | null;
 }

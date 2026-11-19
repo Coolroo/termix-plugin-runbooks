@@ -35,22 +35,23 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 
 ## REST
 
-| Method and path                 | What it does                                                                       |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET /hosts`                    | Hosts ticked for the token: `id`, `name`, `address`, `folder`                      |
-| `GET /runbooks?status=open`     | Runbooks with progress; `status` is `open`, `done` or `abandoned`                  |
-| `POST /runbooks`                | Propose a runbook with steps (201)                                                 |
-| `GET /runbooks/{id}`            | One runbook: steps, notes, every run and its output, newest first                  |
-| `PATCH /runbooks/{id}`          | Change `title`, `summary`, `values` (the whole set), `status`, `owner` or `notify` |
-| `POST /runbooks/{id}/steps`     | Add `steps`, at the end or at a 1-based `position` (201)                           |
-| `POST /runbooks/{id}/reorder`   | `{ "stepIds": [...] }` with every step once, without amendments                    |
-| `GET /runbooks/{id}/values`     | Effective values and where each came from                                          |
-| `PATCH /steps/{id}`             | Change a step that has not run; only the given fields change                       |
-| `DELETE /steps/{id}`            | Remove a step that has not run                                                     |
-| `POST /steps/{id}/complete`     | End an agent step: `{ outcome, note?, output? }`                                   |
-| `POST /steps/{id}/amend`        | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)     |
-| `GET /events?since=0&limit=100` | Events of the token's runbooks, oldest first; see [Events](#events)                |
-| `POST /mcp`                     | MCP (below)                                                                        |
+| Method and path                 | What it does                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /hosts`                    | Hosts ticked for the token: `id`, `name`, `address`, `folder`                        |
+| `GET /vms?host=4`               | Read only: the token's VM hosts in HAW, or the VMs on one; see [VM steps](#vm-steps) |
+| `GET /runbooks?status=open`     | Runbooks with progress; `status` is `open`, `done` or `abandoned`                    |
+| `POST /runbooks`                | Propose a runbook with steps (201)                                                   |
+| `GET /runbooks/{id}`            | One runbook: steps, notes, every run and its output, newest first                    |
+| `PATCH /runbooks/{id}`          | Change `title`, `summary`, `values` (the whole set), `status`, `owner` or `notify`   |
+| `POST /runbooks/{id}/steps`     | Add `steps`, at the end or at a 1-based `position` (201)                             |
+| `POST /runbooks/{id}/reorder`   | `{ "stepIds": [...] }` with every step once, without amendments                      |
+| `GET /runbooks/{id}/values`     | Effective values and where each came from                                            |
+| `PATCH /steps/{id}`             | Change a step that has not run; only the given fields change                         |
+| `DELETE /steps/{id}`            | Remove a step that has not run                                                       |
+| `POST /steps/{id}/complete`     | End an agent step: `{ outcome, note?, output? }`                                     |
+| `POST /steps/{id}/amend`        | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)       |
+| `GET /events?since=0&limit=100` | Events of the token's runbooks, oldest first; see [Events](#events)                  |
+| `POST /mcp`                     | MCP (below)                                                                          |
 
 ### A link for the person
 
@@ -441,6 +442,49 @@ When the way on depends on a person's judgment ("only if needed", "if the lead s
 - **Reopen** lets the person choose again. Steps that already ran on the old choice stay as they are; the page names them before it reopens. Steps that have not run follow the new choice.
 - A rule `{ "step": N, "chose": "<id>" }` must name an earlier decision step and one of its option ids (400 otherwise). For several options, combine rules: `{ "all": [ { "step": 5, "chose": "dns" }, { "step": 5, "chose": "tls" } ] }`. A decision that was skipped matches no `chose` rule; test `{ "step": 5, "status": "skipped" }` for that.
 
+### VM steps
+
+When a step is "start the build VM" or "shut down the test VM", give the person a **VM step** (1.4.7) instead of a PowerShell command: one button, and **HAW VM Manager** does the action through its own fixed `vmctl` command, as the person who presses it. HAW's roles and the host's own limits (its name pattern, its protect list, its ceilings) apply exactly as in HAW's tab, and HAW keeps the action in its record ("via runbooks: runbook 12 step 3"). It needs HAW VM Manager 1.0.3 or later, and an admin must add `runbooks` to HAW's **Plugins that may act for a person**; until then the step says why it cannot run.
+
+```json
+{
+  "title": "Start the build VM",
+  "vm": {
+    "host": 4,
+    "name": "wyatt-pc-builder",
+    "action": "start",
+    "waitFor": "running",
+    "waitSeconds": 300,
+    "value": "build"
+  }
+}
+```
+
+```json
+{
+  "title": "Build on it",
+  "hostId": 7,
+  "command": "ssh builder@{{build.ip}} make release"
+}
+```
+
+| Field         | What it is                                                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`        | A host HAW manages as a VM host, and one the token may name. `GET /vms` lists them                                                                                                              |
+| `name`        | The VM's name, as `GET /vms?host=4` shows it: 1 to 100 characters, no `*`, `?`, `[`, `]` or control characters. Values (`{{name}}`) are not filled in                                           |
+| `action`      | `start`, `stop` (a shutdown the guest does), `restart`, `show` (reads the VM, changes nothing) or `console` (opens the VM's console in Remote Desktop; the person marks the step done)          |
+| `force`       | `stop` and `restart` only: turn off or hard reset without asking the guest. The card shows it in red, and the person confirms it on its own                                                     |
+| `waitFor`     | The state to wait for: `running`, `off`, `starting`, `stopping`, `saved`, `paused` or `other`. Default: `running` for `start` and `restart`, `off` for `stop`, none for `show`. `null`: no wait |
+| `waitSeconds` | How long to wait, 1 to 600. Default 300. The step fails when the time is up and says the last state                                                                                             |
+| `value`       | A prefix: the step sets `{{build.state}}`, `{{build.id}}` and, when the VM has an address, `{{build.ip}}` (the first IPv4 address, else the first) and `{{build.addresses}}` (comma-separated)  |
+
+- A VM step has no `hostId`, `command`, `captures`, `secretCaptures`, `stdin`, `timeoutMs` or `interactive`, and it is always a person's: `owner: "agent"` is refused (400). Agents read VM steps and their runs; they never act on a VM.
+- Its run is in mode `vm`. While it waits, its output says each state the VM passes through, as Runbooks reads it every 2 seconds. When it ends, its `stdout` is the VM's details as JSON, then one summary line: `wyatt-pc-builder is running, 192.0.2.10`. `checks` (`contains`, `notContains`, `matches`, `notMatches`) and `when` output rules read it as they read a command's output; there is no exit code. A console's run waits for the person's **Done** or **Failed** and has no checks.
+- The usual questions apply before HAW is asked: the revision, the order, the wait timer, the `when` rule, and a repeat (the step ran before, or the same action ran on the same VM in the last 24 hours; not for `show` and `console`). A host that refuses (`protected`, `name-not-allowed`, `not-found`, `wrong-state`, `ceiling`) fails the step with HAW's words, and the page shows "the host refuses this" before anything is pressed when it can tell.
+- `GET /vms` (MCP `list_vms`) is read only. Without `host` it answers `{ hosts: [{ hostId, name, verbs, lastCheckedAt }] }`, the token's hosts that HAW manages, with the verbs each host's `vmctl` offers. With `host` it answers `{ host, vms: [{ name, state, cpus, memoryMB, addresses, allowed, protected }] }`. HAW answers as the person who made the token, for an agent: it may only list. 403 when HAW does not let Runbooks act for people (or the token's maker has no HAW role), 404 for a host the token may not use or HAW does not manage, 409 when HAW is not installed.
+- A VM step's `host` must be one of the token's hosts (400), and, when HAW can say, one HAW manages (400). A VM name is checked when the person opens the step.
+- `hideOutputFromAgents` works on a VM step: agents then read `[hidden by owner]` for its output and for each of its values.
+
 ### Run or Send to terminal
 
 A step that Termix runs has two buttons: **Run** starts the command over a connection of its own, and **Send to terminal** types it into a terminal for the person. When only one of them works, say so with `runIn` (1.4.6) instead of a line in the title or body: people press Run anyway.
@@ -645,21 +689,22 @@ While a command runs, its run has `status: "running"` and `running: true`, `stdo
 
 `POST /plugin-api/runbooks/agent/mcp` is an MCP server over streamable HTTP: JSON-RPC 2.0, one JSON answer per request, no event stream and no session. It answers `initialize`, `notifications/initialized`, `ping`, `tools/list` and `tools/call`, with the same token.
 
-| Tool             | What it does                                    |
-| ---------------- | ----------------------------------------------- |
-| `list_hosts`     | Hosts the token can use                         |
-| `list_runbooks`  | Runbooks with progress                          |
-| `get_runbook`    | One runbook with steps, notes, runs and outputs |
-| `create_runbook` | Propose a runbook with steps                    |
-| `update_runbook` | Change title, summary, values or status         |
-| `add_steps`      | Add steps at the end or at a position           |
-| `update_step`    | Change a step that has not run                  |
-| `remove_step`    | Remove a step that has not run                  |
-| `reorder_steps`  | New step order                                  |
-| `get_values`     | Effective values                                |
-| `complete_step`  | End an agent step when it is the agent's turn   |
-| `amend_step`     | Amend a step with a fixed version or a sub-step |
-| `list_events`    | Events of the token's runbooks after an id      |
+| Tool             | What it does                                               |
+| ---------------- | ---------------------------------------------------------- |
+| `list_hosts`     | Hosts the token can use                                    |
+| `list_vms`       | The token's VM hosts in HAW, or the VMs on one (read only) |
+| `list_runbooks`  | Runbooks with progress                                     |
+| `get_runbook`    | One runbook with steps, notes, runs and outputs            |
+| `create_runbook` | Propose a runbook with steps                               |
+| `update_runbook` | Change title, summary, values or status                    |
+| `add_steps`      | Add steps at the end or at a position                      |
+| `update_step`    | Change a step that has not run                             |
+| `remove_step`    | Remove a step that has not run                             |
+| `reorder_steps`  | New step order                                             |
+| `get_values`     | Effective values                                           |
+| `complete_step`  | End an agent step when it is the agent's turn              |
+| `amend_step`     | Amend a step with a fixed version or a sub-step            |
+| `list_events`    | Events of the token's runbooks after an id                 |
 
 A tool error (a refused change) comes back as a result with `isError: true` and the reason, so the agent can read it and try something else.
 

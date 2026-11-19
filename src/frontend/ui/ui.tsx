@@ -100,7 +100,8 @@ export function CommandBlock({
 
 /**
  * Done and Failed for a step the person did by hand, each marked with
- * `attr` (data-manual or data-outside-mark) set to its outcome.
+ * `attr` (data-manual, data-outside-mark or data-vm-end) set to its
+ * outcome.
  * `doneHint`: why Done is off, as its title.
  */
 export function OutcomeButtons({
@@ -109,7 +110,7 @@ export function OutcomeButtons({
   doneHint = null,
   onOutcome,
 }: {
-  attr: "data-manual" | "data-outside-mark";
+  attr: "data-manual" | "data-outside-mark" | "data-vm-end";
   disabled: boolean;
   doneHint?: string | null;
   onOutcome: (outcome: "done" | "failed") => void;

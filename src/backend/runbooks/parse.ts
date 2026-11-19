@@ -32,6 +32,7 @@ import {
 import { isOneLine } from "../../shared/names.js";
 import { DEFAULT_TIMEOUT_MS } from "../../shared/limits.js";
 import { parseDecision, type DecisionSpec } from "../../shared/decisions.js";
+import { parseVm, type VmSpec } from "../../shared/vms.js";
 import { InputError } from "../core/errors.js";
 import { strictObject } from "../core/parse.js";
 import { secretCapturesProblem } from "../secrets/secret-view.js";
@@ -186,6 +187,7 @@ const STEP_FIELDS = [
   "when",
   "decision",
   "interactive",
+  "vm",
 ];
 
 /**
@@ -364,6 +366,16 @@ export function parseStepInput(
       }
     }
   }
+  if (has("vm")) {
+    if (raw.vm === null || raw.vm === undefined) out.vm = null;
+    else {
+      try {
+        out.vm = parseVm(raw.vm);
+      } catch (error) {
+        throw new InputError((error as Error).message);
+      }
+    }
+  }
   if (has("interactive")) {
     const interactive = raw.interactive ?? false;
     if (typeof interactive !== "boolean") {
@@ -421,6 +433,7 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
     when: parsed.when ?? null,
     decision: parsed.decision ?? null,
     interactive: parsed.interactive ?? false,
+    vm: parsed.vm ?? null,
   };
   checkStepShape(step);
   return step;
@@ -450,9 +463,15 @@ export function checkStepShape(step: {
   decision?: DecisionSpec | null;
   interactive?: boolean;
   hideOutputFromAgents?: boolean;
+  timeoutMs?: number | null;
+  vm?: VmSpec | null;
 }): void {
   checkRunInShape(step);
   checkInteractiveShape(step);
+  if (step.vm) {
+    checkVmShape(step);
+    return;
+  }
   if (step.decision) {
     checkDecisionShape(step);
     return;
@@ -549,10 +568,11 @@ function checkInteractiveShape(
     step.generate ||
     step.ask ||
     step.decision ||
+    step.vm ||
     step.command === null
   ) {
     throw new InputError(
-      "interactive needs a command Termix runs on a host: leave it out for an agent step, a step run outside Termix, a secret step, a decision step or a step with no command",
+      "interactive needs a command Termix runs on a host: leave it out for an agent step, a step run outside Termix, a secret step, a decision step, a VM step or a step with no command",
     );
   }
   if (step.runIn === "terminal") {
@@ -609,6 +629,54 @@ function checkDecisionShape(step: Parameters<typeof checkStepShape>[0]): void {
       `a decision step cannot have ${found[1]}: the person only chooses an option`,
     );
   }
+}
+
+/**
+ * A VM step (1.4.7): a person presses one button and HAW acts on the VM,
+ * through its own fixed vmctl command. Termix runs no command for it, and
+ * only a person acts (H1): an agent step cannot be one. Checks read the
+ * VM's details and the summary line; a console has no output to check.
+ */
+function checkVmShape(step: Parameters<typeof checkStepShape>[0]): void {
+  if (step.owner === "agent") {
+    throw new InputError(
+      "a VM step is for a person: HAW acts only when a person presses its button; leave out owner",
+    );
+  }
+  const extra: Array<[boolean, string]> = [
+    [step.command !== null, "command"],
+    [step.hostId !== null, "hostId (the VM host is vm.host)"],
+    [Boolean(step.where), "where"],
+    [Boolean(step.stdin), "stdin"],
+    [step.captures.length > 0, "captures (use vm.value)"],
+    [(step.secretCaptures ?? []).length > 0, "secretCaptures"],
+    [Boolean(step.generate || step.ask), "generate or ask"],
+    [Boolean(step.decision), "decision"],
+    [Boolean(step.interactive), "interactive"],
+    [step.timeoutMs != null, "timeoutMs (use vm.waitSeconds)"],
+  ];
+  const found = extra.find(([present]) => present);
+  if (found) {
+    throw new InputError(
+      `a VM step cannot have ${found[1]}: HAW does the action, Termix runs no command`,
+    );
+  }
+  if (step.waitReason && !step.waitAfterPreviousSeconds) {
+    throw new InputError("waitReason needs waitAfterPreviousSeconds");
+  }
+  const checks = step.checks ?? [];
+  if (checks.length > 0 && step.vm!.action === "console") {
+    throw new InputError(
+      "a console step has no output to check: the person marks it done",
+    );
+  }
+  if (checks.some((check) => check.type === "exitCode")) {
+    throw new InputError(
+      "a VM step has no exit code: use contains, notContains, matches or notMatches checks on the VM's details",
+    );
+  }
+  const problem = checksProblem(checks, []);
+  if (problem) throw new InputError(problem);
 }
 
 /**

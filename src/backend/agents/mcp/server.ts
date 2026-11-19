@@ -35,6 +35,8 @@ async function callTool(
   switch (name) {
     case "list_hosts":
       return ops.listHosts(caller);
+    case "list_vms":
+      return ops.listVms(caller, { host: args.host });
     case "list_runbooks":
       return ops.listRunbooks(caller, { status: args.status });
     case "get_runbook":

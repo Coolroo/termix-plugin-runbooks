@@ -10,6 +10,7 @@ import { Button, Textarea, cn } from "@termix-ssh/plugin-sdk/ui";
 import { isAgentStep } from "../../shared/steps";
 import { OutcomeButtons } from "../ui/ui";
 import type { Run, Step } from "../api-types";
+import type { VmStepState } from "../../shared/vms";
 
 export interface StepActions {
   /** `waitLeftMs`: the step's wait timer still runs, this long. */
@@ -33,6 +34,13 @@ export interface StepActions {
   ) => void;
   /** Confirm on a Decision step (1.4.6), with the chosen option ids. */
   decide: (step: Step, chosen: string[]) => void;
+  /**
+   * A VM step's button (1.4.7): asks, then HAW does the action; a console
+   * opens in Remote Desktop. `state` is what the card read of the VM.
+   */
+  vm: (step: Step, state: VmStepState | null) => void;
+  /** Done or Failed after a VM step's console (1.4.7). */
+  vmEnd: (step: Step, outcome: "done" | "failed") => void;
   /** Asks for a note and sends the step to the runbook's agent (1.4.0). */
   sendToAgent: (step: Step) => void;
   /**
@@ -170,6 +178,7 @@ export function StepButtons({
             !agentStep &&
             !step.secretStep &&
             !step.decision &&
+            !step.vm &&
             step.hostId === null &&
             step.command === null &&
             step.status === "pending" && (

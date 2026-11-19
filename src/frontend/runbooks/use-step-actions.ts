@@ -25,7 +25,9 @@ import {
   usePromptRequest,
 } from "./prompts";
 import type { Flags, RunbookKit } from "./use-runbook";
-import type { Run, Runbook, Step } from "../api-types";
+import type { Run, Runbook, Step, VmPressed } from "../api-types";
+import { vmButtonKey } from "../vms/VmStepBody";
+import { consoleOpener, vmDetails } from "../vms/vm-prompts";
 
 export function useStepActions(
   app: TermixApp,
@@ -135,6 +137,9 @@ export function useStepActions(
               });
             case "not-needed":
               return askNotNeeded(conflict);
+            case "force":
+              // Only a VM step asks about force (1.4.7).
+              return null;
           }
         },
       },
@@ -142,6 +147,7 @@ export function useStepActions(
     );
 
   const secretAttempt = useSecretAttempt(kit);
+  const openConsole = consoleOpener(app, t);
   const send = useTerminalSend(app, shellRef, kit, attempt, askEarly);
 
   const actions: StepActions = {
@@ -265,6 +271,86 @@ export function useStepActions(
         );
         if (data) setRunbook(data);
       }),
+
+    vm: (step, state) =>
+      void withBusy(async () => {
+        const spec = step.vm!;
+        const button = t(vmButtonKey(spec));
+        const ok = await confirm({
+          title: t("vm.confirmTitle", { button, name: spec.name }),
+          description: vmDetails(t, step, state),
+          confirmLabel: button,
+          destructive: spec.force,
+        });
+        if (!ok) return;
+        const data = await sendAsking(
+          async (flags) =>
+            (
+              await api.post<VmPressed>(`/steps/${step.id}/vm`, {
+                revision: step.revision,
+                ...flags,
+              })
+            ).data,
+          {
+            question: (conflict) => {
+              switch (conflict.code) {
+                case "force":
+                  // H5: its own question, in red, after the first one.
+                  return confirm({
+                    title: t(`vm.forceTitle.${conflict.action}`, {
+                      name: conflict.name,
+                    }),
+                    description: t("vm.forceHint"),
+                    confirmLabel: button,
+                    destructive: true,
+                  });
+                case "repeat": {
+                  const repeat = conflict.repeat;
+                  if (!repeat) return null;
+                  return confirm({
+                    title: t(
+                      repeat.sameStep ? "repeat.titleStep" : "vm.repeatTitle",
+                    ),
+                    description: repeatDetails(t, repeat, step),
+                    confirmLabel: t("repeat.again"),
+                    destructive: false,
+                  });
+                }
+                case "wait":
+                  return askEarly(
+                    step,
+                    conflict.remainingSeconds * 1000,
+                    false,
+                    conflict.reason ?? "",
+                  );
+                case "order":
+                  return confirm({
+                    title: t("order.title"),
+                    description: t("order.hint", {
+                      steps: blockingText(conflict.blocking),
+                    }),
+                    confirmLabel: t("order.anyway"),
+                    destructive: false,
+                  });
+                case "not-needed":
+                  return askNotNeeded(conflict);
+              }
+            },
+          },
+        );
+        if (!data) {
+          await load();
+          return;
+        }
+        if (data.run.running || data.run.status === "running") {
+          watched.current.add(data.run.id);
+        }
+        if (data.consoleHost) await openConsole(data.consoleHost, spec.name);
+        await load();
+      }),
+
+    vmEnd: (step, outcome) =>
+      postRunbook(`/steps/${step.id}/vm/end`, { outcome }),
 
     sendToAgent: (step) =>
       void withBusy(async () => {

@@ -273,6 +273,7 @@ export async function createStore(db: PluginDatabase) {
       whenJson: step.when ? JSON.stringify(step.when) : null,
       decision: step.decision ? JSON.stringify(step.decision) : null,
       interactive: step.interactive ?? false,
+      vm: step.vm ? JSON.stringify(step.vm) : null,
       endedAt: null,
       revision: 1,
       createdAt: at,

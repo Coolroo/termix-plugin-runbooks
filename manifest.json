@@ -27,7 +27,8 @@
     "Steps run outside Termix: the command with a Copy button, the pasted output checked",
     "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
     "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed",
-    "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks"
+    "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
+    "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it"
   ],
   "env": [],
   "engine": {
@@ -42,11 +43,17 @@
     "ssh:connect",
     "credentials:use",
     "network:outbound",
-    "secrets:own"
+    "secrets:own",
+    "users:impersonate"
   ],
   "requires": [
     {
       "service": "openbao-secrets.store",
+      "versionRange": "^1.0.0",
+      "optional": true
+    },
+    {
+      "service": "haw.vms",
       "versionRange": "^1.0.0",
       "optional": true
     }

@@ -163,6 +163,11 @@ export function createRunner(kit: PersonKit) {
       by?: string;
       /** Why it failed, when `outcome` is failed. */
       reason?: FailReason;
+      /**
+       * Values the run sets besides its captures, kept only when it ends
+       * done: a VM step's state, address and id (1.4.7).
+       */
+      values?: Record<string, string>;
     } = {},
   ): Promise<{ final: "done" | "failed"; stored: string[] }> {
     const used = options.used ?? [];
@@ -242,7 +247,10 @@ export function createRunner(kit: PersonKit) {
           pastedOutput: kept(patch.pastedOutput),
           status: final,
           finishedAt: at,
-          captured: final === "done" ? judged.captured : {},
+          captured:
+            final === "done"
+              ? { ...judged.captured, ...(options.values ?? {}) }
+              : {},
           checks: results,
           error: errors ? redact(errors, hide) : null,
           // Termix's words with secrets hidden; names as the step has them.

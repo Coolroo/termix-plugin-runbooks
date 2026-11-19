@@ -15,6 +15,7 @@ import { KindChip, kindStyle, MarkChip } from "../kinds/kinds";
 import type { NavStep } from "../nav/StepNav";
 import { ByHandPlace, SecretStepBody } from "../secrets/SecretStepBody";
 import { DecisionStepBody } from "../decisions/DecisionStepBody";
+import { VmStepBody } from "../vms/VmStepBody";
 import {
   describeStdin,
   formatDuration,
@@ -351,6 +352,16 @@ export function StepCard({
           runbookOpen={runbookOpen && !replaced}
           busy={busy}
           onDecide={actions.decide}
+        />
+      )}
+
+      {step.vm && (
+        <VmStepBody
+          step={step}
+          runbookOpen={runbookOpen}
+          busy={busy}
+          onPress={actions.vm}
+          onEnd={actions.vmEnd}
         />
       )}
 

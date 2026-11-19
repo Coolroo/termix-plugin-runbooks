@@ -172,11 +172,20 @@ export function RunDetails({
       {run.mode !== "manual" &&
         run.mode !== "agent" &&
         run.mode !== "secret" &&
-        run.mode !== "decision" && (
+        run.mode !== "decision" &&
+        run.mode !== "vm" && (
           <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-muted-foreground">
             $ {run.command}
           </pre>
         )}
+      {run.mode === "vm" && (
+        <p
+          className="mt-1 font-mono text-[11px] text-muted-foreground"
+          data-run-vm
+        >
+          {t("run.vmAction", { action: run.command })}
+        </p>
+      )}
       {run.note && (
         <p className="mt-1 whitespace-pre-wrap" data-run-note>
           {t("run.note", { note: run.note })}
@@ -224,7 +233,8 @@ export function RunDetails({
             .join(", ")}
         </p>
       )}
-      {onComplete && run.status === "awaiting-output" && (
+      {/* A VM step's console ends with its own Done or Failed (1.4.7). */}
+      {onComplete && run.status === "awaiting-output" && run.mode !== "vm" && (
         <div className="mt-2 flex flex-col gap-2">
           <Textarea
             value={pasted}

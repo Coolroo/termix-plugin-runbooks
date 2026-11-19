@@ -91,6 +91,36 @@ export function createAgentRouter(
 
   /**
    * @openapi
+   * /plugin-api/runbooks/agent/vms:
+   *   get:
+   *     summary: The token's VM hosts in HAW, or the VMs on one (read only)
+   *     description: >
+   *       1.4.7. Without host: { hosts: [{ hostId, name, verbs,
+   *       lastCheckedAt }] }, the token's hosts that HAW VM Manager
+   *       manages. With host: { host, vms: [{ name, state, cpus, memoryMB,
+   *       addresses, allowed, protected }] }. HAW answers as the person who
+   *       made the token, for an agent: it lists, and never acts.
+   *     tags: [Runbooks agent]
+   *     security: [{ runbooksToken: [] }]
+   *     parameters:
+   *       - in: query
+   *         name: host
+   *         schema: { type: integer }
+   *     responses:
+   *       200: { description: The VM hosts, or the VMs on one }
+   *       403: { description: HAW does not let Runbooks act for people, or the maker has no role there }
+   *       404: { description: Not a VM host this token may use }
+   *       409: { description: HAW is not installed }
+   */
+  router.get(
+    "/vms",
+    wrap(async (req, res) =>
+      ops.listVms(caller(res), { host: req.query.host }),
+    ),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/agent/runbooks:
    *   get:
    *     summary: List the token creator's runbooks, with progress

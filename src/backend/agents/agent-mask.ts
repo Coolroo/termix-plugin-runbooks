@@ -18,6 +18,7 @@ import type { RunRow, StepRow } from "../runbooks/store/types.js";
 import type { EffectiveValue, RunMode } from "../../shared/api.js";
 import { escapePattern } from "../../shared/checks.js";
 import { stepCaptures } from "../values/effective.js";
+import { stepValueNames } from "../../shared/steps.js";
 
 export const HIDDEN = "[hidden by owner]";
 
@@ -33,12 +34,13 @@ const CAPTURING: ReadonlySet<RunMode> = new Set([
   "terminal",
   "outside",
   "decision",
+  "vm",
 ]);
 
 /** The fields of a step the mask reads. */
 type MaskStep = Pick<
   StepRow,
-  "id" | "hideOutputFromAgents" | "stdin" | "captures" | "decision"
+  "id" | "hideOutputFromAgents" | "stdin" | "captures" | "decision" | "vm"
 >;
 
 /** The fields of a run that hold output or values. */
@@ -72,7 +74,7 @@ export interface AgentMask {
    * each capture it declares, hidden, whether it matched or not (BUG-011).
    */
   stepValues: (
-    step: Pick<StepRow, "id" | "status" | "captures" | "decision">,
+    step: Pick<StepRow, "id" | "status" | "captures" | "decision" | "vm">,
     runsByStep: Map<number, readonly RunRow[]>,
   ) => EffectiveValue[];
 }
@@ -105,12 +107,11 @@ export function hiddenStepIds(steps: ReadonlyArray<MaskStep>): Set<number> {
   return hidden;
 }
 
-/** The values a step sets: its captures and its decision's value. */
-function valueNames(step: Pick<StepRow, "captures" | "decision">): string[] {
-  return [
-    ...step.captures.map((capture) => capture.name),
-    ...(step.decision?.value ? [step.decision.value] : []),
-  ];
+/** The values a step sets: its captures, its decision's or VM's values. */
+function valueNames(
+  step: Pick<StepRow, "captures" | "decision" | "vm">,
+): string[] {
+  return stepValueNames(step);
 }
 
 /** A hidden step's run ended with captures: they show, hidden. */

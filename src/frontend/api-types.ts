@@ -35,6 +35,7 @@ export type {
   StepStatus,
   StepWait,
   TokenInfo,
+  VmPressed,
 } from "../shared/api";
 export type { StepCondition, WhenRule } from "../shared/conditions";
 
@@ -75,6 +76,7 @@ const CONFLICTS: ReadonlySet<unknown> = new Set([
   "order",
   "not-needed",
   "stale",
+  "force",
 ]);
 
 /**

@@ -34,6 +34,7 @@ import {
   isAgentStep,
   isBefore,
   stepLabel,
+  stepValueNames,
   type StepNumber,
 } from "../../../shared/steps.js";
 import { fillChecks, type Check } from "../../../shared/checks.js";
@@ -54,6 +55,7 @@ const known = (step: AuthorStep) => ({
   decision: step.decision,
   hideOutputFromAgents: step.hideOutputFromAgents,
   interactive: step.interactive,
+  vm: step.vm,
 });
 
 /** A step and its amendments: the steps that share its position. */
@@ -181,12 +183,9 @@ function ruleReader(steps: StepRow[], stepId: number): StepRow | undefined {
   return steps.find((s) => ruleStepIds(s.when).includes(stepId));
 }
 
-/** The values a step sets: its captures and its decision's value. */
+/** The values a step sets: its captures, its decision's or VM's values. */
 function valueNamesOf(step: Numbered): string[] {
-  return [
-    ...(step.captures ?? []).map((capture) => capture.name),
-    ...(step.decision?.value ? [step.decision.value] : []),
-  ];
+  return stepValueNames(step);
 }
 
 /**
@@ -494,6 +493,9 @@ export function createAuthoring(
       interactive: patch.interactive ?? step.interactive,
       hideOutputFromAgents:
         patch.hideOutputFromAgents ?? step.hideOutputFromAgents,
+      timeoutMs:
+        patch.timeoutMs !== undefined ? patch.timeoutMs : step.timeoutMs,
+      vm: patch.vm !== undefined ? patch.vm : step.vm,
     });
     await checkHosts(caller, [patch]);
     checkSecretReads(
@@ -517,6 +519,7 @@ export function createAuthoring(
       ...step,
       captures: patch.captures ?? step.captures,
       decision: patch.decision !== undefined ? patch.decision : step.decision,
+      vm: patch.vm !== undefined ? patch.vm : step.vm,
       hideOutputFromAgents:
         patch.hideOutputFromAgents ?? step.hideOutputFromAgents,
       interactive: patch.interactive ?? step.interactive,
@@ -549,6 +552,7 @@ export function createAuthoring(
     if (
       patch.captures !== undefined ||
       patch.decision !== undefined ||
+      patch.vm !== undefined ||
       patch.interactive !== undefined
     ) {
       recheckReaders(

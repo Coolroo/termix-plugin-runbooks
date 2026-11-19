@@ -129,6 +129,10 @@ export const steps = defineTable(
     // type into programs that read one, such as sudo (1.4.6). Null on
     // older steps: false.
     interactive: boolean(),
+    // JSON { host, name, action, force, waitFor, waitSeconds, value }: a VM
+    // step (1.4.7), whose button asks HAW VM Manager to act on one VM as
+    // the person who presses it. Null: not such a step.
+    vm: text(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),

@@ -178,6 +178,9 @@ export function makeStep(overrides: Partial<Step> & { id: number }): Step {
     decision: null,
     choice: null,
     decisionRan: [],
+    vm: null,
+    vmHostName: null,
+    vmProblem: null,
     hideOutputFromAgents: false,
     status: "pending",
     skipReason: null,
@@ -318,6 +321,8 @@ export function fakeApi(options: {
   detail: Runbook | (() => Runbook);
   colors?: unknown;
   post?: (url: string, body?: unknown) => Promise<unknown>;
+  /** Answers other GETs, such as a VM step's /steps/:id/vm (1.4.7). */
+  get?: (url: string) => unknown;
 }) {
   const detail =
     typeof options.detail === "function"
@@ -326,11 +331,12 @@ export function fakeApi(options: {
   return {
     get: vi.fn(async (url: string): Reply => ({
       data:
-        url === "/runbooks"
+        options.get?.(url) ??
+        (url === "/runbooks"
           ? (options.list ?? [summaryOf(detail())])
           : url === "/colors"
             ? (options.colors ?? {})
-            : detail(),
+            : detail()),
     })),
     post: vi.fn(
       (options.post as (url: string, body?: unknown) => Reply) ??

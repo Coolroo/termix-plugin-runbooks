@@ -20,24 +20,32 @@ export type AgentHost = TokenHost;
 
 export type Access = ReturnType<typeof createAccess>;
 
-export function createAccess(store: Store) {
-  const owner = (caller: AgentCaller) => caller.token.createdBy;
+/**
+ * HAW's VM hosts as the person who made a token sees them (1.4.7, H3), or
+ * null when HAW cannot say (not there, or it does not let Runbooks act):
+ * then a VM step's card says why it cannot run.
+ */
+export type VmHostIds = (caller: AgentCaller) => Promise<Set<number> | null>;
 
-  /**
-   * The hosts this token may name in steps: the list a person chose when they
-   * made or last edited the token, without the hosts found not to take SSH.
-   * Nothing secret is in it.
-   */
-  async function listHosts(caller: AgentCaller): Promise<AgentHost[]> {
-    return caller.token.hosts
-      .filter((host) => host.ssh !== false)
-      .map(({ id, name, address, folder }) => ({
-        id,
-        name,
-        address,
-        folder,
-      }));
-  }
+/**
+ * The hosts this token may name in steps: the list a person chose when they
+ * made or last edited the token, without the hosts found not to take SSH.
+ * Nothing secret is in it.
+ */
+export async function tokenHosts(caller: AgentCaller): Promise<AgentHost[]> {
+  return caller.token.hosts
+    .filter((host) => host.ssh !== false)
+    .map(({ id, name, address, folder }) => ({
+      id,
+      name,
+      address,
+      folder,
+    }));
+}
+
+export function createAccess(store: Store, vmHostIds?: VmHostIds) {
+  const owner = (caller: AgentCaller) => caller.token.createdBy;
+  const listHosts = tokenHosts;
 
   async function hostNamer(caller: AgentCaller) {
     const names = new Map<number, string>();
@@ -49,13 +57,25 @@ export function createAccess(store: Store) {
 
   async function checkHosts(
     caller: AgentCaller,
-    stepList: Array<{ hostId?: number | null }>,
+    stepList: Array<{
+      hostId?: number | null;
+      vm?: { host: number } | null;
+    }>,
   ): Promise<void> {
+    // A VM step's host (1.4.7) is a host the token may name, too.
+    const vmHosts = [
+      ...new Set(
+        stepList
+          .map((step) => step.vm?.host)
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    ];
     const wanted = [
       ...new Set(
         stepList
           .map((step) => step.hostId)
-          .filter((id): id is number => typeof id === "number"),
+          .filter((id): id is number => typeof id === "number")
+          .concat(vmHosts),
       ),
     ];
     if (wanted.length === 0) return;
@@ -76,6 +96,15 @@ export function createAccess(store: Store) {
           `host ${hostId} is not a host this token may use; call list_hosts`,
         );
       }
+    }
+    if (vmHosts.length === 0 || !vmHostIds) return;
+    const managed = await vmHostIds(caller);
+    if (!managed) return;
+    const outside = vmHosts.find((hostId) => !managed.has(hostId));
+    if (outside !== undefined) {
+      throw new InputError(
+        `host ${outside} is not a VM host in HAW: vm.host must be one HAW manages; call list_vms`,
+      );
     }
   }
 

@@ -80,6 +80,17 @@ Runbooks keeps no secret of its own. Secrets go through the OpenBao Secrets plug
 - **Made and asked secrets (1.4.2).** A Make a secret step's value is made on the server only when a signed-in person clicks Make it (never for a Termix API key or an agent token), with `crypto.randomInt` for each character or word, so no character is likelier than another. An Ask for a secret step's value comes from the person's browser once, in that request; it is trimmed and checked against the step's pattern in a separate context with a time limit, and a refusal never repeats the value. Either value goes straight to its store through OpenBao Secrets: Runbooks' own area, the person's or the shared library (create only: a secret that is there is never replaced), or an app path through `createAppField` (create only, never read back, only for paths an OpenBao Secrets admin allows and for people with Create app secrets). The answer, the run row, events, notifications and the audit line ("made secret db_password (32 letters and digits) in the runbook's secrets") carry the name, the format and the store, never the value. Every later run of the runbook reads the made and asked values back as the person who runs it (library and runbook stores only) and hides them in its output like a secret it reads; a person without Use secrets gets no such redaction, and the reads add OpenBao Secrets audit lines.
 - **By hand.** Without OpenBao Secrets, or while it is not connected, a secret step shows where to keep the value by hand. Runbooks then has no value at all: the person marks the step done, and a later step that reads the secret does not run.
 
+## VM steps
+
+A VM step (1.4.7) lets a person do one action on one VM through HAW VM Manager's service, `haw.vms`, which Runbooks declares as an optional requirement. Without HAW, or with a HAW older than 1.0.3, VM steps say why they cannot run and nothing else changes.
+
+- **What it lets a person do.** Start, shut down, restart or read one VM that an agent named, or open its console in Remote Desktop: no more than HAW's own tab lets that person do. HAW checks the person's HAW role (viewer to read, operator or owner for anything else), runs its own fixed `vmctl` command over the host's SSH login, and the host's own limits (name pattern, protect list, ceilings) refuse what they refuse. Runbooks sends HAW a VM name and an action, never a command.
+- **Agents never act.** A VM step is always a person's (`owner: "agent"` is refused), the button is a person route (refused for agents and Termix API keys), and the agent API has no route that acts. The agent's one VM route, `GET /vms`, reads as the person who made the token, marked as an agent's call, and HAW answers only its `hosts` and `list` verbs for it.
+- **Force asks on its own.** `force` (turn off, hard reset) is shown in red, and the person confirms it after the usual confirm with a second question; a yes to a repeat, a wait or the order is not a yes to force.
+- **The usual questions.** The revision, the order, the wait timer, the `when` rule and the repeat guard (the same action on the same VM in the last 24 hours) apply as for a Run.
+- **Who HAW thinks it is.** HAW hands Runbooks a key through a receiver only Runbooks can register (`runbooks.hawVmsKey`), as OpenBao Secrets does; Runbooks keeps it in memory, takes one only while its own request for it runs, and asks again once when HAW refuses it (HAW makes new keys each time it starts). Every call carries the acting person, and HAW refuses a call that names anyone else. An admin must add `runbooks` to HAW's **Plugins that may act for a person**, and can take it off again at any time.
+- **What is kept.** The run keeps the action, the VM's details as HAW answered them and HAW's refusals. HAW keeps each action and console in its record with "via runbooks: runbook N step M"; the reads a waiting step makes every 2 seconds are not in HAW's record, but core's audit log has every call.
+
 ## Agent notifications
 
 Off until an admin turns them on (see [Agent notifications](notifications.md)).
@@ -96,19 +107,20 @@ Text from agents renders as Markdown without raw HTML and without images. Links 
 
 ## Audit
 
-Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each agent step an agent ended, each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
+Runbooks writes an audit line for each run, each stop, each start before a wait ended, each send to a terminal, each completion, each step marked done or failed by hand, each agent step an agent ended, each VM step's action and console (1.4.7), each skip, each deletion of a runbook's secrets, and each token made, changed or revoked. Secrets are named, never shown. Termix also records each SSH connection and each host lookup.
 
 ## Capabilities
 
-| Capability         | Why                                                                         |
-| ------------------ | --------------------------------------------------------------------------- |
-| `db:own`           | The runbooks, steps, runs and tokens tables                                 |
-| `network:serve`    | The routes under `/plugin-api/runbooks/`                                    |
-| `ui:surface`       | The Runbooks tab                                                            |
-| `hosts:read`       | Host names, the hosts offered for a token, and access checks                |
-| `ssh:connect`      | Run a step over SSH, and read whether a host takes SSH and has a stored key |
-| `credentials:use`  | Use the host's stored login for that run                                    |
-| `network:outbound` | Send agent notifications to the admin's webhook (1.4.0); nothing else       |
-| `secrets:own`      | Seal the notification signing secret with Termix's installation key (1.4.0) |
+| Capability          | Why                                                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db:own`            | The runbooks, steps, runs and tokens tables                                                                                                              |
+| `network:serve`     | The routes under `/plugin-api/runbooks/`                                                                                                                 |
+| `ui:surface`        | The Runbooks tab                                                                                                                                         |
+| `hosts:read`        | Host names, the hosts offered for a token, and access checks                                                                                             |
+| `ssh:connect`       | Run a step over SSH, and read whether a host takes SSH and has a stored key                                                                              |
+| `credentials:use`   | Use the host's stored login for that run                                                                                                                 |
+| `network:outbound`  | Send agent notifications to the admin's webhook (1.4.0); nothing else                                                                                    |
+| `secrets:own`       | Seal the notification signing secret with Termix's installation key (1.4.0)                                                                              |
+| `users:impersonate` | Read HAW's VM hosts and VMs for an agent token as the person who made it (1.4.7: `GET /vms`, and the check that a VM step names a VM host); nothing else |
 
-Runbooks also declares the service `openbao-secrets.store` (`^1.0.0`) as an optional requirement, for secrets. It needs no capability of its own.
+Runbooks also declares the services `openbao-secrets.store` (`^1.0.0`), for secrets, and `haw.vms` (`^1.0.0`), for VM steps (1.4.7), as optional requirements. They need no capability of their own.

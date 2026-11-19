@@ -9,6 +9,7 @@ import type { StoredStdin } from "../../running/stdin.js";
 import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
+import type { VmSpec } from "../../../shared/vms.js";
 import type {
   RunbookOwner,
   RunErrorParts,
@@ -108,6 +109,7 @@ export function toStep(row: Record<string, unknown>): StepRow {
     when: parseJson<StoredRule | null>(row.whenJson, null),
     decision: parseJson<DecisionSpec | null>(row.decision, null),
     interactive: Boolean(row.interactive),
+    vm: parseJson<VmSpec | null>(row.vm, null),
     suffix: (row.suffix as string | null | undefined) || null,
     amendsStepId: optNumber(row.amendsStepId),
     amendKind:
@@ -159,6 +161,7 @@ export function toToken(row: Record<string, unknown>): TokenRow {
 const JSON_COLUMNS = new Set([
   "when",
   "decision",
+  "vm",
   "generate",
   "ask",
   "captures",

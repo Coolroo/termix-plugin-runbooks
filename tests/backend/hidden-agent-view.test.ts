@@ -96,7 +96,11 @@ function receiver() {
 /** A runbook on a server that delivers webhooks to a recorder. */
 async function setup(
   steps: Array<Record<string, unknown>>,
-  options: { values?: Record<string, string>; secrets?: boolean } = {},
+  options: {
+    values?: Record<string, string>;
+    secrets?: boolean;
+    haw?: boolean;
+  } = {},
 ) {
   const hook = receiver();
   const made = await setupRunbook(steps, {
@@ -107,6 +111,7 @@ async function setup(
       settings: { notifyEnabled: true, notifyUrl: URL_ },
       fetch: hook.fetch,
       secrets: options.secrets,
+      haw: options.haw,
     },
   });
   const secret = await made.s.person("POST", "/admin/notify/secret");
@@ -762,6 +767,65 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
         return agentSees(x);
       },
       S17,
+    );
+    expect(found).toEqual([]);
+  });
+});
+
+describe("1.4.7: a VM step hidden from agents", () => {
+  it("G12 its details, address, id and values, and a later step that uses them", async () => {
+    const found = await compare(
+      "G12 hidden VM step",
+      async (secret) => {
+        const x = await setup(
+          [
+            {
+              title: "Start the VM",
+              vm: {
+                host: 1,
+                name: "build-1",
+                action: "start",
+                waitFor: null,
+                value: "build",
+              },
+              hideOutputFromAgents: true,
+            },
+            { title: "Use it", hostId: 1, command: "ssh {{build.ip}} true" },
+            {
+              title: "Agent",
+              owner: "agent",
+              when: { step: 1, status: "done" },
+            },
+          ],
+          { haw: true },
+        );
+        x.s.haw!.seed(1, {
+          name: "build-1",
+          id: `vm-${secret}`,
+          addresses: [secret],
+        });
+        x.s.setExec(async (_h, command) => execResult(`${command}\n`));
+        const shown = await view(x.s, x.runbook.id);
+        const pressed = await x.s.person(
+          "POST",
+          `/steps/${x.runbook.steps[0].id}/vm`,
+          { revision: shown.steps[0].revision },
+        );
+        expect(pressed.status, JSON.stringify(pressed.body)).toBe(200);
+        const run = await waitForRun(x.s, x.runbook.id, pressed.body.run.id);
+        expect(run.status, run.error).toBe("done");
+        expect(run.stdout).toContain(secret);
+        const two = await runStep(x.s, x.runbook.id, x.runbook.steps[1].id);
+        expect(two.body.stdout).toBe(`ssh ${secret} true\n`);
+        await x.s.agent(
+          "POST",
+          `/steps/${x.runbook.steps[2].id}/complete`,
+          x.token,
+          { outcome: "done", output: "fine" },
+        );
+        return agentSees(x);
+      },
+      ["198.51.100.7", "203.0.113.199"],
     );
     expect(found).toEqual([]);
   });

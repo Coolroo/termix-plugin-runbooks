@@ -6,6 +6,13 @@
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
 import { OPTION_ID } from "../../../shared/decisions.js";
+import {
+  MAX_VM_VALUE,
+  MAX_WAIT_SECONDS,
+  VM_ACTIONS,
+  VM_NAME,
+  VM_STATES,
+} from "../../../shared/vms.js";
 
 const VALUE_SYNTAX =
   'Commands and checks may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook\'s value of that name: the author\'s values first, then values captured from earlier steps\' output (a later capture wins). In a check, contains and notContains text and a value check\'s equals get the value as it is, and a pattern (matches, notMatches, a value check\'s matches) gets it as literal text, escaped, so {"type":"contains","text":"image:{{ver}}@sha256:"} works. The person sees the resolved command before running it; a step whose placeholders, in its command or its checks, have no value cannot run.';
@@ -291,6 +298,50 @@ const STEP_SCHEMA = {
       type: ["object", "null"],
       description: `${WHEN_HELP}`,
     },
+    vm: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["host", "name", "action"],
+      description:
+        "A VM step (1.4.7): the person presses one button (Start VM, Shut down VM, Restart VM, Show VM or Open console) and HAW VM Manager does the action on one VM, as that person, with HAW's roles and the host's own limits. Find hosts and VM names with list_vms. A VM step has no hostId, command, captures, stdin, timeoutMs or interactive, and cannot be an agent step. Its output is the VM's details as JSON and one summary line (\"build-1 is running, 192.0.2.10\"): checks (contains, notContains, matches, notMatches) and when output rules read it. With value, the step sets {{<value>.state}}, {{<value>.ip}} (the first IPv4 address, else the first; only when the VM has one), {{<value>.addresses}} (comma-separated) and {{<value>.id}} for later steps. The usual wait timer, order, when rule and repeat guard apply. Agents never act on VMs: a person presses the button.",
+      properties: {
+        host: {
+          type: "integer",
+          description:
+            "A VM host from list_vms (a Termix host id this token may use).",
+        },
+        name: {
+          type: "string",
+          pattern: VM_NAME.source,
+          description: "The VM's name, as list_vms shows it.",
+        },
+        action: { type: "string", enum: [...VM_ACTIONS] },
+        force: {
+          type: "boolean",
+          description:
+            "stop or restart only: turn off or hard reset instead of asking the guest. The card shows it in red and asks the person on its own; use it only when a shutdown cannot work.",
+        },
+        waitFor: {
+          type: ["string", "null"],
+          enum: [...VM_STATES, null],
+          description:
+            "Wait until the VM reaches this state, reading it every 2 seconds; the step fails at the time limit. Default: running for start and restart, off for stop, none for show. null: no wait. Not for console.",
+        },
+        waitSeconds: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_WAIT_SECONDS,
+          description: "How long to wait for waitFor. Default 300.",
+        },
+        value: {
+          type: ["string", "null"],
+          pattern: NAME.source,
+          maxLength: MAX_VM_VALUE,
+          description:
+            "Prefix of the values the step sets: build sets {{build.state}}, {{build.ip}}, {{build.addresses}}, {{build.id}}. Not for console.",
+        },
+      },
+    },
     decision: {
       type: ["object", "null"],
       additionalProperties: false,
@@ -394,6 +445,18 @@ const STEP_SCHEMA = {
 const ID = (description: string) => ({ type: "integer", description });
 
 export const TOOLS = [
+  {
+    name: "list_vms",
+    description:
+      "Read only (1.4.7): without host, the hosts of this token that HAW VM Manager manages, with the verbs each offers; with host, the VMs on that host (name, state, CPUs, memory, addresses, allowed by the host's name pattern, protected). Use it to write a VM step (vm in a step). HAW answers as the person who made this token; an agent never acts on a VM.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        host: { type: "integer", description: "A hostId from list_vms." },
+      },
+    },
+  },
   {
     name: "list_hosts",
     description:

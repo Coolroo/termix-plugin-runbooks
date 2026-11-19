@@ -198,6 +198,9 @@
         "interactive": {
           "type": "boolean"
         },
+        "vm": {
+          "type": "text"
+        },
         "revision": {
           "type": "integer",
           "notNull": true

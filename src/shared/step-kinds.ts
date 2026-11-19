@@ -45,6 +45,10 @@ export interface KindStep {
   decision?: unknown;
   /** 1.4.6: Run opens a terminal (pty) for the command. */
   interactive?: boolean;
+  /** 1.4.7: a VM step's action through HAW; null on any other step. */
+  vm?: { action?: string; name?: string } | null;
+  /** 1.4.7: the VM host's name. */
+  vmHostName?: string | null;
 }
 
 /** What a kind may know about the runbook around a step. */
@@ -111,6 +115,21 @@ export const BUILT_IN_KINDS: StepKind[] = [
     defaultColor: { light: "#b45309", dark: "#fbbf24" },
     matches: (step) => Boolean(step.decision),
     priority: 46,
+  },
+  {
+    // 1.4.7: a person presses one button and HAW acts on a VM.
+    id: "vm",
+    nameKey: "kind.name.vm",
+    icon: "Server",
+    label: (t, step) =>
+      t("kind.vm", {
+        name: step.vm?.name ?? "",
+        host: step.vmHostName ?? "",
+      }),
+    // The plugin's own indigo.
+    defaultColor: { light: "#4338ca", dark: "#a5b4fc" },
+    matches: (step) => Boolean(step.vm),
+    priority: 47,
   },
   {
     // 1.4.2: the server makes a new random value when the person clicks.

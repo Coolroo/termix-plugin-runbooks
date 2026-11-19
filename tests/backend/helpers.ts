@@ -18,6 +18,7 @@ import type {
 import type { PluginManifest } from "@termix-ssh/plugin-sdk/manifest";
 import manifestJson from "../../manifest.json";
 import { createFakeSecrets, type FakeSecretsService } from "./fake-secrets";
+import { createFakeHaw, type FakeHawService } from "./fake-haw";
 
 export const pluginDir = fileURLToPath(new URL("../..", import.meta.url));
 export const manifest = manifestJson as unknown as PluginManifest;
@@ -129,6 +130,8 @@ export interface TestServer {
   channels: FakeChannel[];
   /** The fake OpenBao Secrets service, when the server has one. */
   secrets: FakeSecretsService | null;
+  /** The fake HAW VM service (1.4.7), when the server has one. */
+  haw: FakeHawService | null;
   /** Connections opened and how many were disposed. */
   connections: { opened: number; disposed: number };
   /** As a signed-in person (default alice). */
@@ -176,6 +179,8 @@ export async function startServer(
     seed?: (db: TestDb) => void;
     /** Provide a fake OpenBao Secrets service (default: none). */
     secrets?: boolean;
+    /** Provide a fake HAW VM service, haw.vms (default: none). */
+    haw?: boolean;
     /** The plugin's admin settings before it activates. */
     settings?: Record<string, unknown>;
     /** Answers ctx.fetch (default: every fetch rejects). */
@@ -194,6 +199,7 @@ export async function startServer(
   let router: Router | null = null;
   let mockRef: MockPluginContext | null = null;
   const secrets = options.secrets ? createFakeSecrets(() => mockRef!) : null;
+  const haw = options.haw ? createFakeHaw(() => mockRef!) : null;
   const mock = createMockCtx({
     pluginId: manifest.id,
     manifest,
@@ -207,7 +213,10 @@ export async function startServer(
       sshHost(2, null),
       sshHost(3, "cc33"),
     ],
-    ...(secrets ? { services: { "openbao-secrets.store": secrets } } : {}),
+    services: {
+      ...(secrets ? { "openbao-secrets.store": secrets } : {}),
+      ...(haw ? { "haw.vms": haw } : {}),
+    },
     ...(options.settings ? { settings: options.settings } : {}),
     ...(options.fetch ? { fetch: options.fetch as never } : {}),
   });
@@ -329,6 +338,7 @@ export async function startServer(
     connections,
     channels,
     secrets,
+    haw,
     person: (method, path, body, opts = {}) =>
       call(
         method,

@@ -80,6 +80,9 @@ export function useSecretAttempt({
                   reason: conflict.reason,
                 }),
               );
+            case "force":
+              // Only a VM step asks about force (1.4.7).
+              return null;
           }
         },
         // The page may now show the steps to do it by hand.

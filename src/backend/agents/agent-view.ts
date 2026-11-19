@@ -105,6 +105,8 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         // 1.4.6: a Decision step's options and what the person chose.
         decision: step.decision,
         choice: stepChoice(step, runsByStep),
+        // 1.4.7: a VM step's action through HAW, as the agent wrote it.
+        vm: step.vm,
         waitUntil: agentWaitUntil(
           waitState(step, steps, runsByStep, notNeeded),
         ),

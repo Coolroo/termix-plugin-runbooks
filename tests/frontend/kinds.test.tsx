@@ -69,11 +69,16 @@ describe("kinds of step", () => {
     expect(kind({ title: "Finish", command: "x", hostId: 1 }, last)).toBe(
       "run",
     );
+    // 1.4.7: a VM step, also as the last step called Finish.
+    const vm = { vm: { action: "start", name: "build-1" } };
+    expect(kind(vm)).toBe("vm");
+    expect(kind({ ...vm, title: "Finish" }, last)).toBe("vm");
   });
 
   it("take the highest priority that matches, else the fallback", () => {
     expect(stepKinds().map((kind) => kind.id)).toEqual([
       "lead",
+      "vm",
       "decision",
       "make-secret",
       "ask-secret",

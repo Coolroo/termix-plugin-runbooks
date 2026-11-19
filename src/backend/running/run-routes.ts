@@ -5,7 +5,11 @@ import { InputError } from "../core/errors.js";
 import { body, wrap } from "../core/http.js";
 import { optionalText, parseOutcome } from "../core/parse.js";
 import { now } from "../runbooks/store/store.js";
-import { pathId, type PersonKit } from "../runbooks/person-kit.js";
+import {
+  pathId,
+  vmStepProblem,
+  type PersonKit,
+} from "../runbooks/person-kit.js";
 import { LIMITS } from "../runbooks/parse.js";
 import {
   agentStepProblem,
@@ -461,6 +465,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
             { code: "decision" },
           );
         }
+        if (step.vm) throw vmStepProblem();
         const outside = isOutsideStep(step);
         if (!outside && (step.hostId !== null || step.command !== null)) {
           throw new InputError(

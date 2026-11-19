@@ -127,6 +127,9 @@
     "agentDone": "Done by the agent {{user}} at {{time}}",
     "agentFailed": "Marked failed by the agent {{user}} at {{time}}",
     "decided": "Chosen by {{user}} at {{time}}",
+    "vmDone": "Done through HAW by {{user}} at {{time}}",
+    "vmOther": "Asked HAW by {{user}} at {{time}}",
+    "vmAction": "VM: {{action}}",
     "note": "Note: {{note}}",
     "startedEarly": "started {{time}} early",
     "pasteFirst": "Paste the output first: at least one line.",
@@ -188,6 +191,59 @@
     "reopenTitle": "Choose again?",
     "reopenHint": "These steps already ran on the old choice and stay as they are: {{steps}}. Steps that have not run yet follow the new choice.",
     "reopen": "Reopen and choose again"
+  },
+  "vm": {
+    "target": "VM on {{host}}",
+    "reading": "Reading the VM…",
+    "read": "Read the VM",
+    "readAgain": "Read again (read {{time}})",
+    "readFailed": "Could not read the VM.",
+    "stateNow": "State now: {{state}}",
+    "cpus": "{{count}} CPUs",
+    "memory": "{{size}} GB",
+    "does": {
+      "start": "Starts {{name}}.",
+      "stop": "Shuts down {{name}}: HAW asks the guest to shut down.",
+      "stopForce": "Turns off {{name}} without a shutdown, like pulling the plug: unsaved work in it is lost.",
+      "restart": "Restarts {{name}}: HAW asks the guest to restart.",
+      "restartForce": "Resets {{name}} without a shutdown, like the reset button: unsaved work in it is lost.",
+      "show": "Reads the details of {{name}}. It changes nothing.",
+      "console": "Opens the console of {{name}} in Remote Desktop. Mark the step done or failed when you are finished."
+    },
+    "waits": "Then it waits until the VM is {{state}}, for at most {{time}}.",
+    "sets": "Sets {{names}} for later steps.",
+    "asYou": "HAW does it as you, with your HAW role and the host's own limits, and keeps it in its record.",
+    "waiting": "Waiting until it is {{state}}:",
+    "working": "Asking HAW:",
+    "consoleOpen": "The console is open in Remote Desktop.",
+    "result": "Result: {{summary}}",
+    "noRd": "Remote Desktop has no host {{name}} here: is the Remote Desktop plugin installed, and can you see that host?",
+    "confirmTitle": "{{button}}: {{name}}?",
+    "repeatTitle": "The same action ran on this VM in the last 24 hours. Do it again?",
+    "forceTitle": {
+      "stop": "Turn off {{name}} without a shutdown?",
+      "restart": "Reset {{name}} without a shutdown?"
+    },
+    "forceHint": "The guest gets no time to save its work or close its files. Use this only when a shutdown does not work.",
+    "button": {
+      "start": "Start VM",
+      "stop": "Shut down VM",
+      "stopForce": "Turn off VM",
+      "restart": "Restart VM",
+      "restartForce": "Reset VM",
+      "show": "Show VM",
+      "console": "Open console",
+      "consoleAgain": "Open console again"
+    },
+    "state": {
+      "running": "running",
+      "off": "off",
+      "starting": "starting",
+      "stopping": "stopping",
+      "saved": "saved",
+      "paused": "paused",
+      "other": "in another state"
+    }
   },
   "notNeeded": {
     "title": "Run anyway?",
@@ -378,7 +434,8 @@
       "finish": "Finish",
       "makeSecret": "Make a secret",
       "askSecret": "Ask for a secret",
-      "decision": "Decision"
+      "decision": "Decision",
+      "vm": "VM action"
     },
     "mark": {
       "secret": "Secret",
@@ -387,7 +444,8 @@
     },
     "makeSecret": "Make a secret",
     "askSecret": "Ask for a secret",
-    "decision": "Decide"
+    "decision": "Decide",
+    "vm": "VM {{name}} on {{host}}"
   },
   "secretStep": {
     "makeWhat": "Make secret {{name}}: {{what}}",

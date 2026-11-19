@@ -30,6 +30,7 @@ import {
 } from "./gates.js";
 import { secretsPending } from "../secrets/secret-view.js";
 import { NO_SECRETS, type Secrets } from "../secrets/secrets.js";
+import { NO_HAW, type Haw } from "../vms/haw.js";
 import { resolveStep, valuesObject } from "../values/effective.js";
 import type { LiveRuns } from "../running/live.js";
 import { stepStdin } from "../running/stdin.js";
@@ -46,6 +47,15 @@ const REMOVE_RETRY_MS = 5 * 60 * 1000;
 const OUTSIDE_STEP =
   "this step runs outside Termix: copy the command, run it there, then mark it Done or Failed with the output";
 
+/** Why a VM step has no Run, Send or Mark done (1.4.7). */
+export function vmStepProblem(): InputError {
+  return new InputError(
+    "this is a VM step: press its VM button, and HAW does the action",
+    400,
+    { code: "vm" },
+  );
+}
+
 /** The id in the path; a bad one is "not found" here. */
 export const pathId = (req: Request) => idParam(req, "not found");
 
@@ -58,6 +68,7 @@ export function createPersonKit(
   secrets: Secrets,
   events: Events,
   notify: { enabled: () => Promise<boolean> },
+  haw: Haw,
 ) {
   const actor = () => ctx.currentActor() as string;
 
@@ -73,6 +84,8 @@ export function createPersonKit(
     // Secret steps (1.4.2) need the service connected, not only there.
     const secretSteps = bundle.steps.some((step) => step.generate || step.ask);
     const readiness = secretSteps ? await secrets.readiness() : null;
+    // VM steps (1.4.7): whether HAW is there; the card asks it the rest.
+    const vmSteps = bundle.steps.some((step) => step.vm);
     return personView(bundle, await hostNamer(), {
       secretsAvailable: secrets.available(),
       noSecrets: NO_SECRETS,
@@ -86,6 +99,9 @@ export function createPersonKit(
           }
         : {}),
       userId: actor(),
+      ...(vmSteps
+        ? { vmsAvailable: await haw.available(), noVms: NO_HAW }
+        : {}),
     });
   }
 
@@ -212,6 +228,7 @@ export function createPersonKit(
     if (isOutsideStep(step)) {
       throw new InputError(OUTSIDE_STEP, 409, { code: "outside" });
     }
+    if (step.vm) throw vmStepProblem();
     if (step.hostId === null || step.command === null) {
       throw new InputError("this step has no command to run", 400);
     }
@@ -401,6 +418,7 @@ export function createPersonKit(
     secrets,
     events,
     notify,
+    haw,
     actor,
     use,
     act,

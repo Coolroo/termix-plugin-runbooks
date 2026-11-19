@@ -22,6 +22,7 @@ import {
 } from "../running/stdin.js";
 import { waitState } from "../running/wait.js";
 import { showAsk, showGenerate } from "../../shared/secret-steps.js";
+import { fillChecks } from "../../shared/checks.js";
 import { isAgentStep, isOutsideStep, stepLabel } from "../../shared/steps.js";
 import type {
   AmendmentView,
@@ -244,6 +245,10 @@ export interface ViewOptions {
   notifyEnabled?: boolean;
   /** The runbook's "sent" events, newest first (1.4.0). */
   sent?: EventRow[];
+  /** 1.4.7: whether HAW's VM service is there now, for VM steps. */
+  vmsAvailable?: boolean;
+  /** 1.4.7: why VM steps cannot run without it. */
+  noVms?: string;
 }
 
 /**
@@ -326,6 +331,8 @@ export function personView(
         isAgentStep(step) || isOutsideStep(step)
           ? agentCommand(step, values)
           : resolveStep(step, values, source);
+      // A VM step (1.4.7) has no command; its checks take values.
+      const vmChecks = step.vm ? fillChecks(step.checks, values) : null;
       return {
         ...step,
         ...amendmentView(step, steps),
@@ -347,8 +354,12 @@ export function personView(
         hostName: step.hostId === null ? null : hostName(step.hostId),
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
-        missing: resolved.missing,
-        resolvedChecks: resolved.checks,
+        missing: vmChecks?.missing ?? resolved.missing,
+        resolvedChecks: vmChecks?.checks ?? resolved.checks,
+        // 1.4.7: a VM step's host, and why it cannot run without asking HAW.
+        vmHostName: step.vm ? hostName(step.vm.host) : null,
+        vmProblem:
+          step.vm && !options.vmsAvailable ? (options.noVms ?? "no HAW") : null,
         // 1.4.3: values in the step's text, as in its command.
         ...resolveText(step, values),
         wait: waitState(step, steps, runsByStep, notNeeded),

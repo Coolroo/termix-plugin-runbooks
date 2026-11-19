@@ -13,6 +13,7 @@ import type { Store } from "./store/store.js";
 import type { LiveRuns } from "../running/live.js";
 import type { Secrets } from "../secrets/secrets.js";
 import type { Events } from "../agents/events.js";
+import type { Haw } from "../vms/haw.js";
 import { createPersonKit } from "./person-kit.js";
 import {
   registerRunbookList,
@@ -23,6 +24,7 @@ import { registerRunRoutes } from "../running/run-routes.js";
 import { registerSecretRoutes } from "../secrets/secret-routes.js";
 import { registerStepRoutes } from "./step-routes.js";
 import { registerDecisionRoutes } from "../decisions/decision-routes.js";
+import { registerVmRoutes } from "../vms/vm-routes.js";
 import { registerSendRoutes } from "../agents/send-route.js";
 import { registerTokenRoutes } from "../agents/token-routes.js";
 
@@ -34,9 +36,10 @@ export function registerPersonRoutes(
   secrets: Secrets,
   events: Events,
   notify: { enabled: () => Promise<boolean> },
+  haw: Haw,
 ): void {
   // One kit for every route: one inFlight set, one removeRetryAt map.
-  const kit = createPersonKit(ctx, store, live, secrets, events, notify);
+  const kit = createPersonKit(ctx, store, live, secrets, events, notify, haw);
   // Registered in the order they always were.
   registerRunbookList(router, kit);
   registerColorsRoute(router, kit);
@@ -45,6 +48,7 @@ export function registerPersonRoutes(
   registerSecretRoutes(router, kit);
   registerStepRoutes(router, kit);
   registerDecisionRoutes(router, kit);
+  registerVmRoutes(router, kit, haw);
   registerSendRoutes(router, kit);
   registerTokenRoutes(router, kit);
 }

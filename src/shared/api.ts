@@ -11,6 +11,7 @@
 import type { Check, CheckResult } from "./checks.js";
 import type { StepCondition, WhenRule } from "./conditions.js";
 import type { DecisionChoice, DecisionSpec } from "./decisions.js";
+import type { VmSpec } from "./vms.js";
 import type { AskField, ByHand, GenerateField } from "./secret-steps.js";
 
 export type {
@@ -34,7 +35,14 @@ export type RunIn = "either" | "terminal" | "run";
 /** How an amendment amends its step (1.4.0). */
 export type AmendKind = "replace" | "substep";
 export type RunMode =
-  "exec" | "terminal" | "manual" | "agent" | "outside" | "secret" | "decision";
+  | "exec"
+  | "terminal"
+  | "manual"
+  | "agent"
+  | "outside"
+  | "secret"
+  | "decision"
+  | "vm";
 export type RunStatus = "running" | "awaiting-output" | "done" | "failed";
 
 /** The agent and task a runbook belongs to (1.4.0), as the agent set it. */
@@ -356,6 +364,15 @@ export interface Step extends AmendmentView {
    * (D8: Reopen names them).
    */
   decisionRan: StepName[];
+  /** 1.4.7: a VM step's action through HAW; null on any other step. */
+  vm: VmSpec | null;
+  /** 1.4.7: the VM host's name in Termix; null on any other step. */
+  vmHostName: string | null;
+  /**
+   * 1.4.7: why a VM step cannot run now, known without asking HAW (HAW is
+   * not there); null when it may. The card asks HAW for the rest.
+   */
+  vmProblem: string | null;
   /** Each time a person sent it to the agent, newest first (1.4.0). */
   sent: SentToAgent[];
   revision: number;
@@ -457,7 +474,25 @@ export type ConflictBody = { error: string } & (
   | OrderConflict
   | StaleConflict
   | NotNeededConflict
+  | ForceConflict
 );
+
+/** 1.4.7: what a VM step's button answers. */
+export interface VmPressed {
+  run: Run;
+  /** The console's Remote Desktop host, for a console; else null. */
+  consoleHost: { id: number; name: string } | null;
+}
+
+/**
+ * 1.4.7: a VM step with force turns off or resets the VM without its guest;
+ * the person confirms it on its own (H5).
+ */
+export interface ForceConflict {
+  code: "force";
+  action: "stop" | "restart";
+  name: string;
+}
 
 /** 1.4.6: the step's when rule says it is not needed; ask "Run anyway?". */
 export interface NotNeededConflict {

@@ -53,8 +53,10 @@ import {
   parseStepRef,
   stepLabel,
   stepRef,
+  stepValueNames,
   type StepNumber,
 } from "../../shared/steps.js";
+import type { VmSpec } from "../../shared/vms.js";
 import type {
   ConditionState,
   StepCondition,
@@ -181,6 +183,8 @@ export interface KnownStep extends StepNumber {
   decision?: DecisionSpec | null;
   hideOutputFromAgents?: boolean;
   interactive?: boolean;
+  /** 1.4.7: a VM step sets <value>.state, .ip, .addresses and .id. */
+  vm?: VmSpec | null;
 }
 
 /** Where a rule is stored: the step with the rule and the steps there. */
@@ -329,10 +333,11 @@ function checkedRun(run: RunRow): CheckedRun {
     exitCode: run.exitCode,
     stdout: null,
     stderr: null,
-    // An agent's step keeps what the agent handed in as stdout, and a
-    // decision the chosen ids, one per line.
+    // An agent's step keeps what the agent handed in as stdout, a
+    // decision the chosen ids, one per line, and a VM step (1.4.7) the
+    // VM's details and the summary line.
     pastedOutput:
-      run.mode === "agent" || run.mode === "decision"
+      run.mode === "agent" || run.mode === "decision" || run.mode === "vm"
         ? run.stdout
         : run.pastedOutput,
   };
@@ -372,18 +377,17 @@ function hiddenNameIn(names: string[], ctx: StoreContext): string | null {
 
 /**
  * The values that steps hidden from agents capture, or that their decision
- * holds (BUG-008): no rule may read them.
+ * or VM action (1.4.7) holds (BUG-008): no rule may read them.
  */
 export function hiddenValueNames(
   steps: ReadonlyArray<
-    Pick<KnownStep, "captures" | "decision" | "hideOutputFromAgents">
+    Pick<KnownStep, "captures" | "decision" | "vm" | "hideOutputFromAgents">
   >,
 ): Set<string> {
   const names = new Set<string>();
   for (const step of steps) {
     if (!step.hideOutputFromAgents) continue;
-    for (const capture of step.captures ?? []) names.add(capture.name);
-    if (step.decision?.value) names.add(step.decision.value);
+    for (const name of stepValueNames(step)) names.add(name);
   }
   return names;
 }
