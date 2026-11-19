@@ -67,6 +67,38 @@ describe("terminal text (T-023)", () => {
       `x]${"y".repeat(600)}`,
     );
   });
+
+  // Runbook 82 step 11 (wyatt-pc, 1.4.6) kept 39 "\n", then the prompt.
+  const conpty =
+    "\u001b[?25l\u001b[2J\u001b[m\u001b[H" +
+    "\r\n".repeat(39) +
+    "\u001b[H\u001b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\u0007\u001b[?25h" +
+    "Throwaway word: \u001b[K********\r\nlength=8\r\n\u001b[K";
+
+  it("drops the empty rows that Windows ConPTY paints first (BUG-015)", () => {
+    expect(cleanTerminalText(conpty)).toBe(
+      "Throwaway word: ********\nlength=8\n",
+    );
+  });
+
+  it("gives the same text streamed in any pieces as whole (BUG-015)", () => {
+    const whole = cleanTerminalText(conpty);
+    for (const size of [1, 2, 3, 7, 50]) {
+      const cleaner = createTerminalCleaner();
+      let out = "";
+      for (let at = 0; at < conpty.length; at += size) {
+        out += cleaner.push(conpty.slice(at, at + size));
+      }
+      expect(out + cleaner.end()).toBe(whole);
+    }
+  });
+
+  it("keeps the indent of the first text and the empty lines after it", () => {
+    expect(cleanTerminalText("\r\n \t\r\n  first\r\n\r\nlast")).toBe(
+      "  first\n\nlast",
+    );
+    expect(cleanTerminalText("\r\n  \r\n")).toBe("");
+  });
 });
 
 describe("Redactor.add (T-023)", () => {

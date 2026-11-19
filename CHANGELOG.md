@@ -12,6 +12,10 @@
 - Agents: `vm` on create, add, change and amend, through REST and MCP, and in `get_runbook`. A VM step has no `hostId`, `command`, `captures`, `secretCaptures`, `stdin`, `timeoutMs` or `interactive` and cannot be an agent step (400); `force` is for stop and restart only; `host` must be one of the token's hosts and, when HAW can say, one HAW manages. `GET /vms` and the MCP tool `list_vms` read, as the token's maker and marked for an agent, the token's VM hosts and the VMs on one; agents never act on a VM. `hideOutputFromAgents` works on a VM step, and the built agent view test has a VM case. The agent API doc has a section "VM steps"; docs/security.md says what a VM step lets a person do.
 - New column `steps.vm` (migration 0019), for SQLite, PostgreSQL and MySQL. The manifest asks for `users:impersonate` (to read HAW for an agent token as its maker) and declares `haw.vms` (`^1.0.0`) as an optional requirement.
 
+### Fixed
+
+- **Interactive steps on Windows hosts** (BUG-015). Windows (ConPTY) paints every row of the terminal empty before the first text, so an interactive run's output started with 39 empty lines; the output now drops empty lines before the first text, in the live output and in the stored output alike. The agent API doc's "Typed input" says that under a terminal a Windows host may report exit code 0 (wyatt-pc did for `exit 7`), so such a step checks its output instead of its exit code, and that **End input** (Ctrl-D) may not end the input there. How Runbooks reads the exit code does not change: Linux hosts give real exit codes under a terminal.
+
 ## 1.4.6
 
 ### Added

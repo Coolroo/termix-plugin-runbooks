@@ -9,6 +9,12 @@
  * them. The streaming form holds back a code that is not complete yet and a
  * CR at the end of a piece until more arrives or the stream ends. The
  * whole-text form runs the same steps.
+ *
+ * Windows (ConPTY) starts by clearing the screen and painting every row
+ * empty, CR LF after CR LF, before it moves the cursor home and writes the
+ * first text (BUG-015: 39 empty lines on a 40-row pty). Screen and cursor
+ * codes are dropped like the others, never made line breaks, and empty
+ * lines before the first text are dropped too.
  */
 
 const ESC = "\u001b";
@@ -69,6 +75,27 @@ function isControl(code: number): boolean {
 
 export function createTerminalCleaner(): TerminalCleaner {
   let pending = "";
+  /** Whether any text other than spaces and line ends has come yet. */
+  let started = false;
+  /** Spaces and tabs of the line before the first text; may be its indent. */
+  let lead = "";
+
+  /** Adds plain text to `out`, dropping empty lines before the first text. */
+  function emit(out: string, text: string): string {
+    if (started) return out + text;
+    if (text === "\n") {
+      lead = "";
+      return out;
+    }
+    if (text === " " || text === "\t") {
+      lead += text;
+      return out;
+    }
+    started = true;
+    const indent = lead;
+    lead = "";
+    return out + indent + text;
+  }
 
   function drain(final: boolean): string {
     let out = "";
@@ -88,11 +115,11 @@ export function createTerminalCleaner(): TerminalCleaner {
       }
       if (char === "\r") {
         if (index + 1 >= pending.length && !final) break;
-        out += "\n";
+        out = emit(out, "\n");
         index += pending[index + 1] === "\n" ? 2 : 1;
         continue;
       }
-      if (!isControl(pending.charCodeAt(index))) out += char;
+      if (!isControl(pending.charCodeAt(index))) out = emit(out, char);
       index++;
     }
     pending = pending.slice(index);

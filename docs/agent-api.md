@@ -532,7 +532,11 @@ Some programs read a terminal, not standard input, and stop with "a terminal is 
 - Only a step with `hostId` and `command` may set it (400 otherwise).
 - A program with echo on (a shell, `read -r`) prints what the person types, and that is part of the output. A program that asks for a password turns echo off. Text sent hidden, 4 characters or longer, is replaced with `[secret:typed]` in the output and in what the checks read.
 - The time the command waits for input counts toward `timeoutMs`. Give a step that waits for a person enough time.
-- **Send** ends the line as a terminal's Enter does: CR on an interactive step (Windows OpenSSH with PowerShell's `Read-Host` may not take LF as Enter; Linux reads CR as LF), LF on any other Run. **End input** sends Ctrl-D on an interactive step (twice in mid-line, the first hands over the line as typed). Ctrl-D is the Linux and Unix end of input: on a Windows host it may not end the input, so do not write a Windows step that waits for it; end such a command another way (a blank line, or a word it reads as the end).
+- **Send** ends the line as a terminal's Enter does: CR on an interactive step (Windows OpenSSH with PowerShell's `Read-Host` may not take LF as Enter; Linux reads CR as LF), LF on any other Run. **End input** sends Ctrl-D on an interactive step (twice in mid-line, the first hands over the line as typed).
+- **An interactive step on a Windows host** (OpenSSH under a terminal) differs from Linux in two ways:
+  - The exit code may not come through: wyatt-pc reported 0 for PowerShell's `exit 7` (BUG-015; without a terminal its exit codes are real). Do not give such a step an `exitCode` check; have the command print its result and check that text instead: for example, end it by printing `exit=0` when it worked (`exit=7` when not) and check `{ "type": "contains", "text": "exit=0" }`.
+  - Ctrl-D (**End input**) is the Linux and Unix end of input and may not end the input on Windows. Do not write a Windows step that waits for it; end such a command another way (a blank line, or a word it reads as the end).
+  - Windows starts a terminal by painting every row empty. Those empty lines before the first text are taken out of the output (1.4.7).
 - A pager waits for a key with a terminal: write `--no-pager` (`systemctl`, `journalctl`, `git`) in an interactive step's command.
 - What the person types is never stored or shown to agents. A run has `inputCount`, the number of times the person typed or ended the input. Agents cannot type into a run.
 
