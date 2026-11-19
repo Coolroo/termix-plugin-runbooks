@@ -11,6 +11,12 @@
  * step that reads hidden data on standard input counts as hidden, and text
  * an agent wrote, or a person's choice, is never masked: a mask there would
  * show whether that text equals a hidden value.
+ *
+ * BUG-016: a hidden value from a small fixed set (a VM's state, a
+ * decision's option id) is never replaced in other text, since whether
+ * "running" is replaced tells which one it is. A step whose command,
+ * checks or standard input reads such a value counts as hidden instead,
+ * and so do the values it sets.
  */
 
 import crypto from "node:crypto";
@@ -18,7 +24,8 @@ import type { RunRow, StepRow } from "../runbooks/store/types.js";
 import type { EffectiveValue, RunMode } from "../../shared/api.js";
 import { escapePattern } from "../../shared/checks.js";
 import { stepCaptures } from "../values/effective.js";
-import { stepValueNames } from "../../shared/steps.js";
+import { placeholders } from "../values/values.js";
+import { isAgentStep, stepValueNames } from "../../shared/steps.js";
 
 export const HIDDEN = "[hidden by owner]";
 
@@ -40,7 +47,15 @@ const CAPTURING: ReadonlySet<RunMode> = new Set([
 /** The fields of a step the mask reads. */
 type MaskStep = Pick<
   StepRow,
-  "id" | "hideOutputFromAgents" | "stdin" | "captures" | "decision" | "vm"
+  | "id"
+  | "owner"
+  | "hideOutputFromAgents"
+  | "stdin"
+  | "command"
+  | "checks"
+  | "captures"
+  | "decision"
+  | "vm"
 >;
 
 /** The fields of a run that hold output or values. */
@@ -79,32 +94,69 @@ export interface AgentMask {
   ) => EffectiveValue[];
 }
 
+/** Which steps are hidden from agents, and which of their values are kept. */
+interface Hiding {
+  steps: Set<number>;
+  /** By hidden step: the values it sets that are never replaced in text. */
+  unmasked: Map<number, ReadonlySet<string>>;
+}
+
 /**
  * The steps hidden from agents (BUG-011): those that hide their output, and
  * those whose standard input is a hidden step's output or a value that a
- * hidden step captures, worked out again until nothing changes.
+ * hidden step captures. Also (BUG-016) those whose command, checks or
+ * standard input reads a hidden value from a small fixed set, or whose
+ * standard input is the output of such a step or of a hidden VM or
+ * Decision step: every value they set is kept from text masks too, as it
+ * may be the fixed value again. Worked out again until nothing changes.
  */
-export function hiddenStepIds(steps: ReadonlyArray<MaskStep>): Set<number> {
+function hiding(steps: ReadonlyArray<MaskStep>): Hiding {
+  const byId = new Map(steps.map((step) => [step.id, step]));
   const hidden = new Set<number>();
+  /** Steps that read a fixed-set value: all they set counts as one. */
+  const fixedReaders = new Set<number>();
   const names = new Set<string>();
-  let changed = true;
-  while (changed) {
-    changed = false;
+  const fixed = new Set<string>();
+  /** A hidden step whose output holds a fixed-set value (a VM's state). */
+  const fixedOutput = (id: number) => {
+    const source = byId.get(id);
+    return (
+      hidden.has(id) &&
+      (fixedReaders.has(id) || Boolean(source?.vm || source?.decision))
+    );
+  };
+  let size = -1;
+  while (size !== hidden.size + fixedReaders.size + names.size + fixed.size) {
+    size = hidden.size + fixedReaders.size + names.size + fixed.size;
     for (const step of steps) {
-      if (hidden.has(step.id)) continue;
       const stdin = step.stdin;
       if (
+        readNames(step).some((name) => fixed.has(name)) ||
+        (stdin?.from === "step" && fixedOutput(stdin.stepId))
+      ) {
+        fixedReaders.add(step.id);
+      }
+      if (
         step.hideOutputFromAgents ||
+        fixedReaders.has(step.id) ||
         (stdin?.from === "step" && hidden.has(stdin.stepId)) ||
         (stdin?.from === "value" && names.has(stdin.name))
       ) {
         hidden.add(step.id);
         for (const name of valueNames(step)) names.add(name);
-        changed = true;
+        for (const name of unmaskedNames(step, fixedReaders)) fixed.add(name);
       }
     }
   }
-  return hidden;
+  return {
+    steps: hidden,
+    unmasked: new Map(
+      [...hidden].map((id) => {
+        const step = steps.find((x) => x.id === id)!;
+        return [id, new Set(unmaskedNames(step, fixedReaders))];
+      }),
+    ),
+  };
 }
 
 /** The values a step sets: its captures, its decision's or VM's values. */
@@ -112,6 +164,43 @@ function valueNames(
   step: Pick<StepRow, "captures" | "decision" | "vm">,
 ): string[] {
   return stepValueNames(step);
+}
+
+/**
+ * The values a step sets from a small fixed set that agents can read in
+ * the runbook (BUG-016): a VM's state and a decision's option ids.
+ */
+function fixedValueNames(step: Pick<StepRow, "decision" | "vm">): string[] {
+  return [
+    ...(step.decision?.value ? [step.decision.value] : []),
+    ...(step.vm?.value ? [`${step.vm.value}.state`] : []),
+  ];
+}
+
+/** A hidden step's values that no text mask replaces. */
+function unmaskedNames(
+  step: MaskStep,
+  fixedReaders: ReadonlySet<number>,
+): string[] {
+  return fixedReaders.has(step.id) ? valueNames(step) : fixedValueNames(step);
+}
+
+/**
+ * The values a step's command, checks and standard input read. An agent
+ * step's checks read the values agents see, and Termix runs nothing of it.
+ */
+function readNames(
+  step: Pick<StepRow, "owner" | "command" | "checks" | "stdin">,
+): string[] {
+  if (isAgentStep(step)) return [];
+  return [
+    ...placeholders(step.command),
+    ...placeholders(JSON.stringify(step.checks)),
+    ...step.checks.flatMap((check) =>
+      check.type === "value" ? [check.name] : [],
+    ),
+    ...(step.stdin?.from === "value" ? [step.stdin.name] : []),
+  ];
 }
 
 /** A hidden step's run ended with captures: they show, hidden. */
@@ -127,12 +216,15 @@ export function agentMask(
   steps: ReadonlyArray<MaskStep>,
   runs: Iterable<Pick<RunRow, "stepId" | "captured">>,
 ): AgentMask {
-  const hiddenSteps = hiddenStepIds(steps);
+  const { steps: hiddenSteps, unmasked } = hiding(steps);
   const declared = new Map(steps.map((step) => [step.id, valueNames(step)]));
   const found = new Set<string>();
   for (const run of runs) {
     if (!hiddenSteps.has(run.stepId)) continue;
-    for (const value of Object.values(run.captured ?? {})) {
+    const kept = unmasked.get(run.stepId);
+    for (const [name, value] of Object.entries(run.captured ?? {})) {
+      // A value from a fixed set: the steps that read it are hidden.
+      if (kept?.has(name)) continue;
       // Very short values would mask unrelated text and say little anyway.
       if (value.length < MIN_MASKED) continue;
       found.add(value);

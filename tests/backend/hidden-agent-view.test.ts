@@ -18,6 +18,7 @@ import {
   type FakeChannel,
   type TestServer,
 } from "./helpers";
+import { HIDDEN } from "../../src/backend/agents/agent-mask";
 
 useTestServer();
 
@@ -826,6 +827,91 @@ describe("1.4.7: a VM step hidden from agents", () => {
         return agentSees(x);
       },
       ["198.51.100.7", "203.0.113.199"],
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("G12b its state, and the steps that read it, in visible words (BUG-016)", async () => {
+    const words = "the VM is running, paused or off";
+    const found = await compare(
+      "G12b hidden VM state",
+      async (state) => {
+        const x = await setup(
+          [
+            {
+              title: "Read the VM",
+              vm: { host: 1, name: "build-1", action: "show", value: "build" },
+              hideOutputFromAgents: true,
+            },
+            { title: "Words", hostId: 1, command: "echo words" },
+            {
+              title: "Print the state",
+              hostId: 1,
+              command: "echo state={{build.state}}",
+            },
+            {
+              title: "Read it back",
+              hostId: 1,
+              command: "cat",
+              stdin: { from: "step", step: 3, stream: "stdout" },
+              captures: [{ name: "s", pattern: "state=(\\w+)" }],
+            },
+            { title: "Use it", hostId: 1, command: "echo again {{s}}" },
+            {
+              title: "Check it",
+              hostId: 1,
+              command: "echo checked",
+              checks: [{ type: "matches", pattern: "{{build.state}}|checked" }],
+            },
+            {
+              title: "Agent",
+              owner: "agent",
+              when: { step: 1, status: "done" },
+            },
+          ],
+          { haw: true },
+        );
+        x.s.haw!.seed(1, { name: "build-1", state, addresses: ["192.0.2.9"] });
+        drive(x.s, {
+          "echo words": `${words}\n`,
+          [`echo state=${state}`]: `state=${state}\n`,
+          [`echo again ${state}`]: `again ${state}\n`,
+          "echo checked": "checked\n",
+        });
+        const shown = await view(x.s, x.runbook.id);
+        const pressed = await x.s.person(
+          "POST",
+          `/steps/${x.runbook.steps[0].id}/vm`,
+          { revision: shown.steps[0].revision },
+        );
+        expect(pressed.status, JSON.stringify(pressed.body)).toBe(200);
+        const run = await waitForRun(x.s, x.runbook.id, pressed.body.run.id);
+        expect(run.status, run.error).toBe("done");
+        expect(run.captured["build.state"]).toBe(state);
+        for (const step of x.runbook.steps.slice(1, 6)) {
+          const ran = await runStep(x.s, x.runbook.id, step.id);
+          expect(ran.body.status, JSON.stringify(ran.body)).toBe("done");
+        }
+        await x.s.agent(
+          "POST",
+          `/steps/${x.runbook.steps[6].id}/complete`,
+          x.token,
+          { outcome: "done", output: "fine" },
+        );
+        const seen = await x.s.agent(
+          "GET",
+          `/runbooks/${x.runbook.id}`,
+          x.token,
+        );
+        // Visible words stay as they are: "running" is not masked.
+        expect(seen.body.steps[1].runs[0].stdout).toBe(`${words}\n`);
+        // Steps that read the state, or a value made from it, are hidden.
+        for (const index of [2, 3, 4, 5]) {
+          expect(seen.body.steps[index].runs[0].stdout).toBe(HIDDEN);
+        }
+        return agentSees(x);
+      },
+      ["running", "paused"],
     );
     expect(found).toEqual([]);
   });
