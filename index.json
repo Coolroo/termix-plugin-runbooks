@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-17T22:26:42.000Z",
+  "updatedAt": "2026-11-19T03:21:07.000Z",
   "plugins": [
     {
       "id": "haw",
@@ -28,6 +28,29 @@
       "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.0.4",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.4/haw-1.0.4.tmxplug",
+          "sha256": "fb68b58fd17aa8c1ce62c37c8c8cfcb4fb4674ced40fea08982022cbe398ced5",
+          "signature": "EH2kvLn0kN00L0dxq1H/mjHZurlbWpNw8duohvd9ae0J8GSWLZOBBPzPSqmA3PPZMpWUJPc+g9X+swj81iiyDw==",
+          "size": 82101,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.4",
+          "notes": "### Fixed\n\n- **The queue's OWNER RIGHTS entry works.** `install.ps1` set the queue folder's owner after its entries, and Windows then drops the OWNER RIGHTS entry's \"files\" flag, so the entry did nothing: the vmctl account could change the access list of a request file it made. `install.ps1` now sets the owner first, and removes a dead entry before it grants the entry again. Run `install.ps1` once on each Hyper-V host to repair the queue.\n- **`install.ps1` reports only real changes.** It reported SET for the queue access and the worker task on every run: the queue because of the dead entry, the task because Task Scheduler stores the account's \"read and run\" right as `0x1200a9`, not as the `GRGX` that `install.ps1` writes. It now compares the right as a number, so a second run ends with `CHANGED 0`.",
+          "publishedAt": "2026-11-19T03:21:07Z"
+        },
         {
           "version": "1.0.3",
           "api": "1",
