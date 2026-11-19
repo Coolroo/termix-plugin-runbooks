@@ -342,7 +342,9 @@ export function createVmRunner(kit: PersonKit, haw: Haw) {
         commandHash: options.hash,
         userId: actor(),
         startedAt: at,
-        stdout: `${JSON.stringify(answer, null, 2)}\nThe console of ${spec.name} opens in Remote Desktop on ${answer.consoleHost.name}\n`,
+        // Only the summary line: the console's address and the VM's id
+        // are HAW's details, and agents read this run (BUG-016).
+        stdout: `The console of ${spec.name} opens in Remote Desktop on ${answer.consoleHost.name}\n`,
         startedEarlySeconds: options.startedEarlySeconds,
       });
       await store.touchRunbook(step.runbookId);

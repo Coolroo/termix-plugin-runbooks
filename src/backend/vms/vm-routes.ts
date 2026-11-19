@@ -81,6 +81,8 @@ export function registerVmRoutes(
     audit,
   } = kit;
   const runner = createVmRunner(kit, haw);
+  /** Power actions being pressed now, by vmHash: until their run is written. */
+  const pressing = new Set<string>();
 
   /**
    * The host, the role and the verb, from HAW, before a person acts: the
@@ -105,7 +107,20 @@ export function registerVmRoutes(
       };
     }
     const verb = vmVerb(spec.action);
-    if (host.verbs.length > 0 && !host.verbs.includes(verb)) {
+    // HAW offers only the verbs it read from the host (BUG-016): none read
+    // yet allows nothing.
+    if (host.verbs.length === 0) {
+      return {
+        problem: new InputError(
+          `HAW has not read ${host.name}'s verbs yet: check the host in HAW's tab, then try again`,
+          409,
+          { code: "verbs-unknown" },
+        ),
+        role,
+        hostName: host.name,
+      };
+    }
+    if (!host.verbs.includes(verb)) {
       return {
         problem: new InputError(
           `${host.name} does not offer ${verb}: its vmctl lists ${host.verbs.join(", ")}`,
@@ -202,6 +217,7 @@ export function registerVmRoutes(
       const stepId = pathId(req);
       const release = claim(stepId);
       let handedOff = false;
+      let pressed: string | null = null;
       try {
         const { step, bundle } = await stepContext(stepId);
         requireActionable(step, bundle);
@@ -257,6 +273,20 @@ export function registerVmRoutes(
           );
         }
         const hash = vmHash(spec);
+        // The same action on the same VM from another step at once: that
+        // press has not written its run yet, so the repeat guard below
+        // cannot see it (BUG-016).
+        if (isVmPower(spec.action)) {
+          if (pressing.has(hash)) {
+            throw new InputError(
+              `${spec.action} ${spec.name} is being pressed on another step now`,
+              409,
+              { code: "running" },
+            );
+          }
+          pressing.add(hash);
+          pressed = hash;
+        }
         if (isVmPower(spec.action) && input.confirmRepeat !== true) {
           const sameStep = runs[0];
           const since = new Date(Date.now() - REPEAT_WINDOW_MS).toISOString();
@@ -294,6 +324,8 @@ export function registerVmRoutes(
         handedOff = true;
         return { run: await shownRun(runId), consoleHost: null };
       } finally {
+        // The run is written by now: the repeat guard sees it.
+        if (pressed) pressing.delete(pressed);
         if (!handedOff) release();
       }
     }),

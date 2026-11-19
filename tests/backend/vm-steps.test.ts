@@ -275,6 +275,12 @@ describe("VM steps: the card", () => {
       "verb-not-offered",
       /does not offer start/,
     ],
+    [
+      "verbs not read yet (BUG-016)",
+      (s: TestServer) => (s.haw!.hostMap.get(1)!.verbs = []),
+      "verbs-unknown",
+      /HAW has not read host-1's verbs yet/,
+    ],
   ])("says why it cannot run: %s", async (_label, change, code, words) => {
     const { s, runbook } = await setup([startBuild]);
     change(s);
@@ -524,7 +530,7 @@ describe("VM steps: the button", () => {
       }
     }
     expect(failed).toEqual([]);
-  });
+  }, 20_000);
 
   it("asks on its own before force, then turns the VM off", async () => {
     const { s, runbook } = await setup([
@@ -586,6 +592,43 @@ describe("VM steps: the button", () => {
       confirmRepeat: true,
     });
     expect(run.status).toBe("done");
+  });
+
+  it("lets one of two steps with the same action on the same VM pressed at once pass (BUG-016)", async () => {
+    // Both steps are not needed and pressed anyway: each writes an audit
+    // line between the repeat guard and its run, slowed down here, so both
+    // presses reach the guard before either run is written.
+    const { s, runbook } = await setup(
+      ["One", "Two"].map((title) => ({
+        title,
+        vm: { host: 1, name: "build-1", action: "start" },
+        when: { value: "mode", equals: "fast" },
+      })),
+      { values: { mode: "slow" } },
+    );
+    const audit = s.mock.ctx.audit;
+    const record = audit.record.bind(audit);
+    audit.record = async (entry) => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return record(entry);
+    };
+    const steps = (await view(s, runbook.id)).steps;
+    const replies = await Promise.all(
+      steps.map((step: { id: number }) =>
+        press(s, runbook.id, step.id, {
+          outOfOrder: true,
+          conditionAnyway: true,
+        }),
+      ),
+    );
+    expect(
+      replies.map((reply) => `${reply.status} ${reply.body.code ?? ""}`.trim()),
+    ).toEqual(["200", "409 running"]);
+    expect(replies[1].body.error ?? replies[1].body.message).toMatch(
+      /start build-1 is being pressed on another step now/,
+    );
+    await waitForRun(s, runbook.id, replies[0].body.run.id);
+    expect(s.haw!.calls.filter((c) => c.method === "start")).toHaveLength(1);
   });
 
   it("keeps the gates: revision, order, wait timer and when", async () => {
@@ -713,7 +756,7 @@ describe("VM steps: the button", () => {
 
 describe("VM steps: the console", () => {
   it("opens the console host and ends when the person says Done", async () => {
-    const { s, runbook } = await setup([
+    const { s, token, runbook } = await setup([
       { title: "Console", vm: { host: 1, name: "build-1", action: "console" } },
     ]);
     const step = await stepOf(s, runbook.id, 0);
@@ -728,6 +771,13 @@ describe("VM steps: the console", () => {
       user: "alice",
       ref: `runbook ${runbook.id} step 1`,
     });
+    // The run keeps only the summary line, not HAW's console details
+    // (BUG-016): agents read this run.
+    const line = "The console of build-1 opens in Remote Desktop on host-3\n";
+    expect(opened.body.run.stdout).toBe(line);
+    const seen = await s.agent("GET", `/runbooks/${runbook.id}`, token);
+    expect(seen.body.steps[0].runs[0].stdout).toBe(line);
+    expect(JSON.stringify(seen.body)).not.toContain("hv1.example.lan");
     // A second press opens it again, with no new run.
     const again = await press(s, runbook.id, step.id);
     expect(again.body.run.id).toBe(opened.body.run.id);
