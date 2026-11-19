@@ -27,7 +27,10 @@ import {
 } from "../../shared/vms.js";
 import { commandHash } from "../values/values.js";
 import { stepLabel } from "../../shared/steps.js";
-import { passing, type Haw } from "./haw.js";
+import { passing, restarting, type Haw } from "./haw.js";
+
+/** A wait's words while HAW is away: not "Install HAW" (BUG-016). */
+const HAW_AWAY = "HAW VM Manager did not answer; it may be restarting";
 
 /**
  * How long the waits are. Tests make them short; nothing else changes
@@ -206,9 +209,12 @@ export function createVmRunner(kit: PersonKit, haw: Haw) {
           vm = read;
           lastError = null;
         } catch (error) {
-          // The host may not answer for a moment while a VM starts.
-          if (!passing(error)) throw error;
-          const message = (error as Error).message;
+          // The host may not answer for a moment while a VM starts, and
+          // HAW may restart or update meanwhile: the action ran already,
+          // so the wait goes on to its time limit (BUG-016).
+          const away = restarting(error);
+          if (!away && !passing(error)) throw error;
+          const message = away ? HAW_AWAY : (error as Error).message;
           if (message !== lastError) say(message);
           lastError = message;
         }

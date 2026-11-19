@@ -4,7 +4,7 @@
  * shape, the card's read, every action, the wait, the refusals, the gates,
  * force, the values, the console and the agent's read-only route.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRunbook,
   auditText,
@@ -376,6 +376,57 @@ describe("VM steps: the button", () => {
       (await stepOf(s, runbook.id, 0)).id,
     );
     expect(run.status, run.error).toBe("done");
+  });
+
+  /** Presses, and once the wait has read the VM, makes HAW go away. */
+  async function pressThenHawAway(
+    s: TestServer,
+    runbookId: number,
+    goneCalls: number,
+  ) {
+    const step = await stepOf(s, runbookId, 0);
+    const reply = await press(s, runbookId, step.id);
+    expect(reply.status, JSON.stringify(reply.body)).toBe(200);
+    await vi.waitFor(
+      () => {
+        if (!s.haw!.calls.some((call) => call.method === "show")) {
+          throw new Error("no poll yet");
+        }
+      },
+      { timeout: 2000, interval: 1 },
+    );
+    s.haw!.goneCalls = goneCalls;
+    s.haw!.rotateKeys();
+    return waitForRun(s, runbookId, reply.body.run.id);
+  }
+
+  it("goes on waiting while HAW restarts after the action (BUG-016)", async () => {
+    const { s, runbook } = await setup([startBuild]);
+    s.haw!.settleAfter = 3;
+    // Gone for one poll, then back with new keys.
+    const binds = s.haw!.binds;
+    const run = await pressThenHawAway(s, runbook.id, 1);
+    expect(run.status, run.error).toBe("done");
+    expect(run.stdout.trimEnd().split("\n").at(-1)).toBe(
+      "build-1 is running, 192.0.2.10",
+    );
+    expect(s.haw!.binds).toBeGreaterThan(binds);
+    expect(s.haw!.calls.filter((c) => c.method === "start")).toHaveLength(1);
+  });
+
+  it("fails at the time limit, not at once, when HAW stays away (BUG-016)", async () => {
+    const { s, runbook } = await setup([
+      { ...startBuild, vm: { ...startBuild.vm, waitSeconds: 2 } },
+    ]);
+    s.haw!.settleAfter = 1000;
+    const started = Date.now();
+    const run = await pressThenHawAway(s, runbook.id, 1_000_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2 * vmTiming.secondMs);
+    expect(run.status).toBe("failed");
+    expect(run.error).toBe(
+      "build-1 did not reach running in 2 s; its state is starting (HAW VM Manager did not answer; it may be restarting)",
+    );
+    expect(run.error).not.toContain("Install HAW");
   });
 
   it("ends without waiting with waitFor null, and Show has no repeat guard", async () => {
