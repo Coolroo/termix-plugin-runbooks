@@ -252,11 +252,11 @@ export async function createHaw(ctx: PluginContext) {
     me: () => call((service, caller) => service.me(caller)),
 
     /** The VM hosts the person can see. For an agent token: `agent`. */
-    hosts: (options: { agent?: boolean } = {}) =>
+    hosts: (options: { agent?: boolean; ref?: string } = {}) =>
       call((service, caller) => service.hosts(caller), options),
 
     /** The VMs on a host. For an agent token: `agent` (H3). */
-    list: (host: number, options: { agent?: boolean } = {}) =>
+    list: (host: number, options: { agent?: boolean; ref?: string } = {}) =>
       call((service, caller) => service.list(caller, host), options),
 
     /** One VM's details now. A read: not in HAW's record. */
@@ -287,9 +287,5 @@ export async function createHaw(ctx: PluginContext) {
       call((service, caller) => service.consoleInfo(caller, host, name), {
         ref,
       }),
-
-    /** Runs `fn` as `userId` (the person who made an agent token). */
-    asUser: <T>(userId: string, fn: () => Promise<T>): Promise<T> =>
-      ctx.asUser(userId, fn),
   };
 }

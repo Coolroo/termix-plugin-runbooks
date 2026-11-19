@@ -14,8 +14,7 @@ import { createAccess } from "./access.js";
 import { createReads } from "./reads.js";
 import { createAuthoring } from "./authoring.js";
 import { createComplete } from "./complete.js";
-import { createAgentVms } from "./vms.js";
-import type { Haw } from "../../vms/haw.js";
+import { listVms, vmHostIds } from "./vms.js";
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
@@ -32,19 +31,18 @@ export type AgentAudit = (line: {
 export function createAgentOps(
   store: Store,
   live?: LiveRuns,
-  options: { audit?: AgentAudit; events?: Events; haw?: Haw } = {},
+  options: { audit?: AgentAudit; events?: Events } = {},
 ) {
   const events = options.events ?? createEvents(store);
-  // VM steps (1.4.7): HAW's hosts, read as the token's maker (H3).
-  const vms = createAgentVms(options.haw);
-  const access = createAccess(store, vms.vmHostIds);
+  // VM steps (1.4.7): HAW's hosts, from the copy the token keeps (H3).
+  const access = createAccess(store, vmHostIds);
   const reads = createReads(store, live, access);
   const authoring = createAuthoring(store, events, access, reads);
   const complete = createComplete(store, events, options, access, reads);
 
   return {
     listHosts: access.listHosts,
-    listVms: vms.listVms,
+    listVms,
     listRunbooks: reads.listRunbooks,
     getRunbook: reads.getRunbook,
     createRunbook: authoring.createRunbook,

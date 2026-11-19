@@ -21,9 +21,10 @@ export type AgentHost = TokenHost;
 export type Access = ReturnType<typeof createAccess>;
 
 /**
- * HAW's VM hosts as the person who made a token sees them (1.4.7, H3), or
- * null when HAW cannot say (not there, or it does not let Runbooks act):
- * then a VM step's card says why it cannot run.
+ * HAW's VM hosts in the copy a token keeps (1.4.7, H3), read as the person
+ * who saved its hosts, or null when the copy cannot say (HAW was not there,
+ * or it did not let Runbooks act): then a VM step's card says why it cannot
+ * run.
  */
 export type VmHostIds = (caller: AgentCaller) => Promise<Set<number> | null>;
 

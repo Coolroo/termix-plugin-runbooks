@@ -43,8 +43,7 @@
     "ssh:connect",
     "credentials:use",
     "network:outbound",
-    "secrets:own",
-    "users:impersonate"
+    "secrets:own"
   ],
   "requires": [
     {

@@ -648,8 +648,18 @@ describe("VM steps: the console", () => {
 });
 
 describe("VM steps: agents", () => {
-  it("lists the token's VM hosts and a host's VMs, read only, as the token's maker", async () => {
+  it("lists the token's VM hosts and a host's VMs, read only, from the copy saved with the token", async () => {
     const { s, token } = await setup([startBuild]);
+    // HAW was read when alice saved the token, as alice, for an agent.
+    const listed = s.haw!.calls.filter((c) => c.method === "list");
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      agent: true,
+      user: "alice",
+      ref: "token lead",
+      host: 1,
+    });
+    const before = s.haw!.calls.length;
     const hosts = await s.agent("GET", "/vms", token);
     expect(hosts.status, JSON.stringify(hosts.body)).toBe(200);
     expect(hosts.body.hosts).toEqual([
@@ -657,6 +667,7 @@ describe("VM steps: agents", () => {
         hostId: 1,
         name: "host-1",
         verbs: expect.arrayContaining(["start"]),
+        readAt: expect.any(String),
       }),
     ]);
     const vms = await s.agent("GET", "/vms?host=1", token);
@@ -665,8 +676,9 @@ describe("VM steps: agents", () => {
       "build-1",
       "web-1",
     ]);
-    const listed = s.haw!.calls.filter((c) => c.method === "list");
-    expect(listed.every((c) => c.agent && c.user === "alice")).toBe(true);
+    // A copy: no live state.
+    expect(vms.body.vms[0]).not.toHaveProperty("state");
+    expect(vms.body.vms[0]).not.toHaveProperty("addresses");
     expect((await s.agent("GET", "/vms?host=2", token)).status).toBe(404);
     const mcp = await s.agent("POST", "/mcp", token, {
       jsonrpc: "2.0",
@@ -675,7 +687,9 @@ describe("VM steps: agents", () => {
       params: { name: "list_vms", arguments: { host: 1 } },
     });
     expect(mcp.body.result.structuredContent.vms).toHaveLength(3);
-    // The agent made no call that acts.
+    // An agent request has no acting user: it never reaches HAW.
+    expect(s.haw!.calls.length).toBe(before);
+    // Nothing that acts was asked for an agent.
     expect(
       s.haw!.calls.filter(
         (c) => c.agent && !["hosts", "list"].includes(c.method),
@@ -683,12 +697,43 @@ describe("VM steps: agents", () => {
     ).toEqual([]);
   });
 
-  it("says why when HAW does not let Runbooks act", async () => {
+  it("has a VM made later only after a person saves the token's hosts again", async () => {
     const { s, token } = await setup([]);
+    s.haw!.seed(1, { name: "new-1" });
+    const names = async () =>
+      (await s.agent("GET", "/vms?host=1", token)).body.vms.map(
+        (vm: { name: string }) => vm.name,
+      );
+    expect(await names()).not.toContain("new-1");
+    const [made] = (await s.person("GET", "/tokens")).body;
+    const saved = await s.person("POST", `/tokens/${made.id}/hosts`, {
+      hostIds: [1, 2, 3],
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(await names()).toContain("new-1");
+  });
+
+  it("says why when HAW did not let Runbooks read, and still saves the token", async () => {
+    const s = await testServer({ haw: true });
     s.haw!.allowed.clear();
+    const token = await s.makeToken();
     const reply = await s.agent("GET", "/vms", token);
-    expect(reply.status).toBe(403);
+    expect(reply.status).toBe(409);
     expect(reply.body.error).toMatch(/Plugins that may act for a person/);
+    // The copy cannot say, so a VM step's host is checked on the card.
+    const made = await s.agent("POST", "/runbooks", token, {
+      title: "Later",
+      steps: [{ ...startBuild, vm: { ...startBuild.vm, host: 2 } }],
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+  });
+
+  it("says why when HAW is not there", async () => {
+    const s = await testServer({ haw: false });
+    const token = await s.makeToken();
+    const reply = await s.agent("GET", "/vms", token);
+    expect(reply.status).toBe(409);
+    expect(reply.body.error).toMatch(/Install HAW VM Manager/);
   });
 
   it("shows the VM run to the agent, and hides a hidden step's VM output and values", async () => {

@@ -29,6 +29,7 @@ export type {
   StepOwner,
   StepStatus,
   TokenHost,
+  TokenHostVm,
 } from "../../../shared/api.js";
 
 /** What makes a step an amendment (1.4.0). */

@@ -7,18 +7,23 @@ import type { TokenHost, TokenRow } from "../runbooks/store/types.js";
 import { pathId, type PersonKit } from "../runbooks/person-kit.js";
 import { isSshHost } from "../../shared/hosts.js";
 import { newToken } from "./tokens.js";
+import { readTokenVms } from "./ops/vms.js";
 
 const MAX_TOKEN_HOSTS = 500;
 
 export function registerTokenRoutes(router: Router, kit: PersonKit): void {
-  const { ctx, store, actor, tokensRole, sshHostFor } = kit;
+  const { ctx, store, haw, actor, tokensRole, sshHostFor } = kit;
 
   /**
    * The hosts a token may use, as chosen by the person making or editing it:
    * each one must be an SSH host they see and can connect to. Stored as a
-   * snapshot, without anything secret.
+   * snapshot, without anything secret, with HAW's view of each host read as
+   * this person (1.4.7): agents read VM hosts and names from it.
    */
-  async function chooseHosts(input: unknown): Promise<TokenHost[]> {
+  async function chooseHosts(
+    input: unknown,
+    tokenName: string,
+  ): Promise<TokenHost[]> {
     if (
       !Array.isArray(input) ||
       input.length === 0 ||
@@ -50,7 +55,7 @@ export function registerTokenRoutes(router: Router, kit: PersonKit): void {
         ssh: true,
       });
     }
-    return chosen;
+    return readTokenVms(haw, chosen, `token ${tokenName}`);
   }
 
   /**
@@ -129,7 +134,7 @@ export function registerTokenRoutes(router: Router, kit: PersonKit): void {
       if (typeof name !== "string" || !name.trim() || name.length > 100) {
         throw new InputError("name is required (at most 100 characters)");
       }
-      const hosts = await chooseHosts(body(req).hostIds);
+      const hosts = await chooseHosts(body(req).hostIds, name.trim());
       const made = newToken();
       const id = await store.createToken({
         name: name.trim(),
@@ -180,7 +185,7 @@ export function registerTokenRoutes(router: Router, kit: PersonKit): void {
       if (token.revokedAt) {
         throw new InputError("this token was revoked", 409);
       }
-      const hosts = await chooseHosts(body(req).hostIds);
+      const hosts = await chooseHosts(body(req).hostIds, token.name);
       await store.setTokenHosts(id, hosts);
       await store.persist();
       await ctx.audit.record({

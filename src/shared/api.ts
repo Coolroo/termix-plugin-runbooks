@@ -449,6 +449,40 @@ export interface TokenHost {
    * false is never offered to agents.
    */
   ssh?: boolean;
+  /**
+   * HAW's view of the host (1.4.7), read as the person who saved the
+   * token's hosts. Agents read VM hosts and VM names from this copy: an
+   * agent request has no acting user, so it cannot ask HAW itself. Absent
+   * on hosts saved before 1.4.7.
+   */
+  vm?: TokenHostVm;
+}
+
+/** A VM on a token host, as HAW listed it when the hosts were saved. */
+export interface TokenVm {
+  name: string;
+  cpus: number;
+  memoryMB: number;
+  /** Inside the host's name pattern. */
+  allowed: boolean;
+  /** On the host's protect list: never stopped from HAW. */
+  protected: boolean;
+}
+
+/** What HAW said about a token host when a person saved the hosts. */
+export interface TokenHostVm {
+  /** When Runbooks read HAW. */
+  readAt: string;
+  /** Whether HAW manages the host; null when HAW could not say. */
+  managed: boolean | null;
+  /** Why HAW could not say, or could not list the VMs. */
+  reason?: string;
+  /** The verbs `vmctl info` listed (managed hosts). */
+  verbs?: string[];
+  /** When HAW last read the host (managed hosts). */
+  lastCheckedAt?: string | null;
+  /** The VMs then, or null when HAW could not list them. No live state. */
+  vms?: TokenVm[] | null;
 }
 
 /** An agent token as GET /tokens shows it: never its hash. */

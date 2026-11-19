@@ -448,7 +448,7 @@ export const TOOLS = [
   {
     name: "list_vms",
     description:
-      "Read only (1.4.7): without host, the hosts of this token that HAW VM Manager manages, with the verbs each offers; with host, the VMs on that host (name, state, CPUs, memory, addresses, allowed by the host's name pattern, protected). Use it to write a VM step (vm in a step). HAW answers as the person who made this token; an agent never acts on a VM.",
+      "Read only (1.4.7): without host, the hosts of this token that HAW VM Manager manages, with the verbs each offers; with host, the VMs on that host (name, CPUs, memory, allowed by the host's name pattern, protected). Use it to write a VM step (vm in a step). The answer is a copy Runbooks read from HAW, as the person who saved this token's hosts, at readAt: it has no VM state, and a VM made later is in it only after a person saves the token's hosts again. An agent never acts on a VM.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

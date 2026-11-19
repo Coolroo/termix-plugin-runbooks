@@ -55,7 +55,6 @@ export async function activate(ctx: PluginContext) {
   const ops = createAgentOps(store, live, {
     audit: (line) => ctx.audit.record(line),
     events,
-    haw,
   });
 
   const router = ctx.http.router<Router>({
