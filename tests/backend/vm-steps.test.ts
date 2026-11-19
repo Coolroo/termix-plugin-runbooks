@@ -425,6 +425,56 @@ describe("VM steps: the button", () => {
     expect(s.haw!.binds).toBe(binds + 1);
   });
 
+  it("binds again on HAW's code bad-key only, not on words in a message (BUG-016)", async () => {
+    const { s, runbook } = await setup([startBuild]);
+    const step = await stepOf(s, runbook.id, 0);
+    expect((await s.person("GET", `/steps/${step.id}/vm`)).body.ready).toBe(
+      true,
+    );
+    const binds = s.haw!.binds;
+    s.haw!.showError = "the key is not runbooks': call bindPlugin again";
+    const read = await s.person("GET", `/steps/${step.id}/vm`);
+    expect(read.body).toMatchObject({
+      code: "backend",
+      reason: "HAW: the key is not runbooks': call bindPlugin again",
+    });
+    expect(s.haw!.binds).toBe(binds);
+  });
+
+  it("binds again for several waits at once after HAW restarted (BUG-016)", async () => {
+    const { s, token } = await setup([startBuild]);
+    const names = ["vm-a", "vm-b", "vm-c", "vm-d"];
+    s.haw!.settleAfter = 3;
+    const failed: string[] = [];
+    for (let round = 0; round < 10; round++) {
+      for (const name of names) s.haw!.seed(1, { name });
+      const runbook = await agentRunbook(s, token, {
+        title: `Round ${round}`,
+        steps: names.map((name) => ({
+          title: `Start ${name}`,
+          vm: { host: 1, name, action: "start" },
+        })),
+      });
+      const steps = (await view(s, runbook.id)).steps;
+      const runIds: number[] = [];
+      for (const step of steps) {
+        const reply = await press(s, runbook.id, step.id, {
+          outOfOrder: true,
+          confirmRepeat: true,
+        });
+        expect(reply.status, JSON.stringify(reply.body)).toBe(200);
+        runIds.push(reply.body.run.id);
+      }
+      // HAW restarts while all four wait: every poll's key is refused.
+      s.haw!.rotateKeys();
+      for (const runId of runIds) {
+        const run = await waitForRun(s, runbook.id, runId);
+        if (run.status !== "done") failed.push(`${round}: ${run.error}`);
+      }
+    }
+    expect(failed).toEqual([]);
+  });
+
   it("asks on its own before force, then turns the VM off", async () => {
     const { s, runbook } = await setup([
       {

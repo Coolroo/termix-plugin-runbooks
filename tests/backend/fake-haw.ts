@@ -10,6 +10,10 @@ import type { MockPluginContext } from "@termix-ssh/plugin-sdk/testing";
  * host's own limits (name pattern, protect list, state) refuse actions. A
  * VM that starts or stops passes through starting or stopping, and reaches
  * its state after `settleAfter` reads.
+ *
+ * It awaits where the real ones do (BUG-016): core's permission check
+ * before HAW reads the key, and HAW's audit record after the receiver took
+ * the key, so concurrent calls interleave as they do in Termix.
  */
 
 interface FakeVm {
@@ -44,6 +48,9 @@ class VmServiceError extends Error {
     this.name = "VmServiceError";
   }
 }
+
+/** A turn of the event loop: other calls run in between. */
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 const AGENT_VERBS = new Set(["hosts", "list"]);
 const VERBS = [
@@ -82,6 +89,10 @@ export function createFakeHaw(mock: () => MockPluginContext) {
     stuck: false,
     /** The next `show` calls fail with code unreachable. */
     unreachableShows: 0,
+    /** The next calls fail as core fails them when HAW is unloaded. */
+    goneCalls: 0,
+    /** The next `show` fails with the host's words (vmctl's message). */
+    showError: null as string | null,
     /** Every call, refused ones too. */
     calls: [] as FakeHawCall[],
     binds: 0,
@@ -114,11 +125,14 @@ export function createFakeHaw(mock: () => MockPluginContext) {
     throw new VmServiceError(message, code, status);
   }
 
-  function admit(
+  async function admit(
     method: string,
     caller: unknown,
     extra: Partial<FakeHawCall> = {},
   ) {
+    gone();
+    // Core checks the caller's permission (an await) before HAW runs.
+    await turn();
     const given = (caller ?? {}) as {
       plugin?: string;
       key?: string;
@@ -169,6 +183,15 @@ export function createFakeHaw(mock: () => MockPluginContext) {
     return user!;
   }
 
+  /** Core's answer when HAW's service went away (EPLUGINSVCGONE). */
+  function gone(): void {
+    if (fake.goneCalls <= 0) return;
+    fake.goneCalls--;
+    throw Object.assign(new Error("service haw.vms is gone"), {
+      code: "EPLUGINSVCGONE",
+    });
+  }
+
   function role(user: string, operate: boolean): void {
     const held = fake.roles.get(user) ?? null;
     const ok = operate
@@ -208,14 +231,18 @@ export function createFakeHaw(mock: () => MockPluginContext) {
     } else pending[1]--;
   }
 
-  function power(
+  async function power(
     verb: "start" | "stop" | "restart",
     caller: unknown,
     host: number,
     name: string,
     force?: boolean,
   ) {
-    const user = admit(verb, caller, { host, name, force: force === true });
+    const user = await admit(verb, caller, {
+      host,
+      name,
+      force: force === true,
+    });
     role(user, true);
     vmHost(host);
     const vm = vmOf(host, name);
@@ -252,6 +279,7 @@ export function createFakeHaw(mock: () => MockPluginContext) {
   return Object.assign(fake, {
     keyFor,
     async bindPlugin(pluginId: string) {
+      gone();
       fake.binds++;
       if (!fake.allowed.has(pluginId)) {
         refuse(
@@ -267,13 +295,15 @@ export function createFakeHaw(mock: () => MockPluginContext) {
         refuse(`plugin ${pluginId} has no receiver`, "no-receiver", 409);
       }
       await (receiver as (key: string) => unknown)(keyFor(pluginId));
+      // HAW records the bind in Termix's audit log after the receiver.
+      await turn();
     },
     async me(caller: unknown) {
-      const user = admit("me", caller);
+      const user = await admit("me", caller);
       return { role: fake.roles.get(user) ?? null, version: "1.0.3" };
     },
     async hosts(caller: unknown) {
-      const user = admit("hosts", caller);
+      const user = await admit("hosts", caller);
       role(user, false);
       return [...fake.hostMap].map(([hostId, host]) => ({
         hostId,
@@ -285,7 +315,7 @@ export function createFakeHaw(mock: () => MockPluginContext) {
       }));
     },
     async list(caller: unknown, host: number) {
-      const user = admit("list", caller, { host });
+      const user = await admit("list", caller, { host });
       role(user, false);
       vmHost(host);
       return [...fake.vms]
@@ -293,12 +323,17 @@ export function createFakeHaw(mock: () => MockPluginContext) {
         .map(([, vm]) => ({ ...listed(vm), consoleHostId: 3 }));
     },
     async show(caller: unknown, host: number, name: string) {
-      const user = admit("show", caller, { host, name });
+      const user = await admit("show", caller, { host, name });
       role(user, false);
       vmHost(host);
       if (fake.unreachableShows > 0) {
         fake.unreachableShows--;
         refuse("the SSH login failed", "unreachable", 502);
+      }
+      if (fake.showError !== null) {
+        const message = fake.showError;
+        fake.showError = null;
+        refuse(message, "backend", 502);
       }
       const vm = vmOf(host, name);
       settle(host, vm);
@@ -318,27 +353,21 @@ export function createFakeHaw(mock: () => MockPluginContext) {
       };
     },
     start: (caller: unknown, host: number, name: string) =>
-      Promise.resolve().then(() => power("start", caller, host, name)),
+      power("start", caller, host, name),
     stop: (
       caller: unknown,
       host: number,
       name: string,
       options?: { force?: boolean },
-    ) =>
-      Promise.resolve().then(() =>
-        power("stop", caller, host, name, options?.force),
-      ),
+    ) => power("stop", caller, host, name, options?.force),
     restart: (
       caller: unknown,
       host: number,
       name: string,
       options?: { force?: boolean },
-    ) =>
-      Promise.resolve().then(() =>
-        power("restart", caller, host, name, options?.force),
-      ),
+    ) => power("restart", caller, host, name, options?.force),
     async consoleInfo(caller: unknown, host: number, name: string) {
-      const user = admit("consoleInfo", caller, { host, name });
+      const user = await admit("consoleInfo", caller, { host, name });
       role(user, true);
       vmHost(host);
       const vm = vmOf(host, name);

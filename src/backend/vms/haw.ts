@@ -115,6 +115,20 @@ export function passing(error: unknown): boolean {
   );
 }
 
+/**
+ * HAW went away or makes new keys, as when it restarts or updates: the
+ * service is gone, it refused the key again, or a bind gave no key.
+ */
+const RESTART_CODES = new Set(["no-haw", "bad-key", "no-key"]);
+
+/** Whether HAW may be restarting: a wait goes on through it (BUG-016). */
+export function restarting(error: unknown): boolean {
+  return (
+    error instanceof InputError &&
+    RESTART_CODES.has(String(error.extra.code ?? ""))
+  );
+}
+
 /** Whether the host itself refused (its limits, or the VM's state). */
 export function byHost(error: unknown): boolean {
   return (
@@ -128,16 +142,17 @@ export type Haw = Awaited<ReturnType<typeof createHaw>>;
 export async function createHaw(ctx: PluginContext) {
   const pluginId = ctx.manifest.id;
   let key: string | null = null;
-  let binding = false;
-  let bound: Promise<void> | null = null;
+  /** While our own bindPlugin call runs: takes the key that bind gets. */
+  let receive: ((given: string) => void) | null = null;
+  let bound: Promise<string> | null = null;
 
   await ctx.registry.provide(`${pluginId}.hawVmsKey`, (given: unknown) => {
     // Anyone may call this; only a key given during our own bind counts.
-    if (!binding) throw new Error("Runbooks is not binding");
+    if (!receive) throw new Error("Runbooks is not binding");
     if (typeof given !== "string" || !KEY.test(given)) {
       throw new Error("not a HAW key");
     }
-    key = given;
+    receive(given);
   });
 
   /** The service, or null when HAW is not there or too old for VM steps. */
@@ -181,28 +196,40 @@ export async function createHaw(ctx: PluginContext) {
     });
   }
 
+  /** HAW's code for a key it does not take; never the message's words. */
   function isBadKey(error: unknown): boolean {
-    const code = (error as { code?: unknown })?.code;
-    if (code === "bad-key") return true;
-    const message = error instanceof Error ? error.message : "";
-    return /call bindPlugin again/i.test(message);
+    return (error as { code?: unknown })?.code === "bad-key";
   }
 
-  async function bind(service: VmService): Promise<void> {
+  /**
+   * Binds, or joins the bind that runs now, and returns the key that this
+   * bind got. A bind checks its own key, never one another call set or
+   * cleared meanwhile (BUG-016).
+   */
+  function bind(service: VmService): Promise<string> {
     if (!bound) {
       bound = (async () => {
-        binding = true;
+        let got = null as string | null;
+        receive = (given) => {
+          got = given;
+        };
         try {
           await service.bindPlugin(pluginId);
         } finally {
-          binding = false;
+          receive = null;
         }
-        if (!key) throw new Error("HAW gave no key");
+        if (!got) {
+          throw new InputError("HAW gave Runbooks no key", 502, {
+            code: "no-key",
+          });
+        }
+        key = got;
+        return got;
       })().finally(() => {
         bound = null;
       });
     }
-    await bound;
+    return bound;
   }
 
   /**
@@ -222,22 +249,24 @@ export async function createHaw(ctx: PluginContext) {
         code: "no-actor",
       });
     }
-    const caller = (): Caller => ({
+    const caller = (used: string): Caller => ({
       plugin: pluginId,
-      key: key!,
+      key: used,
       user,
       ...(options.ref ? { ref: options.ref } : {}),
       ...(options.agent ? { agent: true } : {}),
     });
     try {
-      if (!key) await bind(service);
+      let used = key ?? (await bind(service));
       try {
-        return await fn(service, caller());
+        return await fn(service, caller(used));
       } catch (error) {
         if (!isBadKey(error)) throw error;
-        key = null;
-        await bind(service);
-        return await fn(service, caller());
+        // Another call may have bound again already: clear only the key
+        // this call used, and use the newer one.
+        if (key === used) key = null;
+        used = key ?? (await bind(service));
+        return await fn(service, caller(used));
       }
     } catch (error) {
       throw refusal(error);
