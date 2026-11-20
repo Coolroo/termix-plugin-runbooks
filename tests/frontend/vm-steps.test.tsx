@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import {
   card,
+  flush,
   clickStep,
   fakeApi,
   locales,
@@ -359,5 +360,246 @@ describe("VM steps on the page (T-029)", () => {
         outcome: "done",
       }),
     );
+  });
+});
+
+const NOT_FOUND: VmStepState = {
+  ...READY,
+  ready: false,
+  vm: null,
+  code: "not-found",
+  reason: "no VM is named build-1",
+};
+
+/** How many times the card read step `id`'s VM. */
+const reads = (client: { get: { mock: { calls: unknown[][] } } }, id = 2) =>
+  client.get.mock.calls.filter(([url]) => url === `/steps/${id}/vm`).length;
+
+/** The browser tab shows again. */
+function showPage() {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => "visible",
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+describe("the VM step reads its VM again (BUG-017)", () => {
+  afterEach(() => {
+    // jsdom's own visibilityState again.
+    delete (document as { visibilityState?: string }).visibilityState;
+  });
+
+  it("reads again when an earlier step's run ends", async () => {
+    let made = false;
+    const detail = () =>
+      makeRunbook(
+        [
+          clickStep({
+            id: 1,
+            title: "Make the VM",
+            status: made ? "done" : "pending",
+            runs: made
+              ? [
+                  makeRun({
+                    id: 40,
+                    stepId: 1,
+                    mode: "manual",
+                    finishedAt: "2026-11-20T10:00:00.000Z",
+                  }),
+                ]
+              : [],
+          }),
+          vmStep({ id: 2 }),
+        ],
+        { title: "Build" },
+      );
+    const client = fakeApi({
+      list: [summary],
+      detail,
+      get: (url) =>
+        url === "/steps/2/vm" ? (made ? READY : NOT_FOUND) : undefined,
+      post: async () => {
+        made = true;
+        return { data: detail() };
+      },
+    });
+    await openRunbook(client, { title: "Build", shows: "Make the VM" });
+    await vi.waitFor(() => expect(card(2).getAttribute("data-step")).toBe("2"));
+    await vi.waitFor(() =>
+      expect(card(2).querySelector("[data-vm-alert]")).toBeTruthy(),
+    );
+    expect(vmButton(2).disabled).toBe(true);
+    expect(reads(client)).toBe(1);
+
+    fireEvent.click(card(1).querySelector('[data-manual="done"]')!);
+    await vi.waitFor(() =>
+      expect(
+        card(2).querySelector("[data-vm-state]")?.getAttribute("data-vm-state"),
+      ).toBe("off"),
+    );
+    expect(reads(client)).toBe(2);
+    expect(card(2).querySelector("[data-vm-alert]")).toBeNull();
+    expect(vmButton(2).disabled).toBe(false);
+  });
+
+  it("shows a VM that is not there in a box with the time and Read again", async () => {
+    const client = fakeApi({
+      list: [summary],
+      detail: makeRunbook([vmStep({ id: 2 })], { title: "Build" }),
+      get: (url) => (url.endsWith("/vm") ? NOT_FOUND : undefined),
+    });
+    await openRunbook(client, { title: "Build", shows: "Start the build VM" });
+    const box = await vi.waitFor(() => {
+      const found = card(2).querySelector("[data-vm-alert]") as HTMLElement;
+      expect(found).toBeTruthy();
+      return found;
+    });
+    expect(box.getAttribute("role")).toBe("alert");
+    expect(box.getAttribute("data-vm-alert")).toBe("not-found");
+    expect(box.textContent).toContain("no VM is named build-1");
+    expect(box.querySelector("[data-vm-alert-time]")!.textContent).toMatch(
+      /^Read at .+\. An earlier step may have made or changed this VM since/,
+    );
+    // The one Read again is the box's, a real button with its name.
+    const again = within(box).getByRole("button", {
+      name: locales.vm.readAgain,
+    });
+    expect(card(2).querySelectorAll("[data-vm-read]")).toHaveLength(1);
+    expect(card(2).querySelector("[data-vm-age]")).toBeNull();
+    fireEvent.click(again);
+    await vi.waitFor(() => expect(reads(client)).toBe(2));
+  });
+
+  it("shows a failed read in the box too", async () => {
+    const client = fakeApi({
+      list: [summary],
+      detail: makeRunbook([vmStep({ id: 2 })], { title: "Build" }),
+    });
+    client.get.mockImplementation(async (url: string) => {
+      if (url.endsWith("/vm")) {
+        throw { response: { status: 502, data: { error: "HAW is down" } } };
+      }
+      return {
+        data:
+          url === "/runbooks"
+            ? [summary]
+            : makeRunbook([vmStep({ id: 2 })], { title: "Build" }),
+      };
+    });
+    await openRunbook(client, { title: "Build", shows: "Start the build VM" });
+    const box = await vi.waitFor(() => {
+      const found = card(2).querySelector("[data-vm-alert]") as HTMLElement;
+      expect(found).toBeTruthy();
+      return found;
+    });
+    expect(box.getAttribute("data-vm-alert")).toBe("read-error");
+    expect(box.textContent).toContain("HAW is down");
+    expect(
+      within(box).getByRole("button", { name: locales.vm.readAgain }),
+    ).toBeTruthy();
+  });
+
+  it("puts Read again next to the state as an outlined button, with the read's age", async () => {
+    vi.useFakeTimers();
+    const client = fakeApi({
+      list: [summary],
+      detail: makeRunbook([vmStep({ id: 2 })], { title: "Build" }),
+      get: (url) => (url.endsWith("/vm") ? READY : undefined),
+    });
+    await openRunbook(client, { title: "Build", fakeTimers: true });
+    await flush();
+    const row = card(2).querySelector("[data-vm-target]") as HTMLElement;
+    const again = within(row).getByRole("button", {
+      name: locales.vm.readAgain,
+    });
+    expect(again.tagName).toBe("BUTTON");
+    expect(again.className).toContain("border");
+    expect(again.querySelector("svg")).toBeTruthy();
+    expect(row.querySelector("[data-vm-age]")!.textContent).toBe(
+      locales.vm.readJustNow,
+    );
+    await flush(3 * 60_000);
+    expect(row.querySelector("[data-vm-age]")!.textContent).toBe(
+      "read 3 min ago",
+    );
+  });
+
+  it("reads again when the page shows again after a minute, not before", async () => {
+    vi.useFakeTimers();
+    const client = fakeApi({
+      list: [summary],
+      detail: makeRunbook([vmStep({ id: 2 })], { title: "Build" }),
+      get: (url) => (url.endsWith("/vm") ? READY : undefined),
+    });
+    await openRunbook(client, { title: "Build", fakeTimers: true });
+    await flush();
+    expect(reads(client)).toBe(1);
+    await flush(30_000);
+    showPage();
+    await flush();
+    expect(reads(client)).toBe(1);
+    await flush(31_000);
+    showPage();
+    showPage();
+    await flush();
+    // One read for both: the second came while the first was in flight.
+    expect(reads(client)).toBe(2);
+    expect(card(2).querySelector("[data-vm-age]")!.textContent).toBe(
+      locales.vm.readJustNow,
+    );
+  });
+
+  it("keeps one read in flight, and reads once more after it", async () => {
+    let made = false;
+    let answer: (state: VmStepState) => void = () => {};
+    const detail = () =>
+      makeRunbook(
+        [
+          clickStep({
+            id: 1,
+            title: "Make the VM",
+            status: made ? "done" : "pending",
+            runs: made ? [makeRun({ id: 40, stepId: 1, mode: "manual" })] : [],
+          }),
+          vmStep({ id: 2 }),
+        ],
+        { title: "Build" },
+      );
+    const client = fakeApi({
+      list: [summary],
+      detail,
+      post: async () => {
+        made = true;
+        return { data: detail() };
+      },
+    });
+    const fallback = client.get.getMockImplementation()!;
+    client.get.mockImplementation(async (url: string) =>
+      url === "/steps/2/vm"
+        ? { data: await new Promise<VmStepState>((done) => (answer = done)) }
+        : fallback(url),
+    );
+    await openRunbook(client, { title: "Build", shows: "Make the VM" });
+    await vi.waitFor(() => expect(reads(client)).toBe(1));
+    await vi.waitFor(() =>
+      expect(card(2).querySelector("[data-vm-reading]")).toBeTruthy(),
+    );
+    // Step 1 ends while the first read is in flight: no second request yet.
+    fireEvent.click(card(1).querySelector('[data-manual="done"]')!);
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/steps/1/manual", {
+        outcome: "done",
+        note: "",
+      }),
+    );
+    expect(reads(client)).toBe(1);
+    answer(NOT_FOUND);
+    await vi.waitFor(() => expect(reads(client)).toBe(2));
+    answer(READY);
+    await vi.waitFor(() =>
+      expect(card(2).querySelector("[data-vm-state]")).toBeTruthy(),
+    );
+    expect(reads(client)).toBe(2);
   });
 });

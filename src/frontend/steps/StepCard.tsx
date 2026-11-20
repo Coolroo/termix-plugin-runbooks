@@ -87,6 +87,8 @@ export function StepCard({
   secrets = [],
   canSendToAgent = false,
   values = NO_VALUES,
+  lastRunEnd = null,
+  isVisible = true,
 }: {
   /**
    * The step with its kind, marks, color and state, as the rail and the
@@ -106,6 +108,13 @@ export function StepCard({
   secrets?: SecretState[];
   /** Agent notifications are on and the runbook has an owner. */
   canSendToAgent?: boolean;
+  /**
+   * When the newest run of any step of the runbook ended: a VM step reads
+   * its VM again then (BUG-017).
+   */
+  lastRunEnd?: string | null;
+  /** The runbook's tab shows. */
+  isVisible?: boolean;
 }) {
   const { step, kind, marks, color: kindColor, state, kindRunbook } = nav;
   /** Who the runbook belongs to, for an agent step. */
@@ -360,6 +369,8 @@ export function StepCard({
           step={step}
           runbookOpen={runbookOpen}
           busy={busy}
+          lastRunEnd={lastRunEnd}
+          isVisible={isVisible}
           onPress={actions.vm}
           onEnd={actions.vmEnd}
         />
