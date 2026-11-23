@@ -70,6 +70,10 @@ export function RunbookDetail({
     [effective],
   );
 
+  // When the newest run of any step ended: a VM step's card reads its VM
+  // again then, as an earlier step may have made or changed it (BUG-017).
+  const lastRunEnd = useMemo(() => newestRunEnd(runbook), [runbook]);
+
   // "Hide not needed" (1.4.6, D2), remembered in this browser.
   const [hideNotNeeded, setHideNotNeeded] = useState(readHideNotNeeded);
   const toggleHideNotNeeded = (hide: boolean) => {
@@ -238,6 +242,8 @@ export function RunbookDetail({
                   )}
                   canSendToAgent={Boolean(runbook.canSendToAgent)}
                   values={values}
+                  lastRunEnd={lastRunEnd}
+                  isVisible={isVisible}
                 />
               ))}
             </div>
@@ -255,6 +261,18 @@ export function RunbookDetail({
       {hasSteps && bar && <NextStepBar ctx={bar} />}
     </div>
   );
+}
+
+/** The newest end time of a run of any step; null before any ended. */
+function newestRunEnd(runbook: Runbook | null): string | null {
+  let newest: string | null = null;
+  for (const step of runbook?.steps ?? []) {
+    for (const run of step.runs) {
+      if (run.running || !run.finishedAt) continue;
+      if (newest === null || run.finishedAt > newest) newest = run.finishedAt;
+    }
+  }
+  return newest;
 }
 
 /** Where the page remembers "Hide not needed" (1.4.6). */

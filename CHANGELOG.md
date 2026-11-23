@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.8
+
+### Fixed
+
+- **A VM step's card no longer shows an old read.** The card read its VM only when it opened and when its own step ran, so a VM that an earlier step made or changed still showed as not found, and the button stayed off until the person found **Read again**. The card now reads the VM again when a run of any step of the runbook ends, and when the page shows again after a minute or more; one read runs at a time. **Read again** is an outline button with an icon next to the VM's state, and the card says how old the read is ("read 3 min ago"). A failed read, or a VM HAW cannot act on now, shows in a box with the time of the read, a line that an earlier step may have made or changed the VM, and **Read again**. The action button stays as it was after a failed read: pressing it asks HAW again.
+
 ## 1.4.7
 
 ### Added
