@@ -10,12 +10,15 @@ import { fillStepText, uniqueNames } from "../../shared/fill.js";
 import { fillChecks, type Check } from "../../shared/checks.js";
 import type { EffectiveValue } from "../../shared/api.js";
 import {
+  isCommandItem,
+  isEventItem,
   itemChecks,
   sequenceText,
   withWorkdir,
   type ResolvedItem,
   type SequenceItem,
 } from "../../shared/sequence.js";
+import { EVENT_TEXT_FIELDS } from "../../shared/events.js";
 
 /**
  * Author values, then captured values in step order (each step's runs oldest
@@ -102,6 +105,26 @@ export function resolveItem(
   const known = Object.fromEntries(
     Object.entries(values).filter(([name]) => !earlier.has(name)),
   );
+  if (isEventItem(item)) {
+    // Phase 3: an event's names, paths and URL may hold values; its
+    // patterns never do (a value would change what the pattern means).
+    const filled: Record<string, unknown> = { ...item };
+    const used: string[][] = [];
+    for (const field of EVENT_TEXT_FIELDS[item.type]) {
+      const text = filled[field];
+      if (typeof text !== "string") continue;
+      const done = resolve(text, known);
+      filled[field] = done.text;
+      used.push(done.missing);
+    }
+    const names = uniqueNames(...used);
+    return {
+      ...(filled as unknown as typeof item),
+      position,
+      later: names.filter((name) => earlier.has(name)),
+      missing: names.filter((name) => !earlier.has(name)),
+    };
+  }
   const command = resolve(item.command, known);
   const checks = fillChecks(item.checks, known);
   if (item.type === "wait") {
@@ -151,7 +174,7 @@ function resolveSequence(
       earlier,
     );
     missing.push(lacking);
-    if (item.type !== "delay") {
+    if (isCommandItem(item)) {
       for (const capture of item.captures) earlier.add(capture.name);
     }
     return resolved;

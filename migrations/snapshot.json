@@ -601,6 +601,10 @@
         },
         "nextAttemptAt": {
           "type": "timestamp"
+        },
+        "result": {
+          "type": "varchar",
+          "length": 120
         }
       },
       "indexes": [
@@ -682,6 +686,10 @@
         "why": {
           "type": "varchar",
           "length": 16
+        },
+        "result": {
+          "type": "varchar",
+          "length": 120
         }
       },
       "indexes": [

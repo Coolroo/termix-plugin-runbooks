@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterEach, vi } from "vitest";
 import express, { type Router } from "express";
@@ -98,6 +99,22 @@ export class FakeChannel extends EventEmitter {
   }
 }
 
+/**
+ * Phase 3: what a forwardOut to the host's loopback gives: a stream (the
+ * port is open), or ssh2's error with its reason (1: administratively
+ * prohibited, 2: connect failed).
+ */
+export type ForwardFn = (
+  host: string,
+  port: number,
+) => Duplex | (Error & { reason?: number });
+
+/** Phase 3: what an SFTP stat gives: the attributes, or ssh2's error. */
+export type SftpFn = (
+  path: string,
+) =>
+  { mode: number; size: number } | { error: { code: number; message: string } };
+
 /** Drives a command by hand: called once the command's channel is open. */
 export type ChannelFn = (channel: FakeChannel, command: string) => void;
 
@@ -134,6 +151,17 @@ export interface TestServer {
   haw: FakeHawService | null;
   /** Connections opened and how many were disposed. */
   connections: { opened: number; disposed: number };
+  /**
+   * Phase 3: TCP channels to the host's loopback answer with this. The
+   * default refuses them as Termix's key does today (reason 1).
+   */
+  setForward: (fn: ForwardFn) => void;
+  /** Every forwardOut: the host and port it opened to. */
+  forwardCalls: Array<{ host: string; port: number }>;
+  /** Phase 3: SFTP stats answer with this (default: no such file). */
+  setSftp: (fn: SftpFn) => void;
+  /** Phase 3: the SSH server's version string the client keeps. */
+  setRemoteVer: (version: string | undefined) => void;
   /** As a signed-in person (default alice). */
   person: (
     method: string,
@@ -233,6 +261,16 @@ export async function startServer(
   });
   let channelFn: ChannelFn | null = null;
   const connections = { opened: 0, disposed: 0 };
+  // Phase 3: TCP channels and SFTP, as ssh2's client gives them.
+  const forwardCalls: TestServer["forwardCalls"] = [];
+  let forward: ForwardFn = () =>
+    Object.assign(new Error("(SSH) Channel open failure: open failed"), {
+      reason: 1,
+    });
+  let sftpStat: SftpFn = () => ({
+    error: { code: 2, message: "No such file" },
+  });
+  let remoteVer: string | undefined = "OpenSSH_10.0p2";
   // Runbooks runs commands on a connection of its own from ctx.ssh.connect
   // and reads the channel as it streams; this client stands in for ssh2's.
   (mock.ctx.ssh as unknown as { connect: unknown }).connect = async (
@@ -241,6 +279,44 @@ export async function startServer(
   ) => {
     connections.opened++;
     const client = {
+      _remoteVer: remoteVer,
+      forwardOut: (
+        _srcIP: string,
+        _srcPort: number,
+        dstIP: string,
+        dstPort: number,
+        callback: (error: Error | undefined, stream?: Duplex) => void,
+      ) => {
+        forwardCalls.push({ host: dstIP, port: dstPort });
+        const answer = forward(dstIP, dstPort);
+        setImmediate(() =>
+          answer instanceof Error
+            ? callback(answer)
+            : callback(undefined, answer),
+        );
+      },
+      sftp: (
+        callback: (
+          error: Error | undefined,
+          session: { stat: unknown; end: () => void },
+        ) => void,
+      ) => {
+        callback(undefined, {
+          stat: (
+            path: string,
+            done: (
+              error: unknown,
+              stats?: { mode: number; size: number },
+            ) => void,
+          ) => {
+            const answer = sftpStat(path);
+            setImmediate(() =>
+              "error" in answer ? done(answer.error) : done(undefined, answer),
+            );
+          },
+          end: () => {},
+        });
+      },
       exec: (
         command: string,
         execOptions: { pty?: unknown },
@@ -336,6 +412,16 @@ export async function startServer(
       channelFn = fn;
     },
     connections,
+    setForward: (fn) => {
+      forward = fn;
+    },
+    forwardCalls,
+    setSftp: (fn) => {
+      sftpStat = fn;
+    },
+    setRemoteVer: (version) => {
+      remoteVer = version;
+    },
     channels,
     secrets,
     haw,

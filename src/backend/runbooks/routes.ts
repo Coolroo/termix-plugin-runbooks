@@ -27,6 +27,7 @@ import { registerDecisionRoutes } from "../decisions/decision-routes.js";
 import { registerVmRoutes } from "../vms/vm-routes.js";
 import { registerSendRoutes } from "../agents/send-route.js";
 import { registerTokenRoutes } from "../agents/token-routes.js";
+import type { Platforms } from "../events/platforms.js";
 
 export function registerPersonRoutes(
   router: Router,
@@ -37,9 +38,19 @@ export function registerPersonRoutes(
   events: Events,
   notify: { enabled: () => Promise<boolean> },
   haw: Haw,
+  platforms?: Platforms,
 ): void {
   // One kit for every route: one inFlight set, one removeRetryAt map.
-  const kit = createPersonKit(ctx, store, live, secrets, events, notify, haw);
+  const kit = createPersonKit(
+    ctx,
+    store,
+    live,
+    secrets,
+    events,
+    notify,
+    haw,
+    platforms,
+  );
   // Registered in the order they always were.
   registerRunbookList(router, kit);
   registerColorsRoute(router, kit);

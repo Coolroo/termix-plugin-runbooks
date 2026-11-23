@@ -2,8 +2,8 @@
  * A step's sequence and workdir as an author writes them (1.4.10): the
  * checks on each item, with errors that name the item ("sequence[2]: ...").
  * Phase 1 takes `run` and `delay` items; phase 2 adds the `wait` item and
- * `retry` on a run item, with their schedule (src/shared/schedule.ts). The
- * plan's other types are refused with a 400 that says they come later.
+ * `retry` on a run item, with their schedule (src/shared/schedule.ts).
+ * Phase 3 adds the wait events built in (event-parse.ts).
  */
 
 import { InputError } from "../core/errors.js";
@@ -12,7 +12,7 @@ import { checksProblem, normalizeCheck, type Check } from "../checks/checks.js";
 import { checkCaptures, type Capture } from "../values/values.js";
 import { isOneLine } from "../../shared/names.js";
 import {
-  LATER_ITEM_TYPES,
+  isCommandItem,
   SEQUENCE_LIMITS,
   type DelayItemSpec,
   type OnFail,
@@ -22,18 +22,19 @@ import {
   type WaitItemSpec,
 } from "../../shared/sequence.js";
 import {
-  BACKOFFS,
-  JITTERS,
   RETRY_ON,
   SCHEDULE_LIMITS,
-  type Backoff,
-  type Jitter,
   type RetryOn,
-  type Schedule,
 } from "../../shared/schedule.js";
+import { isEventType } from "../../shared/events.js";
 import { sleepProblem } from "./no-sleep.js";
-
-const SCHEDULE_FIELDS = ["every", "backoff", "factor", "maxDelay", "jitter"];
+import {
+  parseSchedule,
+  SCHEDULE_FIELDS,
+  shortText,
+  wholeNumber,
+} from "./item-fields.js";
+import { parseEventItem } from "./event-parse.js";
 const RUN_FIELDS = [
   "type",
   "label",
@@ -68,38 +69,6 @@ export interface SequenceRules {
   commandMax: number;
   timeoutMin: number;
   timeoutMax: number;
-}
-
-/** A short one-line text, or null when left out or empty. */
-function shortText(value: unknown, field: string, max: number): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") {
-    throw new InputError(`${field} must be a string`);
-  }
-  const text = value.trim();
-  if (text.length > max) {
-    throw new InputError(`${field} is longer than ${max} characters`);
-  }
-  if (!isOneLine(text)) throw new InputError(`${field} must be one line`);
-  return text === "" ? null : text;
-}
-
-/** An integer from min to max, or null when left out or null. */
-function wholeNumber(
-  value: unknown,
-  field: string,
-  min: number,
-  max: number,
-): number | null {
-  if (value === undefined || value === null) return null;
-  if (
-    !Number.isInteger(value) ||
-    (value as number) < min ||
-    (value as number) > max
-  ) {
-    throw new InputError(`${field} must be an integer from ${min} to ${max}`);
-  }
-  return value as number;
 }
 
 /** What a run item and a wait item share: the command and its output. */
@@ -175,63 +144,6 @@ function parseCommandParts(
     timeoutMs,
     onFail,
   };
-}
-
-/**
- * The delays between attempts (phase 2): every (default 5 s), backoff
- * (default fixed), factor (exponential only, default 2), maxDelay (default
- * 300 s, or every when that is longer) and jitter (default none).
- */
-function parseSchedule(raw: Record<string, unknown>, field: string): Schedule {
-  const every =
-    wholeNumber(
-      raw.every,
-      `${field}.every`,
-      SCHEDULE_LIMITS.everyMin,
-      SCHEDULE_LIMITS.everyMax,
-    ) ?? SCHEDULE_LIMITS.every;
-  const backoff = (raw.backoff ?? "fixed") as Backoff;
-  if (!BACKOFFS.includes(backoff)) {
-    throw new InputError(
-      `${field}.backoff must be "fixed", "linear" or "exponential"`,
-    );
-  }
-  let factor: number = SCHEDULE_LIMITS.factor;
-  if (raw.factor !== undefined && raw.factor !== null) {
-    if (backoff !== "exponential") {
-      throw new InputError(
-        `${field}.factor is for backoff "exponential" only; leave it out`,
-      );
-    }
-    if (
-      typeof raw.factor !== "number" ||
-      !Number.isFinite(raw.factor) ||
-      raw.factor < SCHEDULE_LIMITS.factorMin ||
-      raw.factor > SCHEDULE_LIMITS.factorMax
-    ) {
-      throw new InputError(
-        `${field}.factor must be a number from ${SCHEDULE_LIMITS.factorMin} to ${SCHEDULE_LIMITS.factorMax}`,
-      );
-    }
-    factor = raw.factor;
-  }
-  const maxDelay =
-    wholeNumber(
-      raw.maxDelay,
-      `${field}.maxDelay`,
-      SCHEDULE_LIMITS.everyMin,
-      SCHEDULE_LIMITS.maxDelayMax,
-    ) ?? Math.max(SCHEDULE_LIMITS.maxDelay, every);
-  if (maxDelay < every) {
-    throw new InputError(
-      `${field}.maxDelay (${maxDelay}) must be at least every (${every})`,
-    );
-  }
-  const jitter = (raw.jitter ?? "none") as Jitter;
-  if (!JITTERS.includes(jitter)) {
-    throw new InputError(`${field}.jitter must be "none", "full" or "equal"`);
-  }
-  return { every, backoff, factor, maxDelay, jitter };
 }
 
 /** A run item's retry (phase 2): attempts are required, 2 to 500. */
@@ -433,21 +345,17 @@ export function parseSequence(
       case "delay":
         return parseDelayItem(item, field);
       default:
-        if (
-          (LATER_ITEM_TYPES as readonly string[]).includes(item.type as string)
-        ) {
-          throw new InputError(
-            `${field}: the "${String(item.type)}" item comes in a later version of Runbooks; for now use "run", "wait" and "delay" items`,
-            400,
-            { code: "later-item" },
-          );
+        if (typeof item.type === "string" && isEventType(item.type)) {
+          return parseEventItem(item, field, rules);
         }
-        throw new InputError(`${field}.type must be "run", "wait" or "delay"`);
+        throw new InputError(
+          `${field}.type must be "run", "wait", "delay", "port", "http", "file", "container", "unit", "log" or "job"`,
+        );
     }
   });
   const seen = new Set<string>();
   for (const [index, item] of items.entries()) {
-    if (item.type === "delay") continue;
+    if (!isCommandItem(item)) continue;
     for (const capture of item.captures) {
       if (seen.has(capture.name)) {
         throw new InputError(
@@ -457,8 +365,10 @@ export function parseSequence(
       seen.add(capture.name);
     }
   }
-  if (!items.some((item) => item.type !== "delay")) {
-    throw new InputError("sequence needs at least one run or wait item");
+  if (items.every((item) => item.type === "delay")) {
+    throw new InputError(
+      "sequence needs at least one item that is not a delay: a run, a wait or an event",
+    );
   }
   return items;
 }
@@ -495,6 +405,6 @@ export function parseWorkdir(value: unknown): string | null {
 /** Captures of a whole sequence, for the step-level checks on names. */
 export function sequenceCaptures(sequence: SequenceItem[] | null): Capture[] {
   return (sequence ?? []).flatMap((item) =>
-    item.type !== "delay" ? item.captures : [],
+    isCommandItem(item) ? item.captures : [],
   );
 }

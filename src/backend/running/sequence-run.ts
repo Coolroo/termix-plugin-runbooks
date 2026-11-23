@@ -19,6 +19,11 @@
  * consent for every attempt of it, so attempts never ask the repeat
  * question.
  *
+ * Phase 3: an event item (port, http, file, container, unit, log, job)
+ * makes attempts on the same schedule; each attempt is one check, done by
+ * the plugin (src/backend/events/probes.ts) on a connection of its own,
+ * with the state it read in words. A job's first check starts its unit.
+ *
  * An item that fails stops the sequence and fails the step, unless it says
  * onFail "continue". Stop ends the item that runs and the rest. Continue
  * (run-routes.ts) makes a new run that carries the items that passed and
@@ -37,16 +42,35 @@ import { judgeOutput, type Check, type Judgement } from "../checks/checks.js";
 import type { FailReason } from "../agents/events.js";
 import { stepLabel } from "../../shared/steps.js";
 import { MIN_HIDDEN_CHARS } from "../../shared/limits.js";
-import { SCHEDULE_LIMITS } from "../../shared/schedule.js";
+import { SCHEDULE_LIMITS, secondsWords } from "../../shared/schedule.js";
 import {
+  isEventItem,
   itemSchedule,
   withWorkdir,
   type AttemptWhy,
   type CommandItemSpec,
   type DelayItemSpec,
   type ResolvedItem,
+  type SequenceItem,
 } from "../../shared/sequence.js";
 import type { RunItem } from "../../shared/sequence.js";
+import {
+  EVENT_LIMITS,
+  eventWhat,
+  type EventItemSpec,
+} from "../../shared/events.js";
+import {
+  newMemory,
+  probe,
+  stopJob,
+  Stopped,
+  type EventMemory,
+  type ProbeClient,
+  type ProbeOutcome,
+} from "../events/probes.js";
+import { readPlatform } from "../events/readers.js";
+import { HTTP_CA_SETTING, trustedCas } from "../events/trust.js";
+import { filledEventProblem } from "../runbooks/event-parse.js";
 import {
   INTERACTIVE_PTY,
   streamExec,
@@ -231,12 +255,7 @@ export function createSequenceRunner(kit: PersonKit) {
           position: index + 1,
           type: item.type,
           label: item.label,
-          command:
-            approved && approved.type !== "delay"
-              ? approved.command
-              : item.type !== "delay"
-                ? item.command
-                : null,
+          command: itemCommand(approved ?? item, runId, index + 1),
           seconds: item.type === "delay" ? item.seconds : null,
           reason: item.type === "delay" ? item.reason : null,
           onFail: item.type !== "delay" ? item.onFail : "stop",
@@ -257,6 +276,7 @@ export function createSequenceRunner(kit: PersonKit) {
           maxAttempts: schedule ? maxAttempts(schedule.attempts) : null,
           endsBy: null,
           nextAttemptAt: null,
+          result: null,
         }),
       );
     }
@@ -341,25 +361,27 @@ export function createSequenceRunner(kit: PersonKit) {
         const end =
           item.type === "delay"
             ? await runDelay(req, runId, step, target, item, itemId, position)
-            : itemSchedule(item)
-              ? await runAttempts(
-                  req,
-                  runId,
-                  step,
-                  target,
-                  item,
-                  itemId,
-                  context,
-                )
-              : await runCommand(
-                  req,
-                  runId,
-                  step,
-                  target,
-                  item,
-                  itemId,
-                  context,
-                );
+            : isEventItem(item)
+              ? await runEvent(req, runId, step, target, item, itemId, context)
+              : itemSchedule(item)
+                ? await runAttempts(
+                    req,
+                    runId,
+                    step,
+                    target,
+                    item,
+                    itemId,
+                    context,
+                  )
+                : await runCommand(
+                    req,
+                    runId,
+                    step,
+                    target,
+                    item,
+                    itemId,
+                    context,
+                  );
         slow.push(...end.slow);
         if (end.passed) continue;
         if (
@@ -667,7 +689,9 @@ export function createSequenceRunner(kit: PersonKit) {
     const record = live.get(runId)!;
     const { position, values } = context;
     const resolved = resolveItem(item, position, values, new Set());
-    if (resolved.type === "delay") throw new Error("not a command item");
+    if (resolved.type !== "run" && resolved.type !== "wait") {
+      throw new Error("not a command item");
+    }
     const startedAt = now();
     if (resolved.missing.length > 0) {
       await store.updateRunItem(itemId, {
@@ -794,7 +818,9 @@ export function createSequenceRunner(kit: PersonKit) {
     const schedule = itemSchedule(item)!;
     const { position, values } = context;
     const resolved = resolveItem(item, position, values, new Set());
-    if (resolved.type === "delay") throw new Error("not a command item");
+    if (resolved.type !== "run" && resolved.type !== "wait") {
+      throw new Error("not a command item");
+    }
     const startedAt = now();
     if (resolved.missing.length > 0) {
       await store.updateRunItem(itemId, {
@@ -861,6 +887,7 @@ export function createSequenceRunner(kit: PersonKit) {
         checks: null,
         stopIf: null,
         why: null,
+        result: null,
       });
       await store.persist(true);
       const executed = await execOnce(
@@ -1081,6 +1108,354 @@ export function createSequenceRunner(kit: PersonKit) {
   }
 
   /**
+   * An event item (phase 3): checks on its schedule until its state holds,
+   * a state that fails it at once comes (the container exited, the unit
+   * failed, forwarding refused), or the attempts or the time run out. Each
+   * check is an attempt with a connection of its own, as a wait's attempt
+   * is, after the same access check. The item keeps the last check's
+   * output and its state in words (`result`); a job keeps its journal so
+   * far, streamed into the item as it comes, and its unit is stopped when
+   * the item ends before the job did (Stop, or out of time).
+   */
+  async function runEvent(
+    req: Request,
+    runId: number,
+    step: StepRow,
+    target: SequenceTarget,
+    item: EventItemSpec,
+    itemId: number,
+    context: ItemContext,
+  ): Promise<ItemEnd> {
+    const record = live.get(runId)!;
+    const { position, values, hidden } = context;
+    const { missing, ...filled } = resolveItem(
+      item,
+      position,
+      values,
+      new Set(),
+    );
+    const event = filled as EventItemSpec;
+    const startedAt = now();
+    const what = eventWhat(event, null, runId, position);
+    const problem =
+      missing.length > 0 ? NOT_CAPTURED : filledEventProblem(event);
+    if (problem) {
+      await store.updateRunItem(itemId, {
+        status: "failed",
+        startedAt,
+        finishedAt: startedAt,
+        command: what,
+        error: problem,
+      });
+      return { passed: false, reason: "exit", error: problem, slow: [] };
+    }
+    const most = maxAttempts(event.attempts);
+    const within = Math.min(event.within, SCHEDULE_LIMITS.within);
+    const endsAt = Date.parse(startedAt) + within * 1000;
+    await store.updateRunItem(itemId, {
+      status: "running",
+      startedAt,
+      command: what,
+      maxAttempts: most,
+      endsBy: new Date(endsAt).toISOString(),
+    });
+    await store.persist(true);
+    const since = await stepStart(runId, startedAt);
+    const memory = newMemory();
+    const line = where(step, target, position);
+    const hide = (text: string) => redact(text, hidden);
+    // A job streams its journal into the item across its checks.
+    if (event.type === "job") live.beginItem(runId, itemId);
+    for (let attempt = 1; ; attempt++) {
+      if (attempt > 1 && !(await stillAllowed(target))) {
+        await stopUnfinishedJob(step, event, memory, runId, position);
+        await store.updateRunItem(itemId, {
+          status: "failed",
+          finishedAt: now(),
+          nextAttemptAt: null,
+          error: NO_ACCESS,
+        });
+        await auditNoAccess(
+          req,
+          step,
+          target,
+          position,
+          `check ${attempt} not started`,
+        );
+        live.endItem(runId);
+        return noAccessEnd();
+      }
+      if (event.type !== "job") live.beginItem(runId, itemId);
+      await store.updateRunItem(itemId, { nextAttemptAt: null });
+      const attemptId = await store.insertRunAttempt({
+        itemId,
+        runId,
+        runbookId: step.runbookId,
+        attempt,
+        status: "running",
+        startedAt: now(),
+        finishedAt: null,
+        exitCode: null,
+        stdout: null,
+        stderr: null,
+        truncated: false,
+        timedOut: false,
+        error: null,
+        checks: null,
+        stopIf: null,
+        why: null,
+        result: null,
+      });
+      await store.persist(true);
+      const checked = await checkOnce(runId, step, event, {
+        since,
+        memory,
+        position,
+        timeoutMs: attemptTimeout(
+          event.timeoutMs ?? EVENT_LIMITS.timeoutMs,
+          endsAt,
+          Date.now(),
+        ),
+      });
+      const stopped = checked.kind === "stopped";
+      const why: AttemptWhy | null = record.interrupted
+        ? "interrupted"
+        : stopped || record.stoppedBy
+          ? "stopped"
+          : checked.kind === "connect"
+            ? "connect"
+            : checked.outcome.verdict === "pass"
+              ? null
+              : checked.outcome.verdict === "fail"
+                ? "fail-state"
+                : checked.outcome.timedOut
+                  ? "timeout"
+                  : "not-yet";
+      const got: ProbeOutcome | null =
+        checked.kind === "checked" ? checked.outcome : null;
+      const error =
+        why === "stopped"
+          ? `stopped by ${record.stoppedBy ?? "a person"}`
+          : why === "interrupted"
+            ? record.interrupted
+            : checked.kind === "connect"
+              ? checked.message
+              : (got?.error ?? null);
+      const output = {
+        exitCode: got?.exitCode ?? null,
+        stdout: got ? hide(got.stdout) : null,
+        stderr: got ? hide(got.stderr) : null,
+        truncated: got?.truncated ?? false,
+        timedOut: got?.timedOut ?? false,
+      };
+      await store.updateRunAttempt(attemptId, {
+        ...output,
+        status: why === null ? "passed" : "failed",
+        finishedAt: now(),
+        error: error === null ? null : hide(error),
+        why,
+        result: got?.result ?? null,
+      });
+      if (event.type !== "job" && got) {
+        if (output.stdout) live.output(runId, "stdout", output.stdout);
+        if (output.stderr) live.output(runId, "stderr", output.stderr);
+      }
+      await live.settle(runId);
+      await store.updateRunItem(itemId, {
+        ...output,
+        // A job's item keeps its whole journal; the attempt, the new lines.
+        ...(event.type === "job"
+          ? { stdout: hide(memory.journal), stderr: output.stderr }
+          : {}),
+        result: got?.result ?? null,
+      });
+      if (why === null) {
+        await store.updateRunItem(itemId, {
+          status: "passed",
+          finishedAt: now(),
+        });
+        await store.persist(true);
+        live.endItem(runId);
+        await audit(
+          req,
+          "runbooks_step_run",
+          step,
+          `${line}: ${event.type} check ${attempt} passed: ${got?.result ?? ""}`,
+          true,
+        );
+        return { passed: true, reason: "check", error: null, slow: [] };
+      }
+      // What ends the item here, with its words; null: another check.
+      let end: { error: string | null } | null = null;
+      if (why === "stopped" || why === "interrupted" || why === "fail-state") {
+        end = { error };
+      } else if (attempt >= most) {
+        end = {
+          error: eventExhausted(event, attempt, "attempts", within, got),
+        };
+      }
+      const delay = delayAfter(event, attempt);
+      if (end === null && Date.now() + delay >= endsAt) {
+        end = { error: eventExhausted(event, attempt, "time", within, got) };
+      }
+      if (end === null) {
+        const waited = await between(runId, itemId, delay);
+        if (waited.how === "now") {
+          await audit(
+            req,
+            "runbooks_step_try_now",
+            step,
+            `${line}: check ${attempt + 1} started early by ${waited.by}`,
+            true,
+          );
+        }
+        if (waited.how !== "stopped") continue;
+        end = {
+          error: record.stoppedBy
+            ? `stopped by ${record.stoppedBy}`
+            : (record.interrupted ?? "stopped"),
+        };
+      }
+      // A job that did not end yet: its unit stops with the item.
+      if (why !== "fail-state") {
+        await stopUnfinishedJob(step, event, memory, runId, position);
+      }
+      const reason: FailReason = record.interrupted
+        ? "interrupted"
+        : record.stoppedBy
+          ? "stopped"
+          : why === "connect" || why === "timeout"
+            ? "exit"
+            : "check";
+      await store.updateRunItem(itemId, {
+        status: "failed",
+        finishedAt: now(),
+        nextAttemptAt: null,
+        error: end.error === null ? null : hide(end.error),
+      });
+      await store.persist(true);
+      live.endItem(runId);
+      await audit(
+        req,
+        "runbooks_step_run",
+        step,
+        `${line}: ${event.type}, ${attempt} check${attempt === 1 ? "" : "s"}, ${reason === "stopped" || reason === "interrupted" ? reason : why}${got ? `: ${got.result}` : ""}`,
+        false,
+      );
+      return { passed: false, reason, error: end.error, slow: [] };
+    }
+  }
+
+  /**
+   * One check of an event on a connection of its own. Stop (and Termix
+   * stopping) ends it at once. No connection, or an error the readers do
+   * not know, is "connect": the wait goes on, as a wait item's does.
+   */
+  async function checkOnce(
+    runId: number,
+    step: StepRow,
+    event: EventItemSpec,
+    input: {
+      since: number;
+      memory: EventMemory;
+      position: number;
+      timeoutMs: number;
+    },
+  ): Promise<
+    | { kind: "checked"; outcome: ProbeOutcome }
+    | { kind: "connect"; message: string }
+    | { kind: "stopped" }
+  > {
+    const record = live.get(runId)!;
+    const controller = new AbortController();
+    record.stop = () => controller.abort();
+    if (record.stoppedBy || record.interrupted) controller.abort();
+    let connection: { client: ProbeClient; dispose: () => void } | null = null;
+    try {
+      connection = await ctx.ssh.connect<ProbeClient>(step.hostId!, {
+        purpose: "runbooks",
+      });
+      // What the host's SSH server says it is: a Windows host is then
+      // refused the Linux events when a step is written (platforms.ts).
+      kit.platforms.note(
+        step.hostId!,
+        readPlatform(connection.client._remoteVer),
+      );
+      if (controller.signal.aborted) throw new Stopped();
+      const outcome = await probe({
+        client: connection.client,
+        item: event,
+        workdir: step.workdir,
+        since: input.since,
+        runId,
+        position: input.position,
+        timeoutMs: input.timeoutMs,
+        signal: controller.signal,
+        memory: input.memory,
+        cas: async () => trustedCas(await ctx.settings.get(HTTP_CA_SETTING)),
+        fetch: ctx.fetch as unknown as (
+          url: string,
+          init: Record<string, unknown>,
+        ) => Promise<Response>,
+        onOutput: (text) => live.output(runId, "stdout", text),
+      });
+      return { kind: "checked", outcome };
+    } catch (error) {
+      if (error instanceof Stopped || controller.signal.aborted) {
+        return { kind: "stopped" };
+      }
+      return {
+        kind: "connect",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      record.stop = null;
+      connection?.dispose();
+    }
+  }
+
+  /**
+   * Stops and unloads a job's unit when the item ends before the job did.
+   * Best effort: a host that cannot be reached keeps it running, and the
+   * item's words say the job ended without it.
+   */
+  async function stopUnfinishedJob(
+    step: StepRow,
+    event: EventItemSpec,
+    memory: EventMemory,
+    runId: number,
+    position: number,
+  ): Promise<void> {
+    if (event.type !== "job" || memory.jobStarted === null) return;
+    let connection: { client: ProbeClient; dispose: () => void } | null = null;
+    try {
+      connection = await ctx.ssh.connect<ProbeClient>(step.hostId!, {
+        purpose: "runbooks",
+      });
+      await stopJob(connection.client, event, runId, position);
+    } catch (error) {
+      ctx.log.warn(
+        `run ${runId} item ${position}: the job's unit could not be stopped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      connection?.dispose();
+    }
+  }
+
+  /**
+   * When the step started, in Unix seconds: its first item's start, which
+   * a Continue carries from the run before. Log lines and unit ends before
+   * it belong to an earlier run.
+   */
+  async function stepStart(runId: number, fallback: string): Promise<number> {
+    const times = (await store.listRunItems({ runId }))
+      .map((each) => (each.startedAt ? Date.parse(each.startedAt) : NaN))
+      .filter((time) => !Number.isNaN(time));
+    const first = times.length ? Math.min(...times) : Date.parse(fallback);
+    return Math.floor(first / 1000);
+  }
+
+  /**
    * The wait between two attempts: a timer, with the next attempt's time
    * on the item so the page counts down. Try now ends it early; Stop, or
    * Termix stopping, ends the item.
@@ -1194,4 +1569,37 @@ function maxAttempts(attempts: number | null): number {
     attempts ?? SCHEDULE_LIMITS.attempts,
     SCHEDULE_LIMITS.attempts,
   );
+}
+
+/**
+ * The command an item's record keeps: a run or wait item's command, an
+ * event's words for what it checks (phase 3), nothing for a delay.
+ */
+function itemCommand(
+  item: SequenceItem,
+  runId: number,
+  position: number,
+): string | null {
+  if (item.type === "delay") return null;
+  if (isEventItem(item)) return eventWhat(item, null, runId, position);
+  return item.command;
+}
+
+/** The words of an event that made its last check without a pass. */
+function eventExhausted(
+  event: EventItemSpec,
+  checks: number,
+  reason: "attempts" | "time",
+  withinSeconds: number,
+  last: ProbeOutcome | null,
+): string {
+  const made = `${checks} check${checks === 1 ? "" : "s"}`;
+  const what =
+    event.type === "job"
+      ? "the job did not finish"
+      : "the state it waits for did not come";
+  const read = last ? `; the last check read: ${last.result}` : "";
+  return reason === "attempts"
+    ? `${what} in ${made}, the most this item makes${read}`
+    : `${what} within ${secondsWords(withinSeconds)} (${made})${read}${event.type === "job" ? "; its unit was stopped" : ""}`;
 }

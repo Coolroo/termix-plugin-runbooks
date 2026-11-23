@@ -13,6 +13,11 @@
  * schedule (schedule.ts); each attempt is a record inside its item
  * (RunAttempt).
  *
+ * Phase 3 adds the wait events built into the plugin (events.ts): port,
+ * http, file, container, unit, log and job. Each polls on the same schedule
+ * as a wait item; each check is an attempt, with the state it read in words
+ * (`result`).
+ *
  * Shared by the server and the UI. No React and no Node here.
  */
 
@@ -25,6 +30,12 @@ import {
   type SchedulePlan,
 } from "./schedule.js";
 import { DEFAULT_TIMEOUT_MS } from "./limits.js";
+import {
+  EVENT_LIMITS,
+  eventWhat,
+  isEventType,
+  type EventItemSpec,
+} from "./events.js";
 
 /** The limits of a sequence, in one place. */
 export const SEQUENCE_LIMITS = {
@@ -35,17 +46,6 @@ export const SEQUENCE_LIMITS = {
   reason: 500,
   workdir: 500,
 } as const;
-
-/** Item types a later phase adds: refused with a clear 400 until then. */
-export const LATER_ITEM_TYPES = [
-  "container",
-  "unit",
-  "log",
-  "http",
-  "port",
-  "file",
-  "job",
-] as const;
 
 export type OnFail = "stop" | "continue";
 
@@ -113,10 +113,21 @@ export interface DelayItemSpec {
   reason: string | null;
 }
 
-export type SequenceItem = RunItemSpec | DelayItemSpec | WaitItemSpec;
+export type SequenceItem =
+  RunItemSpec | DelayItemSpec | WaitItemSpec | EventItemSpec;
 
 /** An item that runs a command on the host: run or wait. */
 export type CommandItemSpec = RunItemSpec | WaitItemSpec;
+
+/** Whether the item runs a command the author wrote: run or wait. */
+export function isCommandItem(item: SequenceItem): item is CommandItemSpec {
+  return item.type === "run" || item.type === "wait";
+}
+
+/** Whether the item is one of the wait events built in (phase 3). */
+export function isEventItem(item: SequenceItem): item is EventItemSpec {
+  return isEventType(item.type);
+}
 
 /** A sequence item as the page shows it before a run: values filled in. */
 export type ResolvedItem = SequenceItem & {
@@ -186,13 +197,22 @@ export interface RunItem {
   nextAttemptAt: string | null;
   /** Its attempts, oldest first; absent on an item with no schedule. */
   attempts?: RunAttempt[];
+  /**
+   * Phase 3, an event item: the state its last check read, in words, such
+   * as "healthy", "exited (1)", "HTTP 503" or "port closed". Built from
+   * fixed words and numbers only, never from free text the host sent.
+   */
+  result: string | null;
 }
 
 /**
  * Why an attempt did not pass: exit (a non-zero exit code), check (exit 0,
  * a check failed), timeout, connect (no connection, or an error before the
  * command ran), stop-if (a stopIf check matched), stopped (a person
- * stopped it), interrupted (Termix or Runbooks stopped).
+ * stopped it), interrupted (Termix or Runbooks stopped). Phase 3, an
+ * event's check: not-yet (it read a state that is not the one it waits
+ * for), fail-state (it read a state that fails the item at once: the
+ * container exited, the unit failed, forwarding refused).
  */
 export type AttemptWhy =
   | "exit"
@@ -201,7 +221,9 @@ export type AttemptWhy =
   | "connect"
   | "stop-if"
   | "stopped"
-  | "interrupted";
+  | "interrupted"
+  | "not-yet"
+  | "fail-state";
 
 /** One attempt of a wait item or of a run item with retry (phase 2). */
 export interface RunAttempt {
@@ -226,6 +248,8 @@ export interface RunAttempt {
   stopIf: CheckResult[] | null;
   /** Why it did not pass; null while it runs and when it passed. */
   why: AttemptWhy | null;
+  /** Phase 3, an event's check: the state it read, in words. */
+  result: string | null;
 }
 
 /** Where the attempts of a running item are (agents read it on the step). */
@@ -244,7 +268,7 @@ export interface AttemptState {
 export function itemSchedule(
   item: SequenceItem,
 ): (Schedule & { attempts: number | null; within: number | null }) | null {
-  if (item.type === "wait") return item;
+  if (item.type === "wait" || isEventItem(item)) return item;
   if (item.type === "run" && item.retry) return item.retry;
   return null;
 }
@@ -257,7 +281,8 @@ export function itemPlan(item: SequenceItem): SchedulePlan | null {
     schedule,
     schedule.attempts,
     schedule.within,
-    item.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    item.timeoutMs ??
+      (isEventItem(item) ? EVENT_LIMITS.timeoutMs : DEFAULT_TIMEOUT_MS),
   );
 }
 
@@ -333,6 +358,12 @@ export function sequenceText(
       lines.push(
         `${head}: wait ${delayWords(item.seconds)}${item.reason ? `: ${item.reason}` : ""}`,
       );
+    } else if (isEventItem(item)) {
+      // Phase 3: what the event checks, and its schedule.
+      lines.push(
+        `${head}: ${item.type}, ${itemScheduleWords(item)}${item.onFail === "continue" ? " (on failure: continue)" : ""}`,
+      );
+      lines.push(eventWhat(item));
     } else {
       // Phase 2: the schedule is part of what the person approves.
       const words = itemScheduleWords(item);
@@ -355,7 +386,7 @@ export function sequenceCaptureNames(
   sequence: ReadonlyArray<SequenceItem> | null | undefined,
 ): string[] {
   return (sequence ?? []).flatMap((item) =>
-    item.type !== "delay" ? item.captures.map((capture) => capture.name) : [],
+    isCommandItem(item) ? item.captures.map((capture) => capture.name) : [],
   );
 }
 
@@ -363,13 +394,11 @@ export function sequenceCaptureNames(
 export function runItems(
   sequence: ReadonlyArray<SequenceItem> | null | undefined,
 ): CommandItemSpec[] {
-  return (sequence ?? []).filter(
-    (item): item is CommandItemSpec => item.type !== "delay",
-  );
+  return (sequence ?? []).filter(isCommandItem);
 }
 
 /** An item's checks with its stopIf checks: all that read its output. */
 export function itemChecks(item: SequenceItem): Check[] {
-  if (item.type === "delay") return [];
+  if (!isCommandItem(item)) return [];
   return item.type === "wait" ? [...item.checks, ...item.stopIf] : item.checks;
 }

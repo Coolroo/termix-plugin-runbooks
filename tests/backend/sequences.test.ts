@@ -138,7 +138,7 @@ describe("writing a sequence", () => {
     ],
     [{ sequence: [delay(0)] }, "seconds must be an integer from 1 to 3600"],
     [{ sequence: [delay(3601)] }, "seconds must be an integer from 1 to 3600"],
-    [{ sequence: [delay(5)] }, "at least one run or wait item"],
+    [{ sequence: [delay(5)] }, "at least one item that is not a delay"],
     [{ sequence: [run("")] }, "sequence[0].command is required"],
     [
       { sequence: [run("a", { onFail: "maybe" })] },
@@ -148,9 +148,10 @@ describe("writing a sequence", () => {
       { sequence: [run("a", { extra: 1 })] },
       'unknown sequence[0] field "extra"',
     ],
-    [{ sequence: [{ type: "port", port: 22 }] }, "comes in a later version"],
-    [{ sequence: [{ type: "container", name: "x" }] }, "later version"],
-    [{ sequence: [{ type: "nope" }] }, 'type must be "run", "wait" or "delay"'],
+    // 1.4.10, phase 3: the events need within, as a wait does.
+    [{ sequence: [{ type: "port", port: 22 }] }, "within is required"],
+    [{ sequence: [{ type: "container", name: "x" }] }, "within is required"],
+    [{ sequence: [{ type: "nope" }] }, 'type must be "run", "wait", "delay"'],
     [
       {
         sequence: [

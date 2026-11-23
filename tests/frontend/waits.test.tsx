@@ -93,7 +93,7 @@ function item(position: number, overrides: Partial<RunItem> = {}): RunItem {
     position,
     type: spec.type,
     label: spec.label,
-    command: spec.type !== "delay" ? spec.command : null,
+    command: spec.type === "run" || spec.type === "wait" ? spec.command : null,
     seconds: null,
     reason: null,
     onFail: "stop",
@@ -114,6 +114,7 @@ function item(position: number, overrides: Partial<RunItem> = {}): RunItem {
     maxAttempts: null,
     endsBy: null,
     nextAttemptAt: null,
+    result: null,
     ...overrides,
   };
 }
@@ -148,6 +149,7 @@ function attempt(
       { label: "the output contains 'FAILED'", ok: false, detail: "not found" },
     ],
     why: "check",
+    result: null,
     ...overrides,
   };
 }

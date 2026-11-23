@@ -309,7 +309,7 @@ export const runItems = defineTable(
     runbookId: integer().notNull(),
     // 1-based: the item's place in the step's sequence.
     position: integer().notNull(),
-    // run | delay | wait
+    // run | delay | wait | port | http | file | container | unit | log | job
     type: varchar(16).notNull(),
     label: text(),
     // A run or wait item's command as it ran, values filled in; null for a
@@ -347,6 +347,9 @@ export const runItems = defineTable(
     maxAttempts: integer(),
     endsBy: timestamp(),
     nextAttemptAt: timestamp(),
+    // Phase 3, an event item: the state its last check read, in fixed
+    // words ("healthy", "HTTP 503").
+    result: varchar(120),
   },
   {
     indexes: [
@@ -384,9 +387,11 @@ export const runAttempts = defineTable(
     // item's stopIf checks (ok: it matched).
     checks: text(),
     stopIf: text(),
-    // exit | check | timeout | connect | stop-if | stopped | interrupted;
-    // null while it runs and when it passed.
+    // exit | check | timeout | connect | stop-if | stopped | interrupted |
+    // not-yet | fail-state; null while it runs and when it passed.
     why: varchar(16),
+    // Phase 3, an event's check: the state it read, in fixed words.
+    result: varchar(120),
   },
   {
     indexes: [

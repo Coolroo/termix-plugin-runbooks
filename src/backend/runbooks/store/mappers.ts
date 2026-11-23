@@ -3,6 +3,7 @@
  * JSON columns read back, and a patch written as columns.
  */
 
+import { isEventType } from "../../../shared/events.js";
 import { parseJson, type Capture, type Values } from "../../values/values.js";
 import type { Check, CheckResult } from "../../checks/checks.js";
 import type { StoredStdin } from "../../running/stdin.js";
@@ -167,7 +168,12 @@ export function toRunItem(row: Record<string, unknown>): RunItemRow {
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
     position: Number(row.position),
-    type: row.type === "delay" || row.type === "wait" ? row.type : "run",
+    type:
+      row.type === "delay" ||
+      row.type === "wait" ||
+      isEventType(String(row.type))
+        ? (row.type as RunItemRow["type"])
+        : "run",
     label: optString(row.label),
     command: optString(row.command),
     seconds: optNumber(row.seconds),
@@ -192,6 +198,7 @@ export function toRunItem(row: Record<string, unknown>): RunItemRow {
     maxAttempts: optNumber(row.maxAttempts),
     endsBy: optString(row.endsBy),
     nextAttemptAt: optString(row.nextAttemptAt),
+    result: optString(row.result),
   };
 }
 
@@ -228,6 +235,7 @@ export function toRunAttempt(row: Record<string, unknown>): RunAttemptRow {
     why: ATTEMPT_WHYS.has(row.why as string)
       ? (row.why as RunAttemptRow["why"])
       : null,
+    result: optString(row.result),
   };
 }
 
@@ -238,6 +246,8 @@ const ATTEMPT_WHYS: ReadonlySet<string> = new Set([
   "connect",
   "stop-if",
   "stopped",
+  "not-yet",
+  "fail-state",
   "interrupted",
 ]);
 

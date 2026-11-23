@@ -5,6 +5,7 @@
  * Two of these would let a step run twice, so nothing else makes one.
  */
 
+import { createPlatforms, type Platforms } from "../events/platforms.js";
 import type { Request } from "express";
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import { InputError } from "../core/errors.js";
@@ -70,6 +71,8 @@ export function createPersonKit(
   events: Events,
   notify: { enabled: () => Promise<boolean> },
   haw: Haw,
+  /** Which hosts runs found to be Windows hosts (1.4.10, phase 3). */
+  platforms: Platforms = createPlatforms(),
 ) {
   const actor = () => ctx.currentActor() as string;
 
@@ -437,6 +440,7 @@ export function createPersonKit(
     events,
     notify,
     haw,
+    platforms,
     actor,
     use,
     act,
