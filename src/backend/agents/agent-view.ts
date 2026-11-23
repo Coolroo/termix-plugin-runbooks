@@ -165,9 +165,11 @@ function agentRun(
     stdout: output.stdout,
     stderr: output.stderr,
     pastedOutput: output.pastedOutput,
-    // Whether a person pasted it or the page read it from the terminal
-    // (1.4.9): a read-back knows the text was not typed by hand.
-    outputSource: run.outputSource,
+    // Where the person said the text came from (1.4.9): pasted, or read
+    // from the terminal. The page says so; it proves nothing. On a hidden
+    // step it would tell whether the command printed anything, and whether
+    // the person changed it: that is its output too (BUG-019).
+    outputSource: hidden ? null : run.outputSource,
     // How much a hidden step printed, and when, is its output too (BUG-011).
     truncated: hidden ? false : run.truncated,
     timedOut: run.timedOut,

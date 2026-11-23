@@ -31,14 +31,16 @@ vi.mock("@termix-ssh/plugin-sdk/frontend", async (importOriginal) => {
 });
 
 const COMMAND = "systemctl is-active nginx";
-const PROMPT = "wyatt@web-1:~$";
+const PROMPT = "wyatt@web-1:~$ ";
 
 const render = useRenderedApp();
 
 /** A terminal screen with a prompt, and the handle SSH Terminal gives. */
 function fakeTerminal() {
+  const listeners = new Set<(data: string) => void>();
   const terminal = {
     lines: ["Welcome", PROMPT],
+    listeners,
     handle: {
       readBufferLines: (): BufferLine[] =>
         terminal.lines.map((text, row) => ({
@@ -46,8 +48,16 @@ function fakeTerminal() {
           firstRow: row,
           lastRow: row,
         })),
-      subscribeOutput: () => () => {},
-      isAtPasswordPrompt: () => false,
+      subscribeOutput: (listener: (data: string) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      isAtPasswordPrompt: vi.fn(() => false),
+    },
+    /** The host prints: raw to the listeners, plain lines to the screen. */
+    print(raw: string, ...shown: string[]) {
+      for (const listener of [...listeners]) listener(raw);
+      terminal.lines.push(...shown);
     },
   };
   return terminal;
@@ -123,7 +133,8 @@ async function sendIt(): Promise<FakeApi> {
     _id: string,
     text: string,
   ) => {
-    terminal.lines[terminal.lines.length - 1] += ` ${text}`;
+    terminal.lines[terminal.lines.length - 1] += text;
+    for (const listener of [...terminal.listeners]) listener(text);
     return true;
   }) as never);
   rendered.renderTab("runbooks", { isVisible: true });
@@ -140,9 +151,13 @@ const card = () => document.querySelector('[data-step="2"]') as HTMLElement;
 const box = () =>
   card().querySelector("[data-paste-box]") as HTMLTextAreaElement;
 
-/** The host prints `lines`, then the prompt comes back. */
+/** The person presses Enter: the host prints `lines`, then the prompt. */
 function finish(...lines: string[]) {
-  terminal.lines.push(...lines, PROMPT);
+  terminal.print(
+    `\r\n${lines.map((line) => `${line}\r\n`).join("")}${PROMPT}`,
+    ...lines,
+    PROMPT,
+  );
 }
 
 const filled = (text: string) =>
@@ -156,9 +171,13 @@ describe("Send to terminal fills the paste box", () => {
       "Typed into web-1. Press Enter there; its output comes back here for you to check.",
     );
     expect(box().placeholder).toBe(locales.capture.placeholder);
+    // Nothing yet: no prompt after the output, so "check the end".
     expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-      locales.capture.running,
+      locales.capture.check,
     );
+    expect(
+      card().querySelector("[data-capture-warning='endUnsure']")?.textContent,
+    ).toBe(locales.capture.endUnsure);
 
     finish("active");
     await filled("active");
@@ -169,6 +188,7 @@ describe("Send to terminal fills the paste box", () => {
     );
     expect(box().dataset.pasteBox).toBe("captured");
     expect(within(card()).getByText(locales.capture.from)).toBeTruthy();
+    expect(card().querySelector("[data-capture-warning]")).toBeNull();
   });
 
   it("sends the text as read with outputSource captured", async () => {
@@ -217,6 +237,91 @@ describe("Send to terminal fills the paste box", () => {
     expect(box().value).toBe("active");
     expect(box().dataset.pasteBox).toBe("captured");
     expect(within(card()).queryByText(locales.capture.edited)).toBeNull();
+  });
+});
+
+describe("Mark failed sends the read text only once the person saw it (BUG-019)", () => {
+  it("sends no output when the person never opened the box", async () => {
+    const client = await sendIt();
+    finish("active");
+    await filled("active");
+    expect(
+      card().querySelector("[data-capture-failed-hint]")?.textContent,
+    ).toBe(locales.capture.failedEmpty);
+    fireEvent.click(within(card()).getByText(locales.run.markFailed));
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
+        pastedOutput: "",
+        outcome: "failed",
+        outputSource: "pasted",
+      }),
+    );
+  });
+
+  it("sends the read text once the person opened the box", async () => {
+    const client = await sendIt();
+    finish("active");
+    await filled("active");
+    fireEvent.focus(box());
+    expect(card().querySelector("[data-capture-failed-hint]")).toBeNull();
+    fireEvent.click(within(card()).getByText(locales.run.markFailed));
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
+        pastedOutput: "active",
+        outcome: "failed",
+        outputSource: "captured",
+      }),
+    );
+  });
+
+  it("Mark done sends the read text as before, opened or not", async () => {
+    const client = await sendIt();
+    finish("active");
+    await filled("active");
+    fireEvent.click(within(card()).getByText(locales.run.markDone));
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
+        pastedOutput: "active",
+        outcome: "done",
+        outputSource: "captured",
+      }),
+    );
+  });
+});
+
+describe("the reading", () => {
+  it("stops once the prompt is back", async () => {
+    await sendIt();
+    finish("active");
+    await filled("active");
+    await vi.waitFor(() =>
+      expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
+        locales.capture.finished,
+      ),
+    );
+    const reads = terminal.handle.isAtPasswordPrompt.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(terminal.handle.isAtPasswordPrompt.mock.calls.length).toBe(reads);
+  });
+
+  it("warns, and never says finished, when the order is not sure", async () => {
+    await sendIt();
+    // The host moved the cursor between rows, and the screen has the
+    // command twice: neither can place the output for sure.
+    terminal.print(
+      `\r\nactive\r\n\u001b[5;1H${PROMPT}`,
+      "active",
+      PROMPT + COMMAND,
+      PROMPT,
+    );
+    await filled("active");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
+      locales.capture.check,
+    );
+    expect(
+      card().querySelector("[data-capture-warning='drawn']")?.textContent,
+    ).toBe(locales.capture.drawn);
   });
 });
 

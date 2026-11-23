@@ -4,10 +4,11 @@
  * that shows the answer, and the questions a refused request asks.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePluginApi, useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { toast } from "sonner";
 import { usePolling } from "../ui/timers";
+import { endCapturesOf } from "../running/terminal-capture";
 import {
   errorBody,
   errorMessage,
@@ -77,6 +78,12 @@ export function useRunbook(
       setFailed(true);
     }
   }, [api, id, t]);
+
+  // A run marked done or failed on another device, or reopened, no longer
+  // reads its terminal here (BUG-019).
+  useEffect(() => {
+    if (runbook) endCapturesOf(runbook.steps.flatMap((step) => step.runs));
+  }, [runbook]);
 
   const anyRunning = Boolean(
     runbook?.steps.some((step) => step.runs.some((run) => run.running)),

@@ -182,7 +182,7 @@ describe("captured text goes through what a paste goes through", () => {
 });
 
 describe("agents", () => {
-  it("see outputSource on the run, also on a hidden step", async () => {
+  it("see outputSource on the run, and null on a hidden step (BUG-019)", async () => {
     const { s, token, runbook } = await setupRunbook([status, statusAgain]);
     const [one, two] = runbook.steps;
     for (const step of [one, two]) {
@@ -208,8 +208,14 @@ describe("agents", () => {
       pastedOutput: "active",
       outputSource: "captured",
     });
+    // Whether a hidden step printed, and whether the person changed it,
+    // is its output too.
     expect(runs[1]).toMatchObject({
       pastedOutput: "[hidden by owner]",
+      outputSource: null,
+    });
+    // The person still sees it.
+    expect(await shownRun(s, runbook.id, runs[1].id as number)).toMatchObject({
       outputSource: "captured-edited",
     });
   });

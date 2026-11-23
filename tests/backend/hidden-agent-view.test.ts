@@ -773,6 +773,46 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
   });
 });
 
+describe("BUG-019: a hidden Send to terminal step", () => {
+  it("T1 Mark failed with read text or with none: outputSource", async () => {
+    const found = await compare(
+      "T1 failed paste on a hidden terminal step",
+      async (pasted) => {
+        const x = await setup([
+          {
+            title: "Look",
+            hostId: 1,
+            command: "look",
+            hideOutputFromAgents: true,
+          },
+          { title: "Two", hostId: 1, command: "two" },
+        ]);
+        const sent = await runStep(
+          x.s,
+          x.runbook.id,
+          x.runbook.steps[0].id,
+          {},
+          "terminal",
+        );
+        expect(sent.status).toBe(200);
+        const failed = await x.s.person(
+          "POST",
+          `/runs/${sent.body.id}/complete`,
+          {
+            pastedOutput: pasted,
+            outcome: "failed",
+            outputSource: "captured",
+          },
+        );
+        expect(failed.status, JSON.stringify(failed.body)).toBe(200);
+        return agentSees(x);
+      },
+      ["", "Permission denied"],
+    );
+    expect(found).toEqual([]);
+  });
+});
+
 describe("1.4.7: a VM step hidden from agents", () => {
   it("G12 its details, address, id and values, and a later step that uses them", async () => {
     const found = await compare(

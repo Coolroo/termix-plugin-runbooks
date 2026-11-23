@@ -20,7 +20,7 @@ import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
 import { RunInput } from "../running/RunInput";
 import { useCapturedOutput } from "../running/use-captured-output";
-import type { CaptureRead } from "../running/terminal-capture";
+import { looksFinished, type CaptureRead } from "../running/terminal-capture";
 import type { StepActions } from "./StepButtons";
 import type { Run, Step } from "../api-types";
 
@@ -127,7 +127,9 @@ function Output({ label, text }: { label: string; text: string | null }) {
 
 /**
  * Above a paste box that Send to terminal filled (1.4.9): where the text is
- * from, whether the command looks finished, and Read again.
+ * from, whether the command looks finished, and Read again. When the start
+ * or the end of the output is not certain (BUG-019), a warning says what to
+ * check, and never "looks finished".
  */
 function CaptureNote({
   read,
@@ -141,9 +143,14 @@ function CaptureNote({
   const { t } = useTranslation();
   const state = read.passwordPrompt
     ? { key: "capture.password", tone: "warning" as const }
-    : read.finished
+    : looksFinished(read)
       ? { key: "capture.finished", tone: "success" as const }
-      : { key: "capture.running", tone: "muted" as const };
+      : { key: "capture.check", tone: "warning" as const };
+  const warnings = [
+    !read.startSure && "startUnsure",
+    read.drawn && "drawn",
+    !read.finished && (read.final ? "endStopped" : "endUnsure"),
+  ].filter((key): key is string => !!key);
   return (
     <div className="flex flex-col gap-1" data-capture={read.from}>
       <p className="text-muted-foreground">{t("capture.from")}</p>
@@ -166,14 +173,15 @@ function CaptureNote({
           {t("capture.readAgain")}
         </Button>
       </div>
+      {!read.passwordPrompt &&
+        warnings.map((key) => (
+          <p key={key} className="text-warning" data-capture-warning={key}>
+            {t(`capture.${key}`)}
+          </p>
+        ))}
       {edited && (
         <p className="text-muted-foreground" data-capture-edited>
           {t("capture.edited")}
-        </p>
-      )}
-      {read.from === "raw" && (
-        <p className="text-muted-foreground" data-capture-raw>
-          {t("capture.raw")}
         </p>
       )}
       {read.truncated && (
@@ -326,6 +334,7 @@ export function RunDetails({
           <Textarea
             value={pasted}
             onChange={(event) => box.change(event.target.value)}
+            onFocus={box.open}
             placeholder={
               box.read ? t("capture.placeholder") : t("run.pastePlaceholder")
             }
@@ -356,13 +365,27 @@ export function RunDetails({
             <Button
               size="sm"
               variant="outline"
+              // The read text goes with a failure only once the person
+              // opened or changed the box (BUG-019); otherwise none.
               onClick={() =>
-                onComplete!(run, pasted, "failed", enteredExit, box.source)
+                onComplete!(
+                  run,
+                  box.failed.text,
+                  "failed",
+                  enteredExit,
+                  box.failed.source,
+                )
               }
+              data-mark-failed
             >
               {t("run.markFailed")}
             </Button>
           </div>
+          {box.read && box.failed.text === "" && pasted.trim() !== "" && (
+            <p className="text-muted-foreground" data-capture-failed-hint>
+              {t("capture.failedEmpty")}
+            </p>
+          )}
           {/* While the terminal is read, the box's placeholder says why. */}
           {pasted.trim() === "" && !box.read && <PasteFirstHint />}
         </div>

@@ -35,7 +35,7 @@ export interface TerminalCleaner {
  * the other string codes: ESC ] ... BEL or ESC \. Any other: ESC, then
  * intermediates (space to /), then one final byte.
  */
-function escapeEnd(text: string, at: number): number {
+export function escapeEnd(text: string, at: number): number {
   const kind = text[at + 1];
   if (kind === undefined) return -1;
   if (kind === "[") {

@@ -272,11 +272,15 @@
   "capture": {
     "from": "From the terminal: check it, change it if you need to, then mark the step done or failed.",
     "finished": "The command looks finished: the prompt is back",
-    "running": "The command may still be running",
+    "check": "Check the text",
     "password": "The terminal waits for a password",
+    "startUnsure": "Check the start: Runbooks could not find the command's line for sure, so the text may begin with other lines.",
+    "drawn": "Check the order: the terminal drew on other lines (tmux, a full-screen program or the prompt), so lines may be missing or out of order.",
+    "endUnsure": "Check the end: no prompt after the output yet. The command may still be running, or it changed the prompt.",
+    "endStopped": "Check the end: Runbooks stopped reading before a prompt came back (a new command in this terminal, the tab closed, or a limit).",
+    "failedEmpty": "Mark failed keeps this text only once you open or change the box; otherwise the failure has no output.",
     "readAgain": "Read again",
     "edited": "You changed the text, so it no longer follows the terminal. Read again puts the terminal's text back.",
-    "raw": "The command's start has left the terminal's scrollback, so this is the output as it arrived.",
     "cut": "The output is longer than a step keeps: only its start is here.",
     "placeholder": "Nothing from the terminal yet. Press Enter in the terminal to run the command; its output shows here."
   },
