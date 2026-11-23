@@ -32,6 +32,7 @@ import {
 } from "../ui/ui";
 import { ChecksList, checksWords } from "./ChecksList";
 import { RunDetails } from "./RunDetails";
+import { SequenceItems } from "./SequenceItems";
 import { StepButtons, type StepActions } from "./StepButtons";
 import { useStepText } from "./step-text";
 import type { Step, SecretState } from "../api-types";
@@ -178,6 +179,8 @@ export function StepCard({
     step.resolvedCommand !== null &&
     step.missing.length === 0 &&
     step.commandHash !== null;
+  // 1.4.10: a sequence step lists its items instead of one command.
+  const sequence = Boolean(step.sequence);
   const stdin = step.stdin ?? null;
   const stdinSource = stdin
     ? describeStdin(t, stdin.source, stdin.bytes)
@@ -445,7 +448,31 @@ export function StepCard({
         </CommandBlock>
       )}
 
-      {!agentStep && step.hostId !== null && (
+      {!agentStep && step.hostId !== null && sequence && (
+        <div className="mt-2" data-sequence-step>
+          <SectionLabel>
+            {t("step.on", { host: hostLabel(t, step) })}
+          </SectionLabel>
+          {step.workdir && (
+            // A path keeps its case: not in the label's capitals.
+            <p className="mt-0.5 text-xs text-muted-foreground" data-workdir>
+              {t("item.inLabel")}{" "}
+              <code className="font-mono text-foreground">{step.workdir}</code>
+            </p>
+          )}
+          {missingLine}
+          <SequenceItems
+            step={step}
+            run={latest?.items ? latest : null}
+            busy={busy}
+            runbookOpen={runbookOpen && !replaced}
+            onSkipDelay={() => actions.skipDelay(step)}
+            onInput={actions.input}
+          />
+        </div>
+      )}
+
+      {!agentStep && step.hostId !== null && !sequence && (
         <CommandBlock
           label={<span>{t("step.on", { host: hostLabel(t, step) })}</span>}
           copy={
@@ -617,6 +644,7 @@ export function StepCard({
             onComplete={actions.complete}
             step={step}
             onInput={actions.input}
+            itemsShown={sequence}
           />
           {earlier.length > 0 && (
             <div>

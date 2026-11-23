@@ -93,7 +93,9 @@
     "agentWaiting": "Waiting for the agent ({{label}})",
     "agentCommand": "What the agent will run",
     "agentCommandOn": "What the agent will run on {{host}}",
-    "sendToAgent": "Send to agent"
+    "sendToAgent": "Send to agent",
+    "continueFrom": "Continue from item {{position}}",
+    "runFromStart": "Run again from item 1"
   },
   "runIn": {
     "terminal": "Send to terminal only: this step runs in a terminal.",
@@ -348,6 +350,10 @@
     },
     "stepColors": {
       "label": "Step colors"
+    },
+    "banSleep": {
+      "label": "Refuse sleep in commands",
+      "description": "Agents cannot write a command that waits a fixed time (sleep, Start-Sleep, timeout /t, ping -n as a delay): they make the step a sequence with a delay item, which the person sees count down. Steps written before stay as they are."
     }
   },
   "notify": {
@@ -519,5 +525,36 @@
       "path": "Path",
       "field": "Field"
     }
+  },
+  "item": {
+    "title": "Items ({{count}}), run in order",
+    "in": "in {{dir}}",
+    "type": {
+      "run": "Run",
+      "delay": "Delay"
+    },
+    "status": {
+      "waiting": "Waiting",
+      "running": "Running",
+      "passed": "Passed",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "not-run": "Not run"
+    },
+    "delay": "Wait {{time}}",
+    "delayReason": "Wait {{time}}: {{reason}}",
+    "left": "{{time}} left",
+    "skip": "Skip",
+    "skippedBy": "Skipped by {{user}}",
+    "onFailContinue": "On failure: go on",
+    "later": "Fills {{names}} from an earlier item when it runs",
+    "carried": "Passed in run {{run}}; not run again",
+    "inLabel": "Each item starts in"
+  },
+  "continue": {
+    "title": "Continue step {{position}} from item {{item}}?",
+    "confirm": "Continue",
+    "carried_one": "Item 1 passed and does not run again. These items run, in order:",
+    "carried_other": "Items 1 to {{count}} passed and do not run again. These items run, in order:"
   }
 }

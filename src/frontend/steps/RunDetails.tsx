@@ -1,6 +1,6 @@
 /** A run of a step: its status, command, output, and Mark done or failed. */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import {
   Button,
@@ -17,7 +17,9 @@ import {
   runSummaryKey,
 } from "../ui/format";
 import { useFetchedAt, useTick } from "../ui/timers";
-import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
+import { PasteFirstHint } from "../ui/ui";
+import { LiveOutput, Output } from "./output";
+import { ItemSummary } from "./SequenceItems";
 import { RunInput } from "../running/RunInput";
 import { useCapturedOutput } from "../running/use-captured-output";
 import { looksFinished, type CaptureRead } from "../running/terminal-capture";
@@ -32,38 +34,6 @@ interface InputProps {
 
 /** A silence this long is shown as a warning: the command may be stuck. */
 const SILENCE_WARN_MS = 30_000;
-
-/**
- * Output that grows while the command runs. It follows the end, unless the
- * person scrolled up to read something.
- */
-function LiveOutput({ label, text }: { label: string; text: string }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const follow = useRef(true);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element && follow.current) element.scrollTop = element.scrollHeight;
-  }, [text]);
-  if (!text) return null;
-  return (
-    <div className="mt-1">
-      <SectionLabel>{label}</SectionLabel>
-      <CodeBlock
-        ref={ref}
-        data-live-output={label}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          follow.current =
-            element.scrollTop + element.clientHeight >=
-            element.scrollHeight - 16;
-        }}
-        className="mt-1 max-h-80 overflow-auto"
-      >
-        {text}
-      </CodeBlock>
-    </div>
-  );
-}
 
 /**
  * The running command: elapsed time, silence, its output so far, and the
@@ -110,18 +80,6 @@ function LiveRun({ run, step, onInput }: { run: Run } & InputProps) {
         <RunInput run={run} step={step} elapsedMs={elapsed} onInput={onInput} />
       )}
     </div>
-  );
-}
-
-function Output({ label, text }: { label: string; text: string | null }) {
-  if (!text) return null;
-  return (
-    <details className="mt-1" open={text.length < 2000}>
-      <SectionLabel as="summary" className="cursor-pointer">
-        {label}
-      </SectionLabel>
-      <CodeBlock className="mt-1 max-h-80 overflow-auto">{text}</CodeBlock>
-    </details>
   );
 }
 
@@ -198,10 +156,17 @@ export function RunDetails({
   onComplete,
   step,
   onInput,
+  itemsShown = false,
 }: {
   run: Run;
   onComplete?: StepActions["complete"];
+  /**
+   * 1.4.10: the step card shows this sequence run's items in full, so the
+   * run shows only its summary.
+   */
+  itemsShown?: boolean;
 } & InputProps) {
+  const items = run.items ?? null;
   const { t } = useTranslation();
   const awaiting =
     !!onComplete && run.status === "awaiting-output" && run.mode !== "vm";
@@ -248,7 +213,8 @@ export function RunDetails({
           </span>
         ) : null}
       </div>
-      {run.mode !== "manual" &&
+      {!items &&
+        run.mode !== "manual" &&
         run.mode !== "agent" &&
         run.mode !== "secret" &&
         run.mode !== "decision" &&
@@ -278,7 +244,10 @@ export function RunDetails({
         </p>
       )}
       {run.error && <p className="mt-1 text-destructive">{run.error}</p>}
-      {run.running ? (
+      {items ? (
+        // A sequence's output is on its items (1.4.10).
+        !itemsShown && <ItemSummary items={items} />
+      ) : run.running ? (
         <LiveRun run={run} step={step} onInput={onInput} />
       ) : (
         <>

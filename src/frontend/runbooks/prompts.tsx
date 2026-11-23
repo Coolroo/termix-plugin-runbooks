@@ -19,7 +19,7 @@ import { MAX_SENT_NOTE } from "../../shared/limits";
 import { stepLabel } from "../../shared/steps";
 import type { Translate } from "../../shared/step-kinds";
 import { CodeBlock, SectionLabel } from "../ui/ui";
-import { describeStdin, formatTime, hostLabel } from "../ui/format";
+import { describeStdin, formatTime, formatWait, hostLabel } from "../ui/format";
 import { ChecksList, checksWords } from "../steps/ChecksList";
 import type { ConflictBody, Step } from "../api-types";
 
@@ -116,6 +116,73 @@ function CommandPreview({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * A sequence's items for a question (1.4.10): number, label, and the exact
+ * command or the wait, from item `from` on. No hooks: a confirm dialog
+ * renders outside the plugin.
+ */
+function SequencePreview({
+  t,
+  step,
+  from = 1,
+}: {
+  t: Translate;
+  step: Step;
+  from?: number;
+}) {
+  const items = (step.resolvedSequence ?? []).filter(
+    (item) => item.position >= from,
+  );
+  return (
+    <div className="flex flex-col gap-1 text-xs" data-confirm-sequence>
+      <span>
+        {hostLabel(t, step)}
+        {step.workdir ? ` · ${t("item.in", { dir: step.workdir })}` : ""}
+      </span>
+      <ol className="flex max-h-72 flex-col gap-1 overflow-auto">
+        {items.map((item) => (
+          <li key={item.position} data-confirm-item={item.position}>
+            <span className="font-mono text-muted-foreground">
+              {item.position}.
+            </span>{" "}
+            {item.label ?? t(`item.type.${item.type}`)}
+            {item.type === "delay" ? (
+              <span className="text-muted-foreground">
+                {" "}
+                ·{" "}
+                {item.reason
+                  ? t("item.delayReason", {
+                      time: formatWait(item.seconds),
+                      reason: item.reason,
+                    })
+                  : t("item.delay", { time: formatWait(item.seconds) })}
+              </span>
+            ) : (
+              <CodeBlock className="mt-0.5 overflow-x-auto" small={false}>
+                {item.command}
+              </CodeBlock>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** "Continue from item 3?": the items that run, and those that do not. */
+export function continueDetails(t: Translate, step: Step, from: number) {
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      {from > 1 && (
+        <span data-confirm-carried>
+          {t("continue.carried", { count: from - 1 })}
+        </span>
+      )}
+      <SequencePreview t={t} step={step} from={from} />
     </div>
   );
 }
@@ -297,6 +364,7 @@ function capturesList(t: Translate, step: Step) {
  * confirm. No hooks: a confirm renders outside the plugin.
  */
 export function runDetails(t: Translate, step: Step) {
+  if (step.resolvedSequence) return <SequencePreview t={t} step={step} />;
   return (
     <div className="flex flex-col gap-2">
       <CommandPreview
@@ -324,6 +392,7 @@ export function runDetails(t: Translate, step: Step) {
 
 /** The host and the command only, for a question. */
 export function commandDetails(t: Translate, step: Step) {
+  if (step.resolvedSequence) return <SequencePreview t={t} step={step} />;
   return (
     <CommandPreview
       host={hostLabel(t, step)}

@@ -49,6 +49,8 @@ export interface KindStep {
   vm?: { action?: string; name?: string } | null;
   /** 1.4.7: the VM host's name. */
   vmHostName?: string | null;
+  /** 1.4.10: a sequence step's items; it runs on its host like a command. */
+  sequence?: unknown[] | null;
 }
 
 /** What a kind may know about the runbook around a step. */
@@ -171,7 +173,8 @@ export const BUILT_IN_KINDS: StepKind[] = [
       light: `color-mix(in oklab, ${SUCCESS} 60%, var(--foreground))`,
       dark: SUCCESS,
     },
-    matches: (step) => step.command !== null && step.hostId !== null,
+    matches: (step) =>
+      (step.command !== null || Boolean(step.sequence)) && step.hostId !== null,
     priority: 40,
   },
   {
@@ -197,7 +200,10 @@ export const BUILT_IN_KINDS: StepKind[] = [
     },
     // The last step, with no command, that tells the person to finish.
     matches: (step, runbook) =>
-      runbook.last && step.command === null && /^\s*finish\b/i.test(step.title),
+      runbook.last &&
+      step.command === null &&
+      !step.sequence &&
+      /^\s*finish\b/i.test(step.title),
     priority: 20,
   },
   {
@@ -207,7 +213,7 @@ export const BUILT_IN_KINDS: StepKind[] = [
     label: (t) => t("kind.app"),
     // The plugin's own violet.
     defaultColor: { light: "#6d28d9", dark: "#a78bfa" },
-    matches: (step) => step.command === null,
+    matches: (step) => step.command === null && !step.sequence,
     priority: 0,
   },
 ];
