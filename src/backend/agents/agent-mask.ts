@@ -26,6 +26,7 @@ import { escapePattern } from "../../shared/checks.js";
 import { stepCaptures } from "../values/effective.js";
 import { placeholders } from "../values/values.js";
 import { isAgentStep, stepValueNames } from "../../shared/steps.js";
+import { runItems } from "../../shared/sequence.js";
 
 export const HIDDEN = "[hidden by owner]";
 
@@ -56,6 +57,7 @@ type MaskStep = Pick<
   | "captures"
   | "decision"
   | "vm"
+  | "sequence"
 >;
 
 /** The fields of a run that hold output or values. */
@@ -89,7 +91,10 @@ export interface AgentMask {
    * each capture it declares, hidden, whether it matched or not (BUG-011).
    */
   stepValues: (
-    step: Pick<StepRow, "id" | "status" | "captures" | "decision" | "vm">,
+    step: Pick<
+      StepRow,
+      "id" | "status" | "captures" | "decision" | "vm" | "sequence"
+    >,
     runsByStep: Map<number, readonly RunRow[]>,
   ) => EffectiveValue[];
 }
@@ -159,9 +164,12 @@ function hiding(steps: ReadonlyArray<MaskStep>): Hiding {
   };
 }
 
-/** The values a step sets: its captures, its decision's or VM's values. */
+/**
+ * The values a step sets: its captures (a sequence's in its run items,
+ * 1.4.10), its decision's or VM's values.
+ */
 function valueNames(
-  step: Pick<StepRow, "captures" | "decision" | "vm">,
+  step: Pick<StepRow, "captures" | "decision" | "vm" | "sequence">,
 ): string[] {
   return stepValueNames(step);
 }
@@ -186,19 +194,21 @@ function unmaskedNames(
 }
 
 /**
- * The values a step's command, checks and standard input read. An agent
- * step's checks read the values agents see, and Termix runs nothing of it.
+ * The values a step's command, checks and standard input read; for a
+ * sequence (1.4.10), every run item's command and checks. An agent step's
+ * checks read the values agents see, and Termix runs nothing of it.
  */
 function readNames(
-  step: Pick<StepRow, "owner" | "command" | "checks" | "stdin">,
+  step: Pick<StepRow, "owner" | "command" | "checks" | "stdin" | "sequence">,
 ): string[] {
   if (isAgentStep(step)) return [];
+  const items = runItems(step.sequence);
+  const checks = [...step.checks, ...items.flatMap((item) => item.checks)];
   return [
     ...placeholders(step.command),
-    ...placeholders(JSON.stringify(step.checks)),
-    ...step.checks.flatMap((check) =>
-      check.type === "value" ? [check.name] : [],
-    ),
+    ...items.flatMap((item) => placeholders(item.command)),
+    ...placeholders(JSON.stringify(checks)),
+    ...checks.flatMap((check) => (check.type === "value" ? [check.name] : [])),
     ...(step.stdin?.from === "value" ? [step.stdin.name] : []),
   ];
 }

@@ -4,7 +4,7 @@
  */
 
 import { resolve, type Values } from "../values/values.js";
-import { agentCommand, resolveText } from "../values/effective.js";
+import { agentCommand, resolveItem, resolveText } from "../values/effective.js";
 import { checkDetail, checkWhy } from "../checks/checks.js";
 import { describeCheck, fillChecks } from "../../shared/checks.js";
 import type { RunRow, StepRow } from "../runbooks/store/types.js";
@@ -35,6 +35,13 @@ import {
 } from "../conditions/conditions.js";
 import { stepChoice } from "../decisions/decisions.js";
 import { nextStep } from "../runbooks/view.js";
+import {
+  sequenceText,
+  withWorkdir,
+  type RunItem,
+  type SequenceItem,
+} from "../../shared/sequence.js";
+import type { Check, CheckResult } from "../../shared/checks.js";
 
 /**
  * The runbook as an agent sees it: hidden steps' output, and values captured
@@ -75,7 +82,10 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         hostId: step.hostId,
         hostName: step.hostId === null ? null : hostName(step.hostId),
         command: step.command,
-        missing: agentCommand(step, valueMap).missing,
+        // 1.4.10: a sequence's items as written, and its workdir.
+        sequence: step.sequence,
+        workdir: step.workdir,
+        missing: agentMissing(step, valueMap),
         expect: step.expect,
         // Filled with masked values already. Masked again, the agent's own
         // text would show whether it equals a hidden value (BUG-010).
@@ -189,7 +199,145 @@ function agentRun(
     inputCount: run.inputs.length,
     // BUG-010: a visible step's capture that holds a hidden value too.
     captured: output.captured,
+    // 1.4.10: a sequence's items, each hidden as the run is.
+    ...(run.items
+      ? { items: agentItems(run, step, bundle, masked, hidden) }
+      : {}),
   };
+}
+
+/**
+ * Names a step's command, checks or run items use that have no value, with
+ * the values agents see. A name an earlier item of the sequence captures
+ * is filled by the run, so it is not missing (1.4.10).
+ */
+function agentMissing(step: StepRow, values: Values): string[] {
+  if (!step.sequence) return agentCommand(step, values).missing;
+  const earlier = new Set<string>();
+  const missing = new Set<string>();
+  for (const [index, item] of step.sequence.entries()) {
+    for (const name of resolveItem(item, index + 1, values, earlier).missing) {
+      missing.add(name);
+    }
+    if (item.type === "run") {
+      for (const capture of item.captures) earlier.add(capture.name);
+    }
+  }
+  return [...missing];
+}
+
+/**
+ * Check results as agents read them (BUG-011): the words built again from
+ * the checks as written, filled with the values agents saw; a result that
+ * does not fit the checks shows no words. A hidden step's failed check
+ * says only that it failed.
+ */
+function agentChecks(
+  results: CheckResult[] | null,
+  checks: readonly Check[],
+  values: Values,
+  shown: { terminal: boolean; exitCode: number | null },
+  hidden: boolean,
+): CheckResult[] | null {
+  if (!results) return null;
+  if (results.length !== checks.length) {
+    return results.map((result) => ({
+      label: HIDDEN,
+      ok: result.ok,
+      detail: HIDDEN,
+    }));
+  }
+  const filled = fillChecks(checks, values).checks;
+  return results.map((result, index) => {
+    const check = filled[index];
+    const why = hidden ? null : checkWhy(checks[index], result);
+    return {
+      label: check.label ?? describeCheck(check),
+      ok: result.ok,
+      detail: checkDetail(check, result.ok, shown, why),
+    };
+  });
+}
+
+/**
+ * A sequence run's items as agents read them (1.4.10), hidden as the run
+ * is (BUG-011): a hidden step's output, captures, error and size read
+ * "[hidden by owner]" or nothing. Each run item's command and check words
+ * are built again from the item as written, with the values agents saw
+ * when the run started and the earlier items' captures as agents read
+ * them, never masked after the fact.
+ */
+function agentItems(
+  run: ShownRun,
+  step: StepRow,
+  bundle: RunbookBundle,
+  masked: AgentMask,
+  hidden: boolean,
+) {
+  const values = valuesOf(agentValues(bundle, masked, run.id));
+  const sequence: ReadonlyArray<SequenceItem | undefined> = step.sequence ?? [];
+  return (run.items ?? []).map((item: RunItem) => {
+    const spec = sequence[item.position - 1];
+    const runSpec = spec?.type === "run" ? spec : null;
+    const command =
+      item.command === null
+        ? null
+        : runSpec
+          ? resolve(runSpec.command, values).text
+          : HIDDEN;
+    const checks = agentChecks(
+      item.checks,
+      runSpec?.checks ?? [],
+      values,
+      { terminal: false, exitCode: item.exitCode },
+      hidden,
+    );
+    const captured = hidden
+      ? item.status === "passed"
+        ? Object.fromEntries(
+            (runSpec?.captures ?? []).map((capture) => [capture.name, HIDDEN]),
+          )
+        : {}
+      : Object.fromEntries(
+          Object.entries(item.captured).map(([name, value]) => [
+            name,
+            masked.text(value)!,
+          ]),
+        );
+    // Later items read this item's captures as agents read them.
+    if (item.status === "passed") Object.assign(values, captured);
+    const output = (text: string | null) =>
+      text === null ? null : hidden ? HIDDEN : masked.text(text);
+    return {
+      id: item.id,
+      position: item.position,
+      type: item.type,
+      label: item.label,
+      command,
+      seconds: item.seconds,
+      reason: item.reason,
+      onFail: item.onFail,
+      status: item.status,
+      startedAt: item.startedAt,
+      finishedAt: item.finishedAt,
+      plannedEndAt: item.plannedEndAt,
+      exitCode: item.exitCode,
+      stdout: output(item.stdout),
+      stderr: output(item.stderr),
+      truncated: hidden ? false : item.truncated,
+      timedOut: item.timedOut,
+      error: hidden
+        ? item.status === "failed"
+          ? HIDDEN
+          : null
+        : masked.text(item.error),
+      checks,
+      captured,
+      skippedBy: item.skippedBy,
+      fromRunId: item.fromRunId,
+      lastOutputAt: hidden ? null : (item.lastOutputAt ?? null),
+    };
+  });
 }
 
 /**
@@ -207,39 +355,45 @@ function builtRun(
   hidden: boolean,
 ): { command: string; checks: ShownRun["checks"] } {
   const values = valuesOf(agentValues(bundle, masked, run.id));
-  const command =
-    run.command === "" || run.mode === "agent" || step.command === null
-      ? run.command
-      : resolve(step.command, values).text;
-  if (!run.checks) return { command, checks: null };
+  const command = builtCommand(run, step, values);
   // One result per check of the step, in order; a run whose results do
-  // not fit the step (none known) shows no words of them.
-  if (run.checks.length !== step.checks.length) {
-    return {
-      command,
-      checks: run.checks.map((result) => ({
-        label: HIDDEN,
-        ok: result.ok,
-        detail: HIDDEN,
-      })),
-    };
-  }
-  const filled = fillChecks(step.checks, values).checks;
+  // not fit the step (none known) shows no words of them. A hidden step's
+  // failed check says only that it failed: why it failed (a value not
+  // captured, a slow pattern) reads its output.
   const shown = { terminal: run.mode !== "exec", exitCode: run.exitCode };
   return {
     command,
-    checks: run.checks.map((result, index) => {
-      const check = filled[index];
-      // A hidden step's failed check says only that it failed: why it
-      // failed (a value not captured, a slow pattern) reads its output.
-      const why = hidden ? null : checkWhy(step.checks[index], result);
-      return {
-        label: check.label ?? describeCheck(check),
-        ok: result.ok,
-        detail: checkDetail(check, result.ok, shown, why),
-      };
-    }),
+    checks: agentChecks(run.checks, step.checks, values, shown, hidden),
   };
+}
+
+/**
+ * A run's command built again with the values agents saw: the step's
+ * command in its workdir, or a sequence's whole text (1.4.10), whose items
+ * that an earlier item fills keep {{name}} as written.
+ */
+function builtCommand(run: ShownRun, step: StepRow, values: Values): string {
+  if (run.command === "" || run.mode === "agent") return run.command;
+  if (step.sequence && run.items) {
+    const earlier = new Set<string>();
+    const items = step.sequence.map((item, index) => {
+      const {
+        missing: _missing,
+        later: _later,
+        position: _position,
+        ...built
+      } = resolveItem(item, index + 1, values, earlier);
+      if (item.type === "run") {
+        for (const capture of item.captures) earlier.add(capture.name);
+      }
+      return built as SequenceItem;
+    });
+    return sequenceText(items, step.workdir);
+  }
+  if (step.command === null) return run.command;
+  const filled = resolve(step.command, values).text;
+  // Only a step Termix runs on a host has a workdir (Run and Send).
+  return withWorkdir(filled, step.workdir);
 }
 
 /**

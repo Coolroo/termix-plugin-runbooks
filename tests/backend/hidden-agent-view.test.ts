@@ -41,6 +41,8 @@ const VOLATILE = new Set([
   "next",
   "expiresAt",
   "waitUntil",
+  // 1.4.10: when a running delay ends.
+  "plannedEndAt",
 ]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -768,6 +770,194 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
         return agentSees(x);
       },
       S17,
+    );
+    expect(found).toEqual([]);
+  });
+});
+
+describe("1.4.10: sequence steps hide each item as a run is hidden", () => {
+  /** Answers each command; a held one when `stop` names it. */
+  const sequenceRun = async (
+    secret: string,
+    options: {
+      hidden: boolean;
+      failSecond?: boolean;
+      continueAfter?: boolean;
+    },
+  ) => {
+    const x = await setup([
+      {
+        title: "Token in a sequence",
+        hostId: 1,
+        hideOutputFromAgents: options.hidden,
+        workdir: "/srv/app",
+        sequence: [
+          {
+            type: "run",
+            label: "Make",
+            command: "make-token",
+            captures: [{ name: "tok", pattern: "token=(\\S+)" }],
+            checks: [
+              { type: "value", name: "tok", matches: "^[a-z]" },
+              { type: "contains", text: "token=" },
+            ],
+          },
+          { type: "delay", seconds: 600, reason: "settle" },
+          {
+            type: "run",
+            label: "Use",
+            command: "use {{tok}}",
+            checks: [{ type: "notContains", text: "error" }],
+          },
+          { type: "run", command: "report", onFail: "continue" },
+        ],
+      },
+      { title: "Later", hostId: 1, command: "echo later={{tok}}" },
+    ]);
+    let fail = options.failSecond ?? false;
+    x.s.setExec(async (_h, command) => {
+      if (command.endsWith("make-token")) {
+        return execResult(`token=${secret}\nsize ${secret.length}\n`);
+      }
+      if (command.includes("use ")) {
+        return fail
+          ? execResult(`error near ${secret}\n`, {
+              stderr: `bad ${secret}`,
+              code: 3,
+            })
+          : execResult(`used ${command.slice(-secret.length)}\n`);
+      }
+      if (command.endsWith("report")) {
+        return execResult(`report ${secret}\n`, { code: 1 });
+      }
+      return execResult(`${command}\n`);
+    });
+    const shown = await view(x.s, x.runbook.id);
+    const step = shown.steps[0];
+    const started = await x.s.person("POST", `/steps/${step.id}/run`, {
+      revision: step.revision,
+      commandHash: step.commandHash,
+    });
+    expect(started.status, JSON.stringify(started.body)).toBe(200);
+    await vi.waitFor(
+      async () => {
+        const run = await shownRun(x.s, x.runbook.id, started.body.id);
+        if (run.items[1].status !== "running") throw new Error("not yet");
+      },
+      { timeout: 3000, interval: 5 },
+    );
+    // While the delay runs: what an agent sees of a running sequence.
+    const during = await agentSees(x);
+    await x.s.person("POST", `/steps/${step.id}/skip-delay`);
+    await waitForRun(x.s, x.runbook.id, started.body.id);
+    if (options.continueAfter) {
+      fail = false;
+      const again = await view(x.s, x.runbook.id);
+      const went = await x.s.person("POST", `/steps/${step.id}/continue`, {
+        revision: again.steps[0].revision,
+        commandHash: again.steps[0].commandHash,
+      });
+      expect(went.status, JSON.stringify(went.body)).toBe(200);
+      await waitForRun(x.s, x.runbook.id, went.body.id);
+    }
+    await runStep(x.s, x.runbook.id, x.runbook.steps[1].id, {
+      outOfOrder: true,
+      confirmRepeat: true,
+    });
+    return { during, after: await agentSees(x) };
+  };
+
+  it("G13 a hidden sequence: item output, captures, checks, commands, errors", async () => {
+    const found = await compare(
+      "G13 hidden sequence",
+      (secret) => sequenceRun(secret, { hidden: true }),
+      S17,
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G13b a hidden sequence that fails at a run item, then continues", async () => {
+    const found = await compare(
+      "G13b hidden sequence, failed then continued",
+      (secret) =>
+        sequenceRun(secret, {
+          hidden: true,
+          failSecond: true,
+          continueAfter: true,
+        }),
+      S17,
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G13c a hidden sequence with values shorter than 4 characters", async () => {
+    const found = await compare(
+      "G13c short values",
+      (secret) => sequenceRun(secret, { hidden: true, failSecond: true }),
+      ["ab1", "zq9"],
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G14 a visible sequence whose items read a hidden step's value", async () => {
+    const found = await compare(
+      "G14 visible sequence reads a hidden value",
+      async (secret) => {
+        const x = await setup([
+          makeToken,
+          {
+            title: "Use it",
+            hostId: 1,
+            sequence: [
+              {
+                type: "run",
+                command: "show {{tok}}",
+                captures: [{ name: "echoed", pattern: "shown=(\\S+)" }],
+                checks: [{ type: "contains", text: "{{tok}}" }],
+              },
+              { type: "run", command: "again {{echoed}}" },
+            ],
+          },
+        ]);
+        x.s.setExec(async (_h, command) =>
+          execResult(
+            command === "make-token"
+              ? `token=${secret}\n`
+              : `shown=${command.split(" ")[1]}\n`,
+          ),
+        );
+        await runStep(x.s, x.runbook.id, x.runbook.steps[0].id);
+        const two = await runStep(x.s, x.runbook.id, x.runbook.steps[1].id);
+        expect(two.body.status, JSON.stringify(two.body)).toBe("done");
+        return agentSees(x);
+      },
+      S17,
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G14b a hidden sequence item's output that passes the output limit", async () => {
+    const found = await compare(
+      "G14b truncated item",
+      async (size) => {
+        const x = await setup([
+          {
+            title: "Big",
+            hostId: 1,
+            hideOutputFromAgents: true,
+            sequence: [
+              { type: "run", command: "big" },
+              { type: "run", command: "two" },
+            ],
+          },
+        ]);
+        x.s.setExec(async (_h, command) =>
+          execResult(command === "big" ? "x".repeat(Number(size)) : "ok\n"),
+        );
+        await runStep(x.s, x.runbook.id, x.runbook.steps[0].id);
+        return agentSees(x);
+      },
+      ["300000", "10"],
     );
     expect(found).toEqual([]);
   });

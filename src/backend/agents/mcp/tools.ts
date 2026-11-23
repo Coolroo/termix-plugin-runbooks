@@ -6,6 +6,7 @@
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
 import { OPTION_ID } from "../../../shared/decisions.js";
+import { SEQUENCE_LIMITS } from "../../../shared/sequence.js";
 import {
   MAX_VM_VALUE,
   MAX_WAIT_SECONDS,
@@ -105,6 +106,16 @@ const STORE_SCHEMA = {
     },
   ],
 };
+
+const SEQUENCE_HELP =
+  "A step Termix runs on a host may be a sequence (1.4.10) instead of one command: sequence is a list of 1 to 20 items that one Run runs in order, as the person who pressed it, each shown on the step card with its own state, time, output and checks. Use it instead of chaining commands with && or ; and instead of sleep. Item types: " +
+  '{"type":"run","label":"Deploy","command":"sudo paseo-deploy up media enforcarr"} (optional checks, captures, timeoutMs and interactive as for a step, and onFail "stop" (default) or "continue" for a read-only report after the main work); ' +
+  '{"type":"delay","seconds":30,"reason":"let the service start"} (1 to 3600 seconds: a countdown on the page, run by Termix itself; the person may skip it). ' +
+  "Each run item is a new shell on its own connection: cd and variables do not carry over; set workdir on the step (an absolute path) and every run item starts there. A capture of an item fills {{name}} in later items and later steps. An item that fails stops the sequence and fails the step, unless it says onFail continue; the person can then continue from that item, and the items that passed do not run again. " +
+  "A sequence step has hostId and sequence, and no command, checks, captures, timeoutMs, interactive, stdin or secretCaptures of its own (put them on the run items), and cannot be an agent step or runIn terminal. get_runbook lists each run's items with their own output, exit code, checks and captures. Other item types (wait, container, unit, log, http, port, file, job) come in a later version and are refused for now.";
+
+const NO_SLEEP_HELP =
+  "Runbooks refuses a command that waits a fixed time: sleep (also sleep in bash -c or time.sleep), Start-Sleep, timeout /t, or ping -n to the host itself. Make the step a sequence and put a delay item where the wait was, with the commands before and after it as run items.";
 
 const AGENT_STEP_HELP =
   'A step may be yours: owner "agent" (default "person"). The person sees "Waiting for the agent" on it and can only skip or reopen it; Termix never runs it. Its command, if any, only says what you will run (no hostId needed). When every earlier step ended (done, failed or skipped), do the work yourself, then call complete_step with outcome done or failed, a short note and the output you got; its checks (contains, notContains, matches, notMatches) test that output. An agent step cannot have captures, secretCaptures, stdin, a wait timer or exitCode checks. Use it for work you do between the person\'s steps, such as reading a dashboard or changing a file in a repository.';
@@ -209,6 +220,74 @@ const CHECK_SCHEMA = {
   },
 };
 
+const ITEM_SCHEMA = {
+  type: "object",
+  required: ["type"],
+  description:
+    'A sequence item: {"type":"run","command":...} or {"type":"delay","seconds":...}.',
+  properties: {
+    type: { type: "string", enum: ["run", "delay"] },
+    label: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.label,
+      description: "Short name shown to the person.",
+    },
+    command: {
+      type: "string",
+      description:
+        "run: the shell command, in the step's workdir. {{name}} values work, also from earlier items' captures.",
+    },
+    checks: {
+      type: "array",
+      maxItems: 20,
+      description: "run: checks on this item's output, as for a step.",
+      items: CHECK_SCHEMA,
+    },
+    captures: {
+      type: "array",
+      description:
+        "run: values to take from this item's stdout, as for a step; the names are unique in the sequence.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "pattern"],
+        properties: {
+          name: { type: "string", pattern: NAME.source },
+          pattern: { type: "string" },
+        },
+      },
+    },
+    timeoutMs: {
+      type: ["integer", "null"],
+      minimum: 1000,
+      maximum: 600000,
+      description: "run: time limit for the command. Default 120000.",
+    },
+    onFail: {
+      type: "string",
+      enum: ["stop", "continue"],
+      description:
+        "run: stop (default) ends the sequence and fails the step; continue records the failure and goes on.",
+    },
+    interactive: {
+      type: "boolean",
+      description:
+        "run: open a terminal (pty) for this item, for prompts such as sudo's.",
+    },
+    seconds: {
+      type: "integer",
+      minimum: SEQUENCE_LIMITS.delayMin,
+      maximum: SEQUENCE_LIMITS.delayMax,
+      description: "delay: how long to wait, in seconds.",
+    },
+    reason: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.reason,
+      description: "delay: why, shown with the countdown.",
+    },
+  },
+};
+
 const STEP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -236,7 +315,20 @@ const STEP_SCHEMA = {
     },
     command: {
       type: ["string", "null"],
-      description: `Shell command, run with the host's stored login. ${VALUE_SYNTAX}`,
+      description: `Shell command, run with the host's stored login. ${VALUE_SYNTAX} ${NO_SLEEP_HELP}`,
+    },
+    sequence: {
+      type: ["array", "null"],
+      minItems: 1,
+      maxItems: SEQUENCE_LIMITS.items,
+      description: SEQUENCE_HELP,
+      items: ITEM_SCHEMA,
+    },
+    workdir: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.workdir,
+      description:
+        "An absolute folder on the host where the command, or each run item of a sequence, starts (1.4.10): Termix runs cd -- '<workdir>' && <command>, so leave the cd out of the command. For a POSIX shell (Linux, macOS); on a Windows host keep the cd in the command.",
     },
     expect: {
       type: "string",
@@ -484,7 +576,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A sequence step (1.4.10) has sequence and workdir, and each of its runs has items: one record per item {position, type, label, command, seconds, reason, onFail, status (waiting, running, passed, failed, skipped), startedAt, finishedAt, plannedEndAt, exitCode, stdout, stderr, checks, captured, error, fromRunId (set on an item carried from an earlier run by Continue)}, and the run's own stdout and stderr are the items' output joined. You get one event when the step ends, not one per item. A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -494,7 +586,7 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${SECRET_STEPS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${SEQUENCE_HELP} ${NO_SLEEP_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${SECRET_STEPS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -536,7 +628,7 @@ export const TOOLS = [
   },
   {
     name: "add_steps",
-    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX} ${CHECKS_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP}`,
+    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX} ${SEQUENCE_HELP} ${NO_SLEEP_HELP} ${CHECKS_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -554,7 +646,7 @@ export const TOOLS = [
   },
   {
     name: "update_step",
-    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): amend it with amend_step instead, also to change its checks. Only the given fields change; checks replaces the whole list. ${CHECKS_HELP} ${WAIT_HELP}`,
+    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): amend it with amend_step instead, also to change its checks. Only the given fields change; checks and sequence replace the whole list (to make a one-command step a sequence, send sequence with command null). ${NO_SLEEP_HELP} ${CHECKS_HELP} ${WAIT_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -567,7 +659,7 @@ export const TOOLS = [
   },
   {
     name: "amend_step",
-    description: `${AMEND_HELP} Returns the runbook as get_runbook does. ${CHECKS_HELP} ${STDIN_HELP}`,
+    description: `${AMEND_HELP} Returns the runbook as get_runbook does. ${NO_SLEEP_HELP} ${CHECKS_HELP} ${STDIN_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
