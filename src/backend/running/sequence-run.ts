@@ -210,6 +210,8 @@ export function createSequenceRunner(kit: PersonKit) {
     });
     const from = previous?.index ?? 0;
     const values: Values = valuesObject(bundle.values);
+    // Phase 3: an event's record names the host ("on home-server").
+    const hostName = await nameOf(target.hostId);
     const itemIds: number[] = [];
     for (const [index, item] of sequence.entries()) {
       const carried: RunItem | undefined =
@@ -255,7 +257,7 @@ export function createSequenceRunner(kit: PersonKit) {
           position: index + 1,
           type: item.type,
           label: item.label,
-          command: itemCommand(approved ?? item, runId, index + 1),
+          command: itemCommand(approved ?? item, runId, index + 1, hostName),
           seconds: item.type === "delay" ? item.seconds : null,
           reason: item.type === "delay" ? item.reason : null,
           onFail: item.type !== "delay" ? item.onFail : "stop",
@@ -412,6 +414,12 @@ export function createSequenceRunner(kit: PersonKit) {
   /** "runbook 3 step 2 item 4 on host 1", for the audit log. */
   function where(step: StepRow, target: SequenceTarget, position: number) {
     return `runbook ${step.runbookId} step ${stepLabel(step)} item ${position} on host ${target.hostId}`;
+  }
+
+  /** The host's name in Termix, as the person sees it; null if unknown. */
+  async function nameOf(hostId: number): Promise<string | null> {
+    const host = await ctx.hosts.get(hostId).catch(() => null);
+    return host?.name || host?.ip || null;
   }
 
   /** Whether the person who pressed Run may still connect to the host. */
@@ -1136,7 +1144,7 @@ export function createSequenceRunner(kit: PersonKit) {
     );
     const event = filled as EventItemSpec;
     const startedAt = now();
-    const what = eventWhat(event, null, runId, position);
+    const what = eventWhat(event, await nameOf(target.hostId), runId, position);
     const problem =
       missing.length > 0 ? NOT_CAPTURED : filledEventProblem(event);
     if (problem) {
@@ -1579,9 +1587,10 @@ function itemCommand(
   item: SequenceItem,
   runId: number,
   position: number,
+  hostName: string | null,
 ): string | null {
   if (item.type === "delay") return null;
-  if (isEventItem(item)) return eventWhat(item, null, runId, position);
+  if (isEventItem(item)) return eventWhat(item, hostName, runId, position);
   return item.command;
 }
 

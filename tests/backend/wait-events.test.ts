@@ -474,10 +474,7 @@ describe("port", () => {
       error: FORWARD_REFUSED,
     });
     expect(done.items[0].command).toBe(
-      "TCP 127.0.0.1:8443 on the host, through the SSH connection: until open".replace(
-        "open",
-        "closed",
-      ),
+      "TCP 127.0.0.1:8443 on host-1, through the SSH connection: until closed",
     );
     expect(s.forwardCalls).toEqual([{ host: "127.0.0.1", port: 8443 }]);
   });

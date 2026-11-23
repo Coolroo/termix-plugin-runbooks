@@ -5,6 +5,7 @@
  * shows of a step.
  */
 
+import { eventWhat } from "../../shared/events";
 import {
   useCallback,
   useEffect,
@@ -22,7 +23,7 @@ import { CodeBlock, SectionLabel } from "../ui/ui";
 import { describeStdin, formatTime, formatWait, hostLabel } from "../ui/format";
 import { ChecksList, checksWords } from "../steps/ChecksList";
 import { scheduleText } from "../steps/Attempts";
-import { itemPlan, itemSchedule } from "../../shared/sequence";
+import { isEventItem, itemPlan, itemSchedule } from "../../shared/sequence";
 import type { ConflictBody, Step } from "../api-types";
 
 /** A question on screen: what it asks, and how it answers. */
@@ -165,8 +166,13 @@ function SequencePreview({
               </span>
             ) : (
               <>
-                <CodeBlock className="mt-0.5 overflow-x-auto" small={false}>
-                  {item.command}
+                <CodeBlock
+                  className="mt-0.5 overflow-x-auto whitespace-pre-wrap"
+                  small={false}
+                >
+                  {isEventItem(item)
+                    ? eventWhat(item, step.hostName)
+                    : item.command}
                 </CodeBlock>
                 {/* Phase 2: the attempts the person approves with Run. */}
                 {itemPlan(item) && (

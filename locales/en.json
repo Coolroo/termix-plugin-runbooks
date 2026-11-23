@@ -354,6 +354,10 @@
     "banSleep": {
       "label": "Refuse sleep in commands",
       "description": "Agents cannot write a command that waits a fixed time (sleep, Start-Sleep, timeout /t, ping -n as a delay): they make the step a sequence with a delay item, which the person sees count down. Steps written before stay as they are."
+    },
+    "httpCaPem": {
+      "label": "Extra trusted CAs for http checks (PEM)",
+      "description": "CA certificates that a runbook's http items trust besides the public roots, such as your home CA. Paste one or more, each from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. Only Runbooks' http checks use them; they always check the certificate."
     }
   },
   "notify": {
@@ -532,7 +536,14 @@
     "type": {
       "run": "Run",
       "delay": "Delay",
-      "wait": "Wait until"
+      "wait": "Wait until",
+      "port": "Port",
+      "http": "HTTP",
+      "file": "File",
+      "container": "Container",
+      "unit": "Unit",
+      "log": "Log line",
+      "job": "Job"
     },
     "status": {
       "waiting": "Waiting",
@@ -550,7 +561,19 @@
     "onFailContinue": "On failure: go on",
     "later": "Fills {{names}} from an earlier item when it runs",
     "carried": "Passed in run {{run}}; not run again",
-    "inLabel": "Each item starts in"
+    "inLabel": "Each item starts in",
+    "what": {
+      "port": "Opens a TCP channel from the host to its own port, through the SSH connection:",
+      "http": "Sends a GET and reads the status (the certificate is always checked):",
+      "file": "Reads the path's attributes:",
+      "container": "Runs this read-only command and reads its JSON:",
+      "unit": "Runs this read-only command and reads its values:",
+      "log": "Reads new log lines with this command and matches them:",
+      "job": "Starts the command as a systemd unit and follows it to its end:"
+    },
+    "result": "Last check: {{result}}",
+    "resultPassed": "Passed: {{result}}",
+    "resultFailed": "Last check: {{result}}"
   },
   "continue": {
     "title": "Continue step {{position}} from item {{item}}?",
@@ -593,7 +616,9 @@
       "connect": "no connection",
       "stop-if": "a stopIf check matched",
       "stopped": "stopped",
-      "interrupted": "interrupted"
+      "interrupted": "interrupted",
+      "not-yet": "not yet",
+      "fail-state": "failed at once"
     }
   }
 }

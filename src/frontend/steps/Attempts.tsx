@@ -15,6 +15,7 @@ import { formatDuration, formatWait } from "../ui/format";
 import { ChecksList, checksWords } from "./ChecksList";
 import { Output } from "./output";
 import type { Check, RunAttempt, RunItem } from "../api-types";
+import { isEventType } from "../../shared/events";
 
 /** How a dot looks: passed, not yet (a wait), failed (a retry), running. */
 type DotState = "passed" | "not-yet" | "failed" | "running";
@@ -27,15 +28,20 @@ const DOT_CLASS: Record<DotState, string> = {
 };
 
 /**
- * A failed attempt of a wait means "not yet" (grey), unless it ended the
- * item (a stopIf match, a stop): that one, and every failed attempt of a
- * retried run item, is a failure (red).
+ * A failed attempt of a wait, or a check of an event (phase 3), means "not
+ * yet" (grey), unless it ended the item (a stopIf match, a state that fails
+ * at once, a stop): that one, and every failed attempt of a retried run
+ * item, is a failure (red).
  */
 function dotState(attempt: RunAttempt, kind: RunItem["type"]): DotState {
   if (attempt.status === "running") return "running";
   if (attempt.status === "passed") return "passed";
-  if (kind === "wait" && attempt.why !== "stop-if" && attempt.why !== "stopped")
-    return "not-yet";
+  const polls = kind === "wait" || isEventType(kind);
+  const ended =
+    attempt.why === "stop-if" ||
+    attempt.why === "stopped" ||
+    attempt.why === "fail-state";
+  if (polls && !ended) return "not-yet";
   return "failed";
 }
 
@@ -62,8 +68,12 @@ export function scheduleText(
   });
 }
 
-/** Why an attempt did not pass, in words; null when it passed or runs. */
+/**
+ * Why an attempt did not pass, in words; null when it passed or runs. An
+ * event's check says the state it read ("starting", "HTTP 503").
+ */
 function whyText(t: Translate, attempt: RunAttempt): string | null {
+  if (attempt.result) return attempt.result;
   if (!attempt.why) return null;
   return attempt.why === "exit"
     ? t("attempts.why.exit", { code: attempt.exitCode ?? "-" })

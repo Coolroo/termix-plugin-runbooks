@@ -118,6 +118,12 @@
           "default": true
         },
         {
+          "key": "httpCaPem",
+          "type": "textarea",
+          "labelKey": "settings.httpCaPem.label",
+          "descriptionKey": "settings.httpCaPem.description"
+        },
+        {
           "key": "stepColorsEditor",
           "type": "custom",
           "component": "step-colors"

@@ -8,15 +8,26 @@
  * Phase 2: a wait item, and a run item with retry, show their schedule
  * before Run, and their attempts while they run and after (Attempts.tsx).
  * An item without them looks as in phase 1.
+ *
+ * Phase 3: an event item (port, http, file, container, unit, log, job)
+ * shows its icon, what it checks exactly (the fixed command it reads, or
+ * "TCP 127.0.0.1:8443 on home-server, through the SSH connection"), its
+ * attempt dots, and the state its last check read, in words.
  */
 
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import { Button, ListBadge, cn } from "@termix-ssh/plugin-sdk/ui";
+import { Button, ListBadge, PluginIcon, cn } from "@termix-ssh/plugin-sdk/ui";
 import { formatDuration, formatWait } from "../ui/format";
 import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, SectionLabel } from "../ui/ui";
 import { RunInput } from "../running/RunInput";
-import { itemPlan, itemSchedule } from "../../shared/sequence";
+import {
+  isCommandItem,
+  isEventItem,
+  itemPlan,
+  itemSchedule,
+} from "../../shared/sequence";
+import { eventWhat, isEventType, type EventType } from "../../shared/events";
 import { ChecksList, checksWords } from "./ChecksList";
 import { LiveOutput, Output } from "./output";
 import { AttemptPlan, AttemptProgress, EarlierAttempts } from "./Attempts";
@@ -39,6 +50,17 @@ const STATUS_TONE: Record<
   passed: "success",
   failed: "destructive",
   skipped: "warning",
+};
+
+/** Each event's icon (lucide names, as the step kinds use). */
+export const EVENT_ICONS: Record<EventType, string> = {
+  port: "Network",
+  http: "Globe",
+  file: "File",
+  container: "Container",
+  unit: "Cog",
+  log: "ScrollText",
+  job: "Hourglass",
 };
 
 /** What the item list shows of each item: its plan and its record. */
@@ -119,13 +141,19 @@ function ItemRow({
   const running = status === "running";
   const label = record?.label ?? plan?.label ?? null;
   // A run or a wait item (phase 2): both run a command.
-  const commandPlan = plan && plan.type !== "delay" ? plan : null;
+  const commandPlan = plan && isCommandItem(plan) ? plan : null;
+  // Phase 3: a wait event built in.
+  const eventPlan = plan && isEventItem(plan) ? plan : null;
+  const event = isEventType(type);
   const onFail = record?.onFail ?? commandPlan?.onFail ?? "stop";
   const seconds =
     record?.seconds ?? (plan?.type === "delay" ? plan.seconds : 0);
   const reason =
     record?.reason ?? (plan?.type === "delay" ? plan.reason : null);
-  const command = record?.command ?? commandPlan?.command ?? null;
+  const command =
+    record?.command ??
+    commandPlan?.command ??
+    (eventPlan ? eventWhat(eventPlan, step.hostName) : null);
   const checks = commandPlan?.checks ?? [];
   const interactive = plan?.type === "run" ? plan.interactive : false;
   // Phase 2: an item that makes attempts on a schedule.
@@ -150,6 +178,14 @@ function ItemRow({
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="font-mono text-muted-foreground">{row.position}.</span>
+        {event && (
+          <PluginIcon
+            name={EVENT_ICONS[type as EventType]}
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+            data-item-icon
+          />
+        )}
         <span className="font-medium" data-item-label>
           {label ?? t(`item.type.${type}`)}
         </span>
@@ -175,9 +211,42 @@ function ItemRow({
             : t("item.delay", { time: formatWait(seconds) })}
         </p>
       ) : (
-        <CodeBlock className="mt-1 overflow-x-auto" data-item-command>
-          {command}
-        </CodeBlock>
+        <>
+          {event && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t(`item.what.${type}`)}
+            </p>
+          )}
+          <CodeBlock
+            className="mt-1 overflow-x-auto whitespace-pre-wrap"
+            data-item-command
+            data-item-what={event ? "" : undefined}
+          >
+            {command}
+          </CodeBlock>
+        </>
+      )}
+      {event && record?.result && (
+        <p
+          className={cn(
+            "mt-1 text-xs font-medium",
+            status === "passed"
+              ? "text-emerald-600"
+              : status === "failed"
+                ? "text-destructive"
+                : "text-foreground",
+          )}
+          data-item-result
+        >
+          {t(
+            status === "passed"
+              ? "item.resultPassed"
+              : status === "failed"
+                ? "item.resultFailed"
+                : "item.result",
+            { result: record.result },
+          )}
+        </p>
       )}
       {schedule && schedulePlan && (
         <AttemptPlan
