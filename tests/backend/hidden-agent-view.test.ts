@@ -43,6 +43,10 @@ const VOLATILE = new Set([
   "waitUntil",
   // 1.4.10: when a running delay ends.
   "plannedEndAt",
+  // 1.4.10, phase 2: when a wait's next attempt starts and its limit ends.
+  "nextAttemptAt",
+  "nextAt",
+  "endsBy",
 ]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -961,6 +965,183 @@ describe("1.4.10: sequence steps hide each item as a run is hidden", () => {
     );
     expect(found).toEqual([]);
   });
+});
+
+describe("1.4.10 phase 2: a wait's attempts are hidden as its item is", () => {
+  /**
+   * A hidden sequence: a wait whose attempts print the hidden value, with
+   * a stopIf check and a capture from the attempt that passes; a run item
+   * with retry whose failed attempts print it; a visible step after it
+   * that reads the capture. Try now moves the wait on; an agent reads all
+   * while the wait waits between two attempts, and after.
+   */
+  const waitRun = async (
+    secret: string,
+    options: { hidden: boolean; stopAt?: number; later?: boolean },
+  ) => {
+    const x = await setup([
+      {
+        title: "Wait for the token",
+        hostId: 1,
+        hideOutputFromAgents: options.hidden,
+        sequence: [
+          {
+            type: "wait",
+            label: "Ready",
+            command: "status",
+            checks: [{ type: "contains", text: "ready" }],
+            stopIf: [{ type: "contains", text: "FAILED" }],
+            captures: [{ name: "tok", pattern: "token=(\\S+)" }],
+            within: 600,
+            every: 300,
+          },
+          {
+            type: "run",
+            command: "use {{tok}}",
+            retry: { attempts: 3, every: 300 },
+          },
+        ],
+      },
+      { title: "Later", hostId: 1, command: "echo later={{tok}}" },
+    ]);
+    let status = 0;
+    let use = 0;
+    x.s.setExec(async (_h, command) => {
+      if (command === "status") {
+        status += 1;
+        if (status === options.stopAt) {
+          return execResult(`FAILED near ${secret}\n`, { code: 4 });
+        }
+        return status < 3
+          ? execResult(`pending ${secret}\n`, {
+              stderr: `slow ${secret}`,
+              code: status === 1 ? 1 : 0,
+            })
+          : execResult(`ready token=${secret}\n`);
+      }
+      if (command.startsWith("use ")) {
+        use += 1;
+        return use === 1
+          ? execResult(`error near ${command.slice(4)}\n`, { code: 2 })
+          : execResult(`used ${command.slice(4)}\n`);
+      }
+      return execResult(`${command}\n`);
+    });
+    const shown = await view(x.s, x.runbook.id);
+    const step = shown.steps[0];
+    const started = await x.s.person("POST", `/steps/${step.id}/run`, {
+      revision: step.revision,
+      commandHash: step.commandHash,
+    });
+    expect(started.status, JSON.stringify(started.body)).toBe(200);
+    const waiting = async (position: number, count: number) =>
+      vi.waitFor(
+        async () => {
+          const run = await shownRun(x.s, x.runbook.id, started.body.id);
+          const item = run.items[position - 1];
+          if (run.status !== "running") return run;
+          if (!item.nextAttemptAt || item.attempts.length !== count) {
+            throw new Error("not yet");
+          }
+          return run;
+        },
+        { timeout: 3000, interval: 5 },
+      );
+    await waiting(1, 1);
+    // While the wait waits: what an agent sees of it.
+    const during = await agentSees(x);
+    const tryNow = () => x.s.person("POST", `/steps/${step.id}/try-now`);
+    expect((await tryNow()).status).toBe(200);
+    const second = await waiting(1, 2);
+    if (second.status === "running") {
+      expect((await tryNow()).status).toBe(200);
+      await waiting(2, 1);
+      expect((await tryNow()).status).toBe(200);
+    }
+    const ended = await waitForRun(x.s, x.runbook.id, started.body.id);
+    if (!options.stopAt) {
+      expect(ended.status, JSON.stringify(ended.items)).toBe("done");
+      if (options.later !== false) {
+        await runStep(x.s, x.runbook.id, x.runbook.steps[1].id);
+      }
+    } else {
+      expect(ended.status).toBe("failed");
+    }
+    return { during, after: await agentSees(x) };
+  };
+
+  it("G15 a hidden wait and a retried run item: attempt output, errors, sizes, checks, captures", async () => {
+    const found = await compare(
+      "G15 hidden attempts",
+      (secret) => waitRun(secret, { hidden: true }),
+      S17,
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G15b a hidden wait that a stopIf check ends", async () => {
+    const found = await compare(
+      "G15b hidden stopIf",
+      (secret) => waitRun(secret, { hidden: true, stopAt: 2 }),
+      S17,
+    );
+    expect(found).toEqual([]);
+  }, 20_000);
+
+  it("G15c a hidden wait with values shorter than 4 characters", async () => {
+    const found = await compare(
+      "G15c short values",
+      // The later step echoes the value: a visible step shows a value
+      // shorter than 4 characters (G4), so it does not run here.
+      (secret) => waitRun(secret, { hidden: true, later: false }),
+      ["ab1", "zq9"],
+    );
+    expect(found, found.join("\n")).toEqual([]);
+  }, 20_000);
+
+  it("G15 control: the same visible sequence differs, so the test can see a leak", async () => {
+    const found = await compare(
+      "G15 control",
+      (secret) => waitRun(secret, { hidden: false }),
+      S17,
+    );
+    expect(paths(found)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/items\.0\.attempts\.0\.stdout$/),
+        expect.stringMatching(/items\.0\.attempts\.1\.stderr$/),
+        expect.stringMatching(/items\.1\.attempts\.0\.stdout$/),
+      ]),
+    );
+  }, 20_000);
+
+  it("G15 shows attempt counts, times, exit codes and why on a hidden step", async () => {
+    const { after } = (await waitRun(S17[0], { hidden: true })) as {
+      after: { runbook: { body: { steps: Array<{ runs: unknown[] }> } } };
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items = (after.runbook.body.steps[0].runs[0] as any).items;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shape = (item: any) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      item.attempts.map((a: any) => [
+        a.attempt,
+        a.exitCode,
+        a.why,
+        a.stdout,
+        a.error,
+      ]);
+    expect(shape(items[0])).toEqual([
+      [1, 1, "exit", HIDDEN, HIDDEN],
+      [2, 0, "check", HIDDEN, HIDDEN],
+      [3, 0, null, HIDDEN, null],
+    ]);
+    expect(shape(items[1])).toEqual([
+      [1, 2, "exit", HIDDEN, HIDDEN],
+      [2, 0, null, HIDDEN, null],
+    ]);
+    expect(items[0].captured).toEqual({ tok: HIDDEN });
+    expect(items[0].maxAttempts).toBe(500);
+  }, 20_000);
 });
 
 describe("BUG-019: a hidden Send to terminal step", () => {

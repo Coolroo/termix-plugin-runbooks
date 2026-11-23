@@ -8,6 +8,12 @@ import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
 import { OPTION_ID } from "../../../shared/decisions.js";
 import { SEQUENCE_LIMITS } from "../../../shared/sequence.js";
 import {
+  BACKOFFS,
+  JITTERS,
+  RETRY_ON,
+  SCHEDULE_LIMITS,
+} from "../../../shared/schedule.js";
+import {
   MAX_VM_VALUE,
   MAX_WAIT_SECONDS,
   VM_ACTIONS,
@@ -110,12 +116,16 @@ const STORE_SCHEMA = {
 const SEQUENCE_HELP =
   "A step Termix runs on a host may be a sequence (1.4.10) instead of one command: sequence is a list of 1 to 20 items that one Run runs in order, as the person who pressed it, each shown on the step card with its own state, time, output and checks. Use it instead of chaining commands with && or ; and instead of sleep. Item types: " +
   '{"type":"run","label":"Deploy","command":"sudo paseo-deploy up media enforcarr"} (optional checks, captures, timeoutMs and interactive as for a step, and onFail "stop" (default) or "continue" for a read-only report after the main work); ' +
-  '{"type":"delay","seconds":30,"reason":"let the service start"} (1 to 3600 seconds: a countdown on the page, run by Termix itself; the person may skip it). ' +
+  '{"type":"delay","seconds":30,"reason":"let the service start"} (1 to 3600 seconds: a countdown on the page, run by Termix itself; the person may skip it); ' +
+  '{"type":"wait","label":"Healthy","command":"curl -fsS https://127.0.0.1:8443/health","checks":[{"type":"contains","text":"ok"}],"within":180,"every":5} (runs the command until it exits 0 with every check passing: write it instead of a for or until loop with sleep; see WAIT ITEMS). ' +
   "Each run item is a new shell on its own connection: cd and variables do not carry over; set workdir on the step (an absolute path) and every run item starts there. A capture of an item fills {{name}} in later items and later steps. An item that fails stops the sequence and fails the step, unless it says onFail continue; the person can then continue from that item, and the items that passed do not run again. " +
-  "A sequence step has hostId and sequence, and no command, checks, captures, timeoutMs, interactive, stdin or secretCaptures of its own (put them on the run items), and cannot be an agent step or runIn terminal. get_runbook lists each run's items with their own output, exit code, checks and captures. Other item types (wait, container, unit, log, http, port, file, job) come in a later version and are refused for now.";
+  "A sequence step has hostId and sequence, and no command, checks, captures, timeoutMs, interactive, stdin or secretCaptures of its own (put them on the run items), and cannot be an agent step or runIn terminal. get_runbook lists each run's items with their own output, exit code, checks and captures. Other item types (container, unit, log, http, port, file, job) come in a later version and are refused for now. " +
+  "WAIT ITEMS: checks (at least one) say what ready looks like; stopIf (optional checks) fails the item at once when one matches, such as a job that reports FAILED; within (required, 1 to 7200 seconds) is the time limit for all attempts and delays together; attempts (1 to 500, default 500) the most attempts; timeoutMs the limit of one attempt. The schedule: every (seconds before the next attempt, default 5), backoff fixed (default: every each time), linear (every × n) or exponential (every × factor^(n-1), factor 1.1 to 10, default 2), maxDelay (cap on one delay, default 300, at most 3600) and jitter none (default), full or equal. A failed attempt means not yet; captures come from the attempt that passes only. " +
+  'RETRY: a run item may have retry for a flaky command: {"attempts":5,"backoff":"exponential","every":2} (attempts 2 to 500 required; every, backoff, factor, maxDelay, jitter as for a wait; within optional, up to 7200; retryOn: a list of "exit", "check", "timeout", "connect", default all four: the failures that get another attempt). Not on an interactive item. ' +
+  "Each attempt is a record inside its item: items[].attempts lists {attempt, status, startedAt, finishedAt, exitCode, stdout, stderr, checks, stopIf, why (exit, check, timeout, connect, stop-if, stopped, interrupted, or null when it passed)}. While one waits, the step has attempt {item, attempt, of, nextAt, endsBy}; schedules on the step lists each wait's planned attempts before Run. The server runs the attempts as the person who pressed Run, also with the page closed; the person may press Try now or Stop. You get one event when the step ends, never one per attempt.";
 
 const NO_SLEEP_HELP =
-  "Runbooks refuses a command that waits a fixed time: sleep (also sleep in bash -c or time.sleep), Start-Sleep, timeout /t, or ping -n to the host itself. Make the step a sequence and put a delay item where the wait was, with the commands before and after it as run items.";
+  "Runbooks refuses a command that waits a fixed time: sleep (also sleep in bash -c or time.sleep), Start-Sleep, timeout /t, or ping -n to the host itself. Make the step a sequence: put a delay item where a fixed wait was, and a wait item where a loop waited for something to be ready.";
 
 const AGENT_STEP_HELP =
   'A step may be yours: owner "agent" (default "person"). The person sees "Waiting for the agent" on it and can only skip or reopen it; Termix never runs it. Its command, if any, only says what you will run (no hostId needed). When every earlier step ended (done, failed or skipped), do the work yourself, then call complete_step with outcome done or failed, a short note and the output you got; its checks (contains, notContains, matches, notMatches) test that output. An agent step cannot have captures, secretCaptures, stdin, a wait timer or exitCode checks. Use it for work you do between the person\'s steps, such as reading a dashboard or changing a file in a repository.';
@@ -220,13 +230,49 @@ const CHECK_SCHEMA = {
   },
 };
 
+/** The schedule of a wait item and of a run item's retry (phase 2). */
+const SCHEDULE_PROPERTIES = {
+  every: {
+    type: "integer",
+    minimum: SCHEDULE_LIMITS.everyMin,
+    maximum: SCHEDULE_LIMITS.everyMax,
+    description:
+      "Seconds before the next attempt (the first delay). Default 5.",
+  },
+  backoff: {
+    type: "string",
+    enum: [...BACKOFFS],
+    description:
+      "How the delays grow: fixed (default, every each time), linear (every × n) or exponential (every × factor^(n-1)).",
+  },
+  factor: {
+    type: "number",
+    minimum: SCHEDULE_LIMITS.factorMin,
+    maximum: SCHEDULE_LIMITS.factorMax,
+    description: "exponential only: how much each delay grows. Default 2.",
+  },
+  maxDelay: {
+    type: "integer",
+    minimum: 1,
+    maximum: SCHEDULE_LIMITS.maxDelayMax,
+    description:
+      "Seconds: the longest one delay may get, at least every. Default 300.",
+  },
+  jitter: {
+    type: "string",
+    enum: [...JITTERS],
+    description:
+      "none (default); full: a random delay from 0 to the delay; equal: half the delay plus a random part of the other half.",
+  },
+};
+
 const ITEM_SCHEMA = {
   type: "object",
   required: ["type"],
   description:
-    'A sequence item: {"type":"run","command":...} or {"type":"delay","seconds":...}.',
+    'A sequence item: {"type":"run","command":...}, {"type":"wait","command":...,"checks":[...],"within":...} or {"type":"delay","seconds":...}.',
   properties: {
-    type: { type: "string", enum: ["run", "delay"] },
+    type: { type: "string", enum: ["run", "wait", "delay"] },
     label: {
       type: ["string", "null"],
       maxLength: SEQUENCE_LIMITS.label,
@@ -235,18 +281,70 @@ const ITEM_SCHEMA = {
     command: {
       type: "string",
       description:
-        "run: the shell command, in the step's workdir. {{name}} values work, also from earlier items' captures.",
+        "run, wait: the shell command, in the step's workdir. {{name}} values work, also from earlier items' captures.",
     },
     checks: {
       type: "array",
       maxItems: 20,
-      description: "run: checks on this item's output, as for a step.",
+      description:
+        "run: checks on this item's output, as for a step. wait: at least one; the wait passes on the first attempt that exits 0 with every check passing.",
       items: CHECK_SCHEMA,
+    },
+    stopIf: {
+      type: "array",
+      maxItems: 20,
+      description:
+        "wait: checks on each attempt's output that, when one matches (passes), fail the item at once, such as a job that reports FAILED. Output checks only, no value checks.",
+      items: CHECK_SCHEMA,
+    },
+    within: {
+      type: "integer",
+      minimum: 1,
+      maximum: SCHEDULE_LIMITS.within,
+      description:
+        "wait (required): the most seconds for all attempts and delays together, up to 7200 (2 hours).",
+    },
+    attempts: {
+      type: ["integer", "null"],
+      minimum: 1,
+      maximum: SCHEDULE_LIMITS.attempts,
+      description: "wait: the most attempts, up to 500 (the default).",
+    },
+    ...SCHEDULE_PROPERTIES,
+    retry: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["attempts"],
+      description:
+        'run: run the command again when it fails, for a flaky command, such as {"attempts":5,"backoff":"exponential","every":2}. Not on an interactive item.',
+      properties: {
+        attempts: {
+          type: "integer",
+          minimum: SCHEDULE_LIMITS.retryAttemptsMin,
+          maximum: SCHEDULE_LIMITS.attempts,
+          description: "The most attempts, the first one included: 2 to 500.",
+        },
+        within: {
+          type: ["integer", "null"],
+          minimum: 1,
+          maximum: SCHEDULE_LIMITS.within,
+          description:
+            "The most seconds for all attempts and delays; default 7200.",
+        },
+        retryOn: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: [...RETRY_ON] },
+          description:
+            "The failures that get another attempt: exit (non-zero exit code), check (a check failed), timeout, connect (no connection). Default all four.",
+        },
+        ...SCHEDULE_PROPERTIES,
+      },
     },
     captures: {
       type: "array",
       description:
-        "run: values to take from this item's stdout, as for a step; the names are unique in the sequence.",
+        "run, wait: values to take from this item's stdout, as for a step; the names are unique in the sequence. A wait takes them from the attempt that passes.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -267,7 +365,7 @@ const ITEM_SCHEMA = {
       type: "string",
       enum: ["stop", "continue"],
       description:
-        "run: stop (default) ends the sequence and fails the step; continue records the failure and goes on.",
+        "run, wait: stop (default) ends the sequence and fails the step; continue records the failure and goes on.",
     },
     interactive: {
       type: "boolean",
@@ -576,7 +674,7 @@ export const TOOLS = [
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A sequence step (1.4.10) has sequence and workdir, and each of its runs has items: one record per item {position, type, label, command, seconds, reason, onFail, status (waiting, running, passed, failed, skipped), startedAt, finishedAt, plannedEndAt, exitCode, stdout, stderr, checks, captured, error, fromRunId (set on an item carried from an earlier run by Continue)}, and the run's own stdout and stderr are the items' output joined. You get one event when the step ends, not one per item. A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A sequence step (1.4.10) has sequence and workdir, and each of its runs has items: one record per item {position, type, label, command, seconds, reason, onFail, status (waiting, running, passed, failed, skipped), startedAt, finishedAt, plannedEndAt, exitCode, stdout, stderr, checks, captured, error, fromRunId (set on an item carried from an earlier run by Continue); a wait item or a run item with retry also has maxAttempts, endsBy, nextAttemptAt and attempts, one record per attempt}, and the run's own stdout and stderr are the items' output joined. You get one event when the step ends, not one per item or attempt. A step has schedules (the planned attempts of each wait or retried item) and attempt ({item, attempt, of, nextAt, endsBy} while one waits, else null). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
