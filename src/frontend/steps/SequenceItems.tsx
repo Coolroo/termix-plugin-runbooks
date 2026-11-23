@@ -4,6 +4,10 @@
  * and the time it took. The item that runs streams its output as a run
  * does; a delay counts down with Skip. Before a run the list is the plan,
  * with values filled in; after one, the latest run's records.
+ *
+ * Phase 2: a wait item, and a run item with retry, show their schedule
+ * before Run, and their attempts while they run and after (Attempts.tsx).
+ * An item without them looks as in phase 1.
  */
 
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
@@ -12,8 +16,10 @@ import { formatDuration, formatWait } from "../ui/format";
 import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, SectionLabel } from "../ui/ui";
 import { RunInput } from "../running/RunInput";
+import { itemPlan, itemSchedule } from "../../shared/sequence";
 import { ChecksList, checksWords } from "./ChecksList";
 import { LiveOutput, Output } from "./output";
+import { AttemptPlan, AttemptProgress, EarlierAttempts } from "./Attempts";
 import type { StepActions } from "./StepButtons";
 import type {
   ItemStatus,
@@ -69,12 +75,15 @@ function took(record: RunItem, now: number): string | null {
  */
 function delayLeft(run: Run, record: RunItem, fetchedAt: number): number {
   if (!record.plannedEndAt) return 0;
-  const serverNow =
-    run.elapsedMs !== null
-      ? Date.parse(run.startedAt) + run.elapsedMs
-      : fetchedAt;
-  const left = Date.parse(record.plannedEndAt) - serverNow;
+  const left = Date.parse(record.plannedEndAt) - serverTime(run, fetchedAt);
   return Math.max(0, left - (Date.now() - fetchedAt));
+}
+
+/** The server's time when the run was read: its start plus elapsedMs. */
+function serverTime(run: Run, fetchedAt: number): number {
+  return run.elapsedMs !== null
+    ? Date.parse(run.startedAt) + run.elapsedMs
+    : fetchedAt;
 }
 
 function ItemRow({
@@ -85,6 +94,7 @@ function ItemRow({
   runbookOpen,
   fetchedAt,
   onSkipDelay,
+  onTryNow,
   onInput,
 }: {
   row: Row;
@@ -94,6 +104,7 @@ function ItemRow({
   runbookOpen: boolean;
   fetchedAt: number;
   onSkipDelay?: () => void;
+  onTryNow?: () => void;
   onInput?: StepActions["input"];
 }) {
   const { t } = useTranslation();
@@ -107,16 +118,21 @@ function ItemRow({
     : "waiting";
   const running = status === "running";
   const label = record?.label ?? plan?.label ?? null;
-  const onFail =
-    record?.onFail ?? (plan?.type === "run" ? plan.onFail : "stop");
+  // A run or a wait item (phase 2): both run a command.
+  const commandPlan = plan && plan.type !== "delay" ? plan : null;
+  const onFail = record?.onFail ?? commandPlan?.onFail ?? "stop";
   const seconds =
     record?.seconds ?? (plan?.type === "delay" ? plan.seconds : 0);
   const reason =
     record?.reason ?? (plan?.type === "delay" ? plan.reason : null);
-  const command =
-    record?.command ?? (plan?.type === "run" ? plan.command : null);
-  const checks = plan?.type === "run" ? plan.checks : [];
+  const command = record?.command ?? commandPlan?.command ?? null;
+  const checks = commandPlan?.checks ?? [];
   const interactive = plan?.type === "run" ? plan.interactive : false;
+  // Phase 2: an item that makes attempts on a schedule.
+  const schedule = plan ? itemSchedule(plan) : null;
+  const schedulePlan = plan ? itemPlan(plan) : null;
+  const attempts = record?.attempts ?? null;
+  const scheduled = Boolean(schedule) || record?.maxAttempts != null;
   const time = record ? took(record, Date.now()) : null;
   const left =
     run && record && running && type === "delay"
@@ -163,10 +179,26 @@ function ItemRow({
           {command}
         </CodeBlock>
       )}
-      {plan?.type === "run" && plan.later.length > 0 && !record?.startedAt && (
+      {schedule && schedulePlan && (
+        <AttemptPlan
+          schedule={schedule}
+          plan={schedulePlan}
+          stopIf={plan?.type === "wait" ? plan.stopIf : []}
+        />
+      )}
+      {commandPlan && commandPlan.later.length > 0 && !record?.startedAt && (
         <p className="mt-1 text-xs text-muted-foreground" data-item-later>
-          {t("item.later", { names: plan.later.join(", ") })}
+          {t("item.later", { names: commandPlan.later.join(", ") })}
         </p>
+      )}
+      {record && attempts && record.startedAt && run && (
+        <AttemptProgress
+          record={record}
+          serverNow={serverTime(run, fetchedAt)}
+          fetchedAt={fetchedAt}
+          busy={busy}
+          onTryNow={runbookOpen ? onTryNow : undefined}
+        />
       )}
       {record?.fromRunId !== null && record?.fromRunId !== undefined && (
         <p className="mt-1 text-xs text-muted-foreground" data-item-carried>
@@ -199,14 +231,25 @@ function ItemRow({
           {t("item.skippedBy", { user: record.skippedBy })}
         </p>
       )}
-      {record && type === "run" && running && (
+      {record && type !== "delay" && running && (
         <div className="text-xs" data-item-live>
+          {scheduled && attempts && attempts.length > 0 && (
+            // The attempt that runs, or the last one while it waits.
+            <p className="mt-1 text-muted-foreground" data-attempt-output>
+              {t(
+                record.nextAttemptAt
+                  ? "attempts.lastOutput"
+                  : "attempts.runningOutput",
+                { attempt: attempts.length },
+              )}
+            </p>
+          )}
           {!record.stdout && !record.stderr && (
             <p className="mt-1 text-muted-foreground">{t("run.noOutputYet")}</p>
           )}
           <LiveOutput label={t("run.stdout")} text={record.stdout ?? ""} />
           <LiveOutput label={t("run.stderr")} text={record.stderr ?? ""} />
-          {run && onInput && (
+          {run && onInput && !scheduled && (
             <RunInput
               run={{ ...run, stdout: record.stdout, stderr: record.stderr }}
               step={{
@@ -253,9 +296,17 @@ function ItemRow({
       )}
       <ChecksList
         checks={checks}
-        results={running ? null : record?.checks}
+        // Between two attempts, the last attempt's results.
+        results={
+          running && !(scheduled && record?.nextAttemptAt)
+            ? null
+            : record?.checks
+        }
         words={checksWords(t)}
       />
+      {record && attempts && (
+        <EarlierAttempts record={record} checks={checks} />
+      )}
     </li>
   );
 }
@@ -266,6 +317,7 @@ export function SequenceItems({
   busy,
   runbookOpen,
   onSkipDelay,
+  onTryNow,
   onInput,
 }: {
   step: Step;
@@ -274,6 +326,8 @@ export function SequenceItems({
   busy: boolean;
   runbookOpen: boolean;
   onSkipDelay?: () => void;
+  /** Phase 2: starts the next attempt of the item that waits for it. */
+  onTryNow?: () => void;
   onInput?: StepActions["input"];
 }) {
   const { t } = useTranslation();
@@ -294,6 +348,7 @@ export function SequenceItems({
             runbookOpen={runbookOpen}
             fetchedAt={fetchedAt}
             onSkipDelay={onSkipDelay}
+            onTryNow={onTryNow}
             onInput={onInput}
           />
         ))}
@@ -323,6 +378,11 @@ export function ItemSummary({ items }: { items: RunItem[] }) {
           {took(item, Date.now()) && <span>· {took(item, Date.now())}</span>}
           {item.exitCode !== null && (
             <span>· {t("run.exit", { code: item.exitCode })}</span>
+          )}
+          {item.attempts && item.attempts.length > 0 && (
+            <span data-item-attempts>
+              · {t("attempts.count", { count: item.attempts.length })}
+            </span>
           )}
         </li>
       ))}

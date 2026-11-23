@@ -467,6 +467,7 @@ export function StepCard({
             busy={busy}
             runbookOpen={runbookOpen && !replaced}
             onSkipDelay={() => actions.skipDelay(step)}
+            onTryNow={() => actions.tryNow(step)}
             onInput={actions.input}
           />
         </div>

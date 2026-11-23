@@ -24,6 +24,8 @@ export interface StepActions {
   continueFrom: (step: Step, fromItem: number, waitLeftMs?: number) => void;
   /** 1.4.10: ends the delay item that runs now. */
   skipDelay: (step: Step) => void;
+  /** 1.4.10, phase 2: starts the next attempt of a waiting item now. */
+  tryNow: (step: Step) => void;
   stop: (step: Step) => void;
   send: (step: Step, waitLeftMs?: number) => void;
   skip: (step: Step, reason: string) => void;

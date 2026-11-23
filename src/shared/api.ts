@@ -25,6 +25,7 @@ export type { Check, CheckResult };
 export type {
   ItemStatus,
   ResolvedItem,
+  RunAttempt,
   RunItem,
   SequenceItem,
 } from "./sequence.js";

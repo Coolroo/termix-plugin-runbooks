@@ -25,6 +25,7 @@ export type {
   RunbookOwner,
   RunbookStatus,
   RunbookSummary,
+  RunAttempt,
   RunItem,
   RunStdin,
   SecretState,

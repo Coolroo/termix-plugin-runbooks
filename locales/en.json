@@ -531,7 +531,8 @@
     "in": "in {{dir}}",
     "type": {
       "run": "Run",
-      "delay": "Delay"
+      "delay": "Delay",
+      "wait": "Wait until"
     },
     "status": {
       "waiting": "Waiting",
@@ -556,5 +557,43 @@
     "confirm": "Continue",
     "carried_one": "Item 1 passed and does not run again. These items run, in order:",
     "carried_other": "Items 1 to {{count}} passed and do not run again. These items run, in order:"
+  },
+  "attempts": {
+    "schedule": "Up to {{attempts}} attempts, {{delays}}, at most {{total}}",
+    "every": "every {{time}}",
+    "linear": "{{time}} apart, then {{time}} longer each time up to {{cap}}",
+    "exponential": "{{time}} apart, then ×{{factor}} each time up to {{cap}}",
+    "jitter": {
+      "full": " (random: 0 to the delay)",
+      "equal": " (random: half the delay or more)"
+    },
+    "stopIfTitle": "Stops at once if",
+    "stopIfMatched": "Stopped: {{label}} matched",
+    "counter": "Attempt {{attempt}} of {{of}}, {{elapsed}} of {{within}}",
+    "counterNoLimit": "Attempt {{attempt}} of {{of}}, {{elapsed}}",
+    "next": "Next attempt in {{time}}",
+    "tryNow": "Try now",
+    "attempt": "Attempt {{attempt}}",
+    "count_one": "{{count}} attempt",
+    "count_other": "{{count}} attempts",
+    "earlier_one": "Earlier attempt ({{count}})",
+    "earlier_other": "Earlier attempts ({{count}})",
+    "lastOutput": "Output of attempt {{attempt}}, the last one",
+    "runningOutput": "Attempt {{attempt}} runs",
+    "dot": {
+      "passed": "passed",
+      "not-yet": "not yet",
+      "failed": "failed",
+      "running": "running"
+    },
+    "why": {
+      "exit": "exit {{code}}",
+      "check": "checks did not pass",
+      "timeout": "timed out",
+      "connect": "no connection",
+      "stop-if": "a stopIf check matched",
+      "stopped": "stopped",
+      "interrupted": "interrupted"
+    }
   }
 }

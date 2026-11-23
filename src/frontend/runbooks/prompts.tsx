@@ -21,6 +21,8 @@ import type { Translate } from "../../shared/step-kinds";
 import { CodeBlock, SectionLabel } from "../ui/ui";
 import { describeStdin, formatTime, formatWait, hostLabel } from "../ui/format";
 import { ChecksList, checksWords } from "../steps/ChecksList";
+import { scheduleText } from "../steps/Attempts";
+import { itemPlan, itemSchedule } from "../../shared/sequence";
 import type { ConflictBody, Step } from "../api-types";
 
 /** A question on screen: what it asks, and how it answers. */
@@ -162,9 +164,20 @@ function SequencePreview({
                   : t("item.delay", { time: formatWait(item.seconds) })}
               </span>
             ) : (
-              <CodeBlock className="mt-0.5 overflow-x-auto" small={false}>
-                {item.command}
-              </CodeBlock>
+              <>
+                <CodeBlock className="mt-0.5 overflow-x-auto" small={false}>
+                  {item.command}
+                </CodeBlock>
+                {/* Phase 2: the attempts the person approves with Run. */}
+                {itemPlan(item) && (
+                  <span
+                    className="text-muted-foreground"
+                    data-confirm-schedule={item.position}
+                  >
+                    {scheduleText(t, itemSchedule(item)!, itemPlan(item)!)}
+                  </span>
+                )}
+              </>
             )}
           </li>
         ))}

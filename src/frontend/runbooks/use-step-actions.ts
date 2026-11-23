@@ -213,6 +213,10 @@ export function useStepActions(
     skipDelay: (step) =>
       void withBusy(() => postThenLoad(`/steps/${step.id}/skip-delay`)),
 
+    // No question either: the attempt was approved with the Run.
+    tryNow: (step) =>
+      void withBusy(() => postThenLoad(`/steps/${step.id}/try-now`)),
+
     stop: (step) =>
       void withBusy(async () => {
         const ok = await confirm({
