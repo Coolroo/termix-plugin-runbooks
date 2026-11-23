@@ -2,7 +2,13 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import { Button, Input, ListBadge, Textarea } from "@termix-ssh/plugin-sdk/ui";
+import {
+  Button,
+  Input,
+  ListBadge,
+  PluginIcon,
+  Textarea,
+} from "@termix-ssh/plugin-sdk/ui";
 import {
   describeStdin,
   formatDuration,
@@ -13,6 +19,8 @@ import {
 import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
 import { RunInput } from "../running/RunInput";
+import { useCapturedOutput } from "../running/use-captured-output";
+import type { CaptureRead } from "../running/terminal-capture";
 import type { StepActions } from "./StepButtons";
 import type { Run, Step } from "../api-types";
 
@@ -117,6 +125,66 @@ function Output({ label, text }: { label: string; text: string | null }) {
   );
 }
 
+/**
+ * Above a paste box that Send to terminal filled (1.4.9): where the text is
+ * from, whether the command looks finished, and Read again.
+ */
+function CaptureNote({
+  read,
+  edited,
+  onReadAgain,
+}: {
+  read: CaptureRead;
+  edited: boolean;
+  onReadAgain: () => void;
+}) {
+  const { t } = useTranslation();
+  const state = read.passwordPrompt
+    ? { key: "capture.password", tone: "warning" as const }
+    : read.finished
+      ? { key: "capture.finished", tone: "success" as const }
+      : { key: "capture.running", tone: "muted" as const };
+  return (
+    <div className="flex flex-col gap-1" data-capture={read.from}>
+      <p className="text-muted-foreground">{t("capture.from")}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span data-capture-state={state.key.slice("capture.".length)}>
+          <ListBadge tone={state.tone}>{t(state.key)}</ListBadge>
+        </span>
+        <Button
+          size="xs"
+          variant="outline"
+          className="gap-1"
+          onClick={onReadAgain}
+          data-capture-read
+        >
+          <PluginIcon
+            name="RefreshCw"
+            className="size-3.5 shrink-0"
+            aria-hidden="true"
+          />
+          {t("capture.readAgain")}
+        </Button>
+      </div>
+      {edited && (
+        <p className="text-muted-foreground" data-capture-edited>
+          {t("capture.edited")}
+        </p>
+      )}
+      {read.from === "raw" && (
+        <p className="text-muted-foreground" data-capture-raw>
+          {t("capture.raw")}
+        </p>
+      )}
+      {read.truncated && (
+        <p className="text-muted-foreground" data-capture-cut>
+          {t("capture.cut")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RunDetails({
   run,
   onComplete,
@@ -127,7 +195,10 @@ export function RunDetails({
   onComplete?: StepActions["complete"];
 } & InputProps) {
   const { t } = useTranslation();
-  const [pasted, setPasted] = useState("");
+  const awaiting =
+    !!onComplete && run.status === "awaiting-output" && run.mode !== "vm";
+  const box = useCapturedOutput(run.id, awaiting && run.mode === "terminal");
+  const pasted = box.text;
   const [exitCode, setExitCode] = useState("");
   const enteredExit =
     exitCode.trim() !== "" && Number.isInteger(Number(exitCode))
@@ -207,7 +278,16 @@ export function RunDetails({
           <Output label={t("run.stderr")} text={run.stderr} />
         </>
       )}
-      <Output label={t("run.pasted")} text={run.pastedOutput} />
+      <Output
+        label={
+          run.outputSource === "captured"
+            ? t("run.source.captured")
+            : run.outputSource === "captured-edited"
+              ? t("run.source.capturedEdited")
+              : t("run.pasted")
+        }
+        text={run.pastedOutput}
+      />
       {(run.inputs?.length ?? 0) > 0 && (
         <p className="mt-1 text-muted-foreground" data-run-inputs>
           {t("run.input.count", { count: run.inputs.length })}
@@ -234,13 +314,23 @@ export function RunDetails({
         </p>
       )}
       {/* A VM step's console ends with its own Done or Failed (1.4.7). */}
-      {onComplete && run.status === "awaiting-output" && run.mode !== "vm" && (
+      {awaiting && (
         <div className="mt-2 flex flex-col gap-2">
+          {box.read && (
+            <CaptureNote
+              read={box.read}
+              edited={box.edited}
+              onReadAgain={box.readAgain}
+            />
+          )}
           <Textarea
             value={pasted}
-            onChange={(event) => setPasted(event.target.value)}
-            placeholder={t("run.pastePlaceholder")}
+            onChange={(event) => box.change(event.target.value)}
+            placeholder={
+              box.read ? t("capture.placeholder") : t("run.pastePlaceholder")
+            }
             className="min-h-24 font-mono text-xs"
+            data-paste-box={box.read ? box.source : "pasted"}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -257,19 +347,24 @@ export function RunDetails({
               // Done needs what the terminal printed: one line at least.
               disabled={pasted.trim() === ""}
               title={pasted.trim() === "" ? t("run.pasteFirst") : undefined}
-              onClick={() => onComplete(run, pasted, "done", enteredExit)}
+              onClick={() =>
+                onComplete!(run, pasted, "done", enteredExit, box.source)
+              }
             >
               {t("run.markDone")}
             </Button>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => onComplete(run, pasted, "failed", enteredExit)}
+              onClick={() =>
+                onComplete!(run, pasted, "failed", enteredExit, box.source)
+              }
             >
               {t("run.markFailed")}
             </Button>
           </div>
-          {pasted.trim() === "" && <PasteFirstHint />}
+          {/* While the terminal is read, the box's placeholder says why. */}
+          {pasted.trim() === "" && !box.read && <PasteFirstHint />}
         </div>
       )}
     </div>

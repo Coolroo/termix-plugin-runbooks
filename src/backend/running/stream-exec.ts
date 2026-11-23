@@ -12,7 +12,7 @@ import { StringDecoder } from "node:string_decoder";
 import {
   createTerminalCleaner,
   type TerminalCleaner,
-} from "./terminal-text.js";
+} from "../../shared/terminal-text.js";
 
 export type StreamName = "stdout" | "stderr";
 

@@ -24,12 +24,27 @@ import { isAgentStep, isOutsideStep, stepLabel } from "../../shared/steps.js";
 import { redact } from "./redact.js";
 import { describeStdin, stepStdin } from "./stdin.js";
 import { createRunner, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
-import { MAX_TYPED_BYTES } from "../../shared/limits.js";
+import { MAX_PASTED_CHARS, MAX_TYPED_BYTES } from "../../shared/limits.js";
+import { OUTPUT_SOURCES, type OutputSource } from "../../shared/api.js";
 
 /** How long Stop waits for the run to be written before it answers. */
 const STOP_WAIT_MS = 5000;
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
+
+/**
+ * Where Mark done's output came from (1.4.9): the page says so, and the
+ * person saw and could change it. Pasted when left out, as before.
+ */
+function parseOutputSource(value: unknown): OutputSource {
+  if (value === undefined || value === null) return "pasted";
+  if (!OUTPUT_SOURCES.includes(value as OutputSource)) {
+    throw new InputError(
+      `outputSource must be one of ${OUTPUT_SOURCES.join(", ")}`,
+    );
+  }
+  return value as OutputSource;
+}
 
 export function registerRunRoutes(router: Router, kit: PersonKit): void {
   const {
@@ -255,7 +270,10 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
    * /plugin-api/runbooks/runs/{id}/complete:
    *   post:
    *     summary: Finish a terminal run with the pasted output
-   *     description: Body { pastedOutput, exitCode?, outcome done|failed }.
+   *     description: >
+   *       Body { pastedOutput, exitCode?, outcome done|failed, outputSource? }.
+   *       outputSource is pasted (the default), captured (read from the
+   *       terminal by the page, 1.4.9) or captured-edited.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The run }
@@ -272,13 +290,16 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       const input = body(req);
       const outcome = parseOutcome(input.outcome);
       const pasted =
-        optionalText(input.pastedOutput, "pastedOutput", MAX_OUTPUT_BYTES) ??
+        optionalText(input.pastedOutput, "pastedOutput", MAX_PASTED_CHARS) ??
         "";
       if (outcome === "done" && pasted.trim() === "") {
         throw new InputError(
           "paste at least one line of the output to mark the run done",
         );
       }
+      // Text read from the terminal is kept as the pasted output, so its
+      // secrets are hidden and its checks and captures run as for a paste.
+      const source = parseOutputSource(input.outputSource);
       const exitCode = input.exitCode ?? null;
       if (exitCode !== null && !Number.isInteger(exitCode)) {
         throw new InputError("exitCode must be an integer or null");
@@ -299,7 +320,11 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         step,
         outcome,
         pasted,
-        { pastedOutput: pasted, exitCode: exitCode as number | null },
+        {
+          pastedOutput: pasted,
+          exitCode: exitCode as number | null,
+          outputSource: pasted === "" ? null : source,
+        },
         {
           // Mark done tests the checks on what was pasted; Mark failed
           // does not.
@@ -550,6 +575,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
               startedAt: at,
               finishedAt: at,
               pastedOutput: pasted,
+              outputSource: pasted === null ? null : "pasted",
               note: note.trim() === "" ? null : note,
               checks: results,
               captured,

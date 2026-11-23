@@ -244,6 +244,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     startedEarlySeconds: null,
     inputs: [],
     errorParts: null,
+    outputSource: null,
     running: false,
     lastOutputAt: null,
     elapsedMs: null,

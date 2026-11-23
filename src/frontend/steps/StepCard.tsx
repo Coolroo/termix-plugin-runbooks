@@ -611,6 +611,8 @@ export function StepCard({
         <div className="mt-3 flex flex-col gap-2">
           <SectionLabel>{t("run.latest")}</SectionLabel>
           <RunDetails
+            // A new run gets its own paste box (1.4.9: it may be filled).
+            key={latest.id}
             run={latest}
             onComplete={actions.complete}
             step={step}

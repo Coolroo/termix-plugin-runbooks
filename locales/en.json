@@ -139,6 +139,10 @@
     "stdout": "Output",
     "stderr": "Errors",
     "pasted": "Pasted output",
+    "source": {
+      "captured": "Output read from the terminal",
+      "capturedEdited": "Output read from the terminal, then changed"
+    },
     "captured": "Captured:",
     "pastePlaceholder": "Paste the terminal output here, then mark the step done or failed.",
     "markDone": "Mark done",
@@ -265,6 +269,17 @@
     "hint": "Not done yet: {{steps}}. Run this step anyway?",
     "anyway": "Run out of order"
   },
+  "capture": {
+    "from": "From the terminal: check it, change it if you need to, then mark the step done or failed.",
+    "finished": "The command looks finished: the prompt is back",
+    "running": "The command may still be running",
+    "password": "The terminal waits for a password",
+    "readAgain": "Read again",
+    "edited": "You changed the text, so it no longer follows the terminal. Read again puts the terminal's text back.",
+    "raw": "The command's start has left the terminal's scrollback, so this is the output as it arrived.",
+    "cut": "The output is longer than a step keeps: only its start is here.",
+    "placeholder": "Nothing from the terminal yet. Press Enter in the terminal to run the command; its output shows here."
+  },
   "terminal": {
     "opening": "Opening a terminal to {{host}}…",
     "openFailed": "Could not open a terminal. Copy the command instead.",
@@ -273,6 +288,7 @@
     "noHost": "This host is not available to you.",
     "notSsh": "{{host}} is not an SSH host, so it has no terminal to send to.",
     "sent": "Typed into {{host}}. Press Enter there, then paste the output here.",
+    "sentRead": "Typed into {{host}}. Press Enter there; its output comes back here for you to check.",
     "sendFailed": "Could not type into the terminal. Copy the command instead."
   },
   "tokens": {

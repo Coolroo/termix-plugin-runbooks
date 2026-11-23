@@ -513,6 +513,16 @@ A step that Termix runs has two buttons: **Run** starts the command over a conne
 }
 ```
 
+### Output read from the terminal
+
+Since 1.4.9, Send to terminal reads what the command prints, so the person does not copy it from the terminal (on a phone they cannot). Runbooks notes the terminal's prompt before it types the command; the **Mark done** box then fills with the lines after the command, up to the prompt's next line, and follows the terminal until the person changes the text. The person checks it, can change it, and presses **Mark done** or **Mark failed** as before. **Read again** reads the terminal again. A line says "The command looks finished" once the prompt is back, and "The terminal waits for a password" at a password prompt.
+
+- The text is the run's `pastedOutput`, so checks, `captures`, `secretCaptures` and secret masking read it as they read a paste. The exit code stays empty: the person may enter one.
+- The run's `outputSource` says where it came from: `"captured"` (read from the terminal, kept as read), `"captured-edited"` (read from the terminal, then changed by the person) or `"pasted"` (by the person). It is `null` on a run with no pasted output and on runs from before 1.4.9. A step run outside Termix with output has `"pasted"`.
+- The reading lives in the browser that pressed Send to terminal. After a reload, on another device, or with a Termix whose terminal does not offer it (such as plugin API 2), the box is empty and the person pastes, as before.
+- What it reads ends at the prompt: commands the person types after it are not in the text. A command that changes the prompt (`cd`, `su`, a virtual environment) has no prompt back, so the text runs to the end of the terminal, and the person cuts it.
+- Write such a step as before; do not tell the person to paste the output. For a command that only asks for a password, a Run with [Typed input](#typed-input) still keeps more: the exit code and the output as it arrives.
+
 ### Typed input
 
 While a Run runs, the person who started it can type into the command from the runbook page (1.4.6): a line under the live output with **Send** (Enter) and **End input**, and an eye to hide what they type. This works on every Run without `stdin`, for programs that read standard input: `read`, `sudo -S`, many scripts. Write the step as a Run; do not tell the person to use Send to terminal and paste the output back.
@@ -687,7 +697,7 @@ A run in the answer looks like this:
 }
 ```
 
-`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
+`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted or checked, and `outputSource` whether it was `pasted`, `captured` from the terminal or `captured-edited`, see [Output read from the terminal](#output-read-from-the-terminal)), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
 
 While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. A failed run of a hidden step has `error: "[hidden by owner]"` whatever the reason, and its run that ended done has `error: null`. Agents cannot stop a run.
 

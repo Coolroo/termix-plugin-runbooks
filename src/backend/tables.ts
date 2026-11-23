@@ -192,6 +192,10 @@ export const runs = defineTable(
     // JSON { message, secretsMissing, secretNotStored, slowCaptures }: the
     // parts that error was made from, so agents get it built (1.4.6).
     errorPartsJson: text(),
+    // Where a terminal run's pasted output came from (1.4.9): pasted (by
+    // the person), captured (read from the terminal, kept as read) or
+    // captured-edited. Null for no pasted output, and for older runs.
+    outputSource: varchar(16),
   },
   {
     indexes: [

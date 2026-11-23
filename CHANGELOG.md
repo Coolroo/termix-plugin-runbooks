@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.9 (unreleased)
+
+### Added
+
+- **Send to terminal reads its own output** (T-249). The person no longer copies the output from the terminal, which a phone cannot do. Before it types the command, Runbooks notes the terminal's prompt; the **Mark done** box then fills with the lines after the command, up to the prompt's next line, and follows the terminal each second until the person changes the text. A line above the box says the text is from the terminal, and "The command looks finished" once the prompt is back, "The command may still be running" before, or "The terminal waits for a password". **Read again** reads the terminal again and puts its text back after a change. The person still sees, can change, and presses **Mark done** or **Mark failed**. The toast after Send to terminal says the output comes back to the step.
+- It reads SSH Terminal's handle on the terminal tab (`readBufferLines`, `subscribeOutput`, `isAtPasswordPrompt`), which the plugin SDK does not declare: every part is tested before use and never throws. Without it (a Termix that changes it, plugin API 2's frames, a page reload, another device), the box is the empty paste box it was. The screen's lines are read first, so Windows ConPTY screens come out as shown; once the command's line has left the scrollback, or its tab is closed, a raw copy is read, cleaned as an interactive run's output is. The text is cut to 256 K characters, what Mark done takes. The raw copy follows the terminal for an hour, or the step's longer time limit, and up to 20 captures are kept.
+- A run's `outputSource` says where its pasted output came from: `pasted`, `captured` (from the terminal, as read) or `captured-edited`. `POST /runs/{id}/complete` takes it (default `pasted`; 400 for another value); a run with no pasted output has `null`, as do runs from before. The run shows "Output read from the terminal" or "…, then changed" for it; agents read it on every run, a hidden step's too. Captured text is the run's `pastedOutput`, so secret masking, checks, captures and secret captures read it as they read a paste. docs/agent-api.md has a section "Output read from the terminal", and docs/security.md says what is read and what is not (no-echo input never reaches the screen; echoed text is read like any output).
+- New column `runs.output_source` (migration 0020), for SQLite, PostgreSQL and MySQL.
+
+### Changed
+
+- The latest run's Mark done box starts empty for each new run; it kept the text typed for the run before.
+
 ## 1.4.8
 
 ### Fixed

@@ -37,6 +37,10 @@ The run is refused and the page reloads with the new command. Read it again befo
 
 No. One click finds a connected terminal to the step's host, or opens one and waits for it to connect, then types the command without pressing Enter. You read it there and press Enter yourself. That is why it asks no "are you sure" question; it still asks before a repeat or a step out of order.
 
+## Do I have to paste the output of Send to terminal?
+
+Not since 1.4.9. Go back to the runbook after you press Enter in the terminal: the box under the step fills with what the command printed, and says "The command looks finished" once the prompt is back. Check it, change it if you need to, then press **Mark done** or **Mark failed**. **Read again** reads the terminal again, and puts its text back after you changed it. After a page reload, or on another device, the box is empty and you paste, as before.
+
 ## How do I see if a command stalled?
 
 Watch the running step. Its output shows as it arrives, with **Running for m:ss** and **No output for Ns**. After 30 seconds without output the silence turns to a warning. Some commands are quiet while they work (a large download, a database dump to a file), so a warning is a hint, not proof. If it is stuck, press **Stop**. A command that waits for input, such as a password or a yes/no question, never gets an answer from Run: stop it and use Send to terminal, or change the command so it does not ask (for example `apt-get -y`).

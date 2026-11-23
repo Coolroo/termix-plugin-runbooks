@@ -10,13 +10,15 @@ import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
 import type { VmSpec } from "../../../shared/vms.js";
-import type {
-  RunbookOwner,
-  RunErrorParts,
-  RunInput,
-  RunSecrets,
-  RunStdin,
-  TokenHost,
+import {
+  OUTPUT_SOURCES,
+  type OutputSource,
+  type RunbookOwner,
+  type RunErrorParts,
+  type RunInput,
+  type RunSecrets,
+  type RunStdin,
+  type TokenHost,
 } from "../../../shared/api.js";
 import type {
   EventRow,
@@ -146,6 +148,9 @@ export function toRun(row: Record<string, unknown>): RunRow {
     secrets: parseJson<RunSecrets | null>(row.secrets, null),
     inputs: parseJson<RunInput[]>(row.inputsJson, []),
     errorParts: parseJson<RunErrorParts | null>(row.errorPartsJson, null),
+    outputSource: OUTPUT_SOURCES.includes(row.outputSource as OutputSource)
+      ? (row.outputSource as OutputSource)
+      : null,
   };
 }
 

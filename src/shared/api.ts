@@ -185,7 +185,26 @@ export interface RunRecord {
   inputs: RunInput[];
   /** The parts that `error` was made from (1.4.6); null for none or older. */
   errorParts: RunErrorParts | null;
+  /**
+   * Where a terminal run's pasted output came from (1.4.9); null for no
+   * pasted output, and for runs from before.
+   */
+  outputSource: OutputSource | null;
 }
+
+/**
+ * Where a terminal run's pasted output came from (1.4.9): `pasted` by the
+ * person, `captured` from the terminal by Send to terminal and kept as
+ * read, or `captured-edited`, read from the terminal and then changed by
+ * the person before Mark done.
+ */
+export type OutputSource = "pasted" | "captured" | "captured-edited";
+
+export const OUTPUT_SOURCES: readonly OutputSource[] = [
+  "pasted",
+  "captured",
+  "captured-edited",
+];
 
 /**
  * Why a run failed, in parts (BUG-014): Termix's own words apart from the

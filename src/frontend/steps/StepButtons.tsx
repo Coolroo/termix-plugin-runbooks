@@ -11,6 +11,7 @@ import { isAgentStep } from "../../shared/steps";
 import { OutcomeButtons } from "../ui/ui";
 import type { Run, Step } from "../api-types";
 import type { VmStepState } from "../../shared/vms";
+import type { OutputSource } from "../../shared/api";
 
 export interface StepActions {
   /** `waitLeftMs`: the step's wait timer still runs, this long. */
@@ -48,11 +49,13 @@ export interface StepActions {
    * step (1.4.2). Resolves true when the server stored it.
    */
   secret: (step: Step, value?: string) => Promise<boolean>;
+  /** `source`: pasted, or read from the terminal and maybe changed (1.4.9). */
   complete: (
     run: Run,
     pasted: string,
     outcome: "done" | "failed",
     exitCode: number | null,
+    source: OutputSource,
   ) => void;
   /**
    * Types into a running command (1.4.6), then ends its input when `end`.

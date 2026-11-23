@@ -83,7 +83,8 @@ type RunDefaults =
   | "pastedOutput"
   | "error"
   | "inputs"
-  | "errorParts";
+  | "errorParts"
+  | "outputSource";
 
 export async function createStore(db: PluginDatabase) {
   const runbooks: Table = await db.define(runbooksDef);
@@ -386,6 +387,7 @@ export async function createStore(db: PluginDatabase) {
       truncated: false,
       timedOut: false,
       pastedOutput: null,
+      outputSource: null,
       error: null,
       ...rest,
       inputsJson: inputs?.length ? JSON.stringify(inputs) : null,

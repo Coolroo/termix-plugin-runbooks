@@ -17,6 +17,7 @@ import { isOutsideStep, stepLabel } from "../../shared/steps";
 import type { StepActions } from "../steps/StepButtons";
 import { blockingText, earlyTitle } from "../ui/format";
 import { useTerminalSend } from "../running/use-terminal-send";
+import { endCapture } from "../running/terminal-capture";
 import { useSecretAttempt } from "../secrets/use-secret-attempt";
 import {
   commandDetails,
@@ -369,16 +370,19 @@ export function useStepActions(
     setHidden: (step, hidden) =>
       postRunbook(`/steps/${step.id}/hide`, { hidden }),
 
-    complete: (run, pasted, outcome, exitCode) =>
+    complete: (run, pasted, outcome, exitCode, source) =>
       void withBusy(() =>
         postThenLoad<Run>(
           `/runs/${run.id}/complete`,
           {
             pastedOutput: pasted,
             outcome,
+            outputSource: source,
             ...(exitCode !== null ? { exitCode } : {}),
           },
           (data) => {
+            // The run has its output: the terminal is no longer read for it.
+            endCapture(run.id);
             if (outcome === "done" && data?.status === "failed") {
               toast.error(t("checks.failedToast"));
             }

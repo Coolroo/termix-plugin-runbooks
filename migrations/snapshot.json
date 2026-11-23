@@ -319,6 +319,10 @@
         },
         "errorPartsJson": {
           "type": "text"
+        },
+        "outputSource": {
+          "type": "varchar",
+          "length": 16
         }
       },
       "indexes": [

@@ -20,7 +20,7 @@ import { stepLabel } from "../../shared/steps.js";
 import { MIN_HIDDEN_CHARS } from "../../shared/limits.js";
 import { INTERACTIVE_PTY, streamExec, type ExecClient } from "./stream-exec.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
-import { cleanTerminalText } from "./terminal-text.js";
+import { cleanTerminalText } from "../../shared/terminal-text.js";
 import { errorText, hasError, noErrorParts } from "./run-error.js";
 import {
   secretLabel,

@@ -153,6 +153,7 @@ describe("checks in the UI", () => {
       expect(client.post).toHaveBeenCalledWith("/runs/12/complete", {
         pastedOutput: "active\n",
         outcome: "done",
+        outputSource: "pasted",
         exitCode: 0,
       }),
     );
