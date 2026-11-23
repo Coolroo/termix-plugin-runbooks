@@ -7,11 +7,16 @@
 import type {
   EventRow,
   RunbookRow,
+  RunAttemptRow,
   RunItemRow,
   RunRow,
   StepRow,
 } from "./store/types.js";
-import type { RunItem } from "../../shared/sequence.js";
+import {
+  itemSchedule,
+  type RunAttempt,
+  type RunItem,
+} from "../../shared/sequence.js";
 import type { Store } from "./store/store.js";
 import {
   agentCommand,
@@ -96,6 +101,10 @@ export async function loadBundle(
     steps.some((step) => step.sequence)
       ? await store.listRunItems({ runbookId })
       : [],
+    // And only one with a wait or a retried item has attempts (phase 2).
+    steps.some((step) => step.sequence?.some(itemSchedule))
+      ? await store.listRunAttempts({ runbookId })
+      : [],
   );
   const runs = live ? live.show(rows) : rows.map(storedRun);
   const runsByStep = new Map<number, ShownRun[]>();
@@ -124,16 +133,40 @@ export function shownItem(item: RunItemRow): RunItem {
   return rest;
 }
 
+/** An attempt as the views show it: without the ids its item has. */
+function shownAttempt(attempt: RunAttemptRow): RunAttempt {
+  const { runId: _runId, runbookId: _runbookId, ...rest } = attempt;
+  return rest;
+}
+
 /**
  * Runs with their items (1.4.10), in order; a run that has none (any run
- * that is not a sequence's) gets no items field.
+ * that is not a sequence's) gets no items field. A wait item, or a run
+ * item with retry, gets its attempts (phase 2), oldest first, even none
+ * yet.
  */
-export function withItems(runs: RunRow[], items: RunItemRow[]): RunRow[] {
+export function withItems(
+  runs: RunRow[],
+  items: RunItemRow[],
+  attempts: RunAttemptRow[] = [],
+): RunRow[] {
   if (items.length === 0) return runs;
+  const byItem = new Map<number, RunAttempt[]>();
+  for (const attempt of attempts) {
+    const list = byItem.get(attempt.itemId) ?? [];
+    list.push(shownAttempt(attempt));
+    byItem.set(attempt.itemId, list);
+  }
   const byRun = new Map<number, RunItem[]>();
   for (const item of items) {
     const list = byRun.get(item.runId) ?? [];
-    list.push(shownItem(item));
+    const shown: RunItem = shownItem(item);
+    if (item.maxAttempts !== null) {
+      shown.attempts = (byItem.get(item.id) ?? []).sort(
+        (a, b) => a.attempt - b.attempt,
+      );
+    }
+    list.push(shown);
     byRun.set(item.runId, list);
   }
   return runs.map((run) => {

@@ -56,6 +56,11 @@ export interface LiveRun {
   itemId: number | null;
   /** Skips the delay that runs now (1.4.10); null when none runs. */
   skipDelay: ((by: string) => Promise<void>) | null;
+  /**
+   * Starts the next attempt of the item that waits between two attempts
+   * now (1.4.10, phase 2); null when none waits.
+   */
+  tryNow: ((by: string) => Promise<void>) | null;
 }
 
 /** A running command's standard input, as the input route uses it. */
@@ -168,6 +173,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
         sequence: false,
         itemId: null,
         skipDelay: null,
+        tryNow: null,
         dirty: false,
         lastFlushAt: Date.now(),
         timer: null,
@@ -229,6 +235,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
       entry.stop = null;
       entry.input = null;
       entry.skipDelay = null;
+      entry.tryNow = null;
     },
 
     /** The item ended: nothing of it is live any more (1.4.10). */
@@ -239,6 +246,7 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
       entry.stop = null;
       entry.input = null;
       entry.skipDelay = null;
+      entry.tryNow = null;
     },
 
     byStep(stepId: number): LiveRun | undefined {
@@ -357,6 +365,21 @@ export async function sweepInterrupted(
         status: "failed",
         finishedAt: now(),
         error: INTERRUPTED,
+        nextAttemptAt: null,
+      });
+    }
+    // Phase 2: a wait's attempt that ran fails as interrupted. The owner
+    // (2026-11-23): the person continues from that item; it starts again
+    // at attempt 1.
+    for (const attempt of await store.listRunAttempts({
+      runId: run.id,
+      status: "running",
+    })) {
+      await store.updateRunAttempt(attempt.id, {
+        status: "failed",
+        finishedAt: now(),
+        error: INTERRUPTED,
+        why: "interrupted",
       });
     }
     const step = await store.getStep(run.stepId);

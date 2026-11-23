@@ -138,7 +138,7 @@ describe("writing a sequence", () => {
     ],
     [{ sequence: [delay(0)] }, "seconds must be an integer from 1 to 3600"],
     [{ sequence: [delay(3601)] }, "seconds must be an integer from 1 to 3600"],
-    [{ sequence: [delay(5)] }, "at least one run item"],
+    [{ sequence: [delay(5)] }, "at least one run or wait item"],
     [{ sequence: [run("")] }, "sequence[0].command is required"],
     [
       { sequence: [run("a", { onFail: "maybe" })] },
@@ -150,7 +150,7 @@ describe("writing a sequence", () => {
     ],
     [{ sequence: [{ type: "port", port: 22 }] }, "comes in a later version"],
     [{ sequence: [{ type: "container", name: "x" }] }, "later version"],
-    [{ sequence: [{ type: "nope" }] }, 'type must be "run" or "delay"'],
+    [{ sequence: [{ type: "nope" }] }, 'type must be "run", "wait" or "delay"'],
     [
       {
         sequence: [

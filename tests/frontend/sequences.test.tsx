@@ -83,6 +83,9 @@ function item(position: number, overrides: Partial<RunItem> = {}): RunItem {
     captured: {},
     skippedBy: null,
     fromRunId: null,
+    maxAttempts: null,
+    endsBy: null,
+    nextAttemptAt: null,
     ...overrides,
   };
 }

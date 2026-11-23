@@ -160,8 +160,12 @@ export function createPersonKit(
   async function shownRun(runId: number) {
     const run = await store.getRun(runId);
     if (!run) return null;
-    // A sequence's run shows its items (1.4.10).
-    const [withList] = withItems([run], await store.listRunItems({ runId }));
+    // A sequence's run shows its items, with their attempts (1.4.10).
+    const [withList] = withItems(
+      [run],
+      await store.listRunItems({ runId }),
+      await store.listRunAttempts({ runId }),
+    );
     return typedSizes(live.show([withList])[0], actor());
   }
 

@@ -10,6 +10,15 @@
  * one that stops a sequence for a person who lost access. A delay item is a
  * timer here; nothing runs on the host, and the person may skip it.
  *
+ * Phase 2: a wait item, and a run item with retry, make attempts on a
+ * schedule (attempts.ts, src/shared/schedule.ts). Each attempt is a record
+ * of its own (run_attempts) with its own connection; the same access check
+ * comes before each attempt after the first. The delay between two
+ * attempts is a timer, as a delay item is: the server goes on with the
+ * page closed, and Try now ends that delay. One Run press is the person's
+ * consent for every attempt of it, so attempts never ask the repeat
+ * question.
+ *
  * An item that fails stops the sequence and fails the step, unless it says
  * onFail "continue". Stop ends the item that runs and the rest. Continue
  * (run-routes.ts) makes a new run that carries the items that passed and
@@ -24,21 +33,37 @@ import { LIMITS } from "../runbooks/parse.js";
 import type { RunbookBundle } from "../runbooks/view.js";
 import { resolveItem, valuesObject } from "../values/effective.js";
 import type { Values } from "../values/values.js";
-import { judgeOutput } from "../checks/checks.js";
+import { judgeOutput, type Check, type Judgement } from "../checks/checks.js";
 import type { FailReason } from "../agents/events.js";
 import { stepLabel } from "../../shared/steps.js";
 import { MIN_HIDDEN_CHARS } from "../../shared/limits.js";
+import { SCHEDULE_LIMITS } from "../../shared/schedule.js";
 import {
+  itemSchedule,
   withWorkdir,
+  type AttemptWhy,
+  type CommandItemSpec,
   type DelayItemSpec,
   type ResolvedItem,
-  type RunItemSpec,
 } from "../../shared/sequence.js";
 import type { RunItem } from "../../shared/sequence.js";
-import { INTERACTIVE_PTY, streamExec, type ExecClient } from "./stream-exec.js";
+import {
+  INTERACTIVE_PTY,
+  streamExec,
+  type ExecClient,
+  type StreamExecResult,
+} from "./stream-exec.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
 import { cleanedCopies, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
 import { errorText, hasError, noErrorParts } from "./run-error.js";
+import {
+  attemptTimeout,
+  attemptWhy,
+  delayAfter,
+  exhaustedText,
+  mayRetry,
+  stopIfText,
+} from "./attempts.js";
 
 /** Why an item did not start: the person lost access to the host. */
 export const NO_ACCESS = "stopped: you can no longer connect to this host";
@@ -55,6 +80,11 @@ interface ItemEnd {
   error: string | null;
   /** Captures whose pattern did not finish in time. */
   slow: string[];
+  /**
+   * The sequence stops here whatever the item's onFail says: the person
+   * lost access to the host between two attempts.
+   */
+  final?: boolean;
 }
 
 /** What a run of a sequence starts with. */
@@ -71,6 +101,37 @@ export interface SequenceTarget {
   skippedWait: number | null;
 }
 
+/** What a run item reads and keeps while the sequence runs. */
+interface ItemContext {
+  position: number;
+  values: Values;
+  hidden: SecretText[];
+  typed: SecretText[];
+}
+
+/** How one command ended: run to its end, or not run (no connection). */
+type Executed =
+  | { ran: true; result: StreamExecResult; hiddenAll: SecretText[] }
+  | {
+      ran: false;
+      message: string;
+      stdout: string;
+      stderr: string;
+      truncated: boolean;
+      hiddenAll: SecretText[];
+    };
+
+/** An ended command's checks and captures, and how it ended. */
+interface Judged {
+  judged: Judgement;
+  passed: boolean;
+  exited: boolean;
+  stopped: boolean;
+  /** Termix's words: a stop or an interruption; or null. */
+  error: string | null;
+  reason: FailReason;
+}
+
 /** The text cut to the output limit, as a run keeps it. */
 function capped(text: string): { text: string; cut: boolean } {
   const bytes = Buffer.from(text, "utf8");
@@ -82,6 +143,11 @@ function capped(text: string): { text: string; cut: boolean } {
       .replace(/�+$/, ""),
     cut: true,
   };
+}
+
+/** An ISO time `ms` from now. */
+function after(ms: number): string {
+  return new Date(Date.now() + ms).toISOString();
 }
 
 export function createSequenceRunner(kit: PersonKit) {
@@ -125,27 +191,38 @@ export function createSequenceRunner(kit: PersonKit) {
       const carried: RunItem | undefined =
         index < from ? previous?.run.items?.[index] : undefined;
       if (carried) {
-        // It passed in the run before: its record comes along, unchanged.
+        // It passed in the run before: its record comes along, unchanged,
+        // with its attempts (phase 2).
         const {
           id: _id,
           runId: _runId,
           lastOutputAt: _last,
+          attempts,
           ...kept
         } = carried;
-        itemIds.push(
-          await store.insertRunItem({
-            ...kept,
+        const itemId = await store.insertRunItem({
+          ...kept,
+          runId,
+          stepId: step.id,
+          runbookId: step.runbookId,
+          fromRunId: carried.fromRunId ?? previous!.run.id,
+        });
+        for (const attempt of attempts ?? []) {
+          const { id: _attemptId, ...record } = attempt;
+          await store.insertRunAttempt({
+            ...record,
+            itemId,
             runId,
-            stepId: step.id,
             runbookId: step.runbookId,
-            fromRunId: carried.fromRunId ?? previous!.run.id,
-          }),
-        );
+          });
+        }
+        itemIds.push(itemId);
         if (carried.status === "passed")
           Object.assign(values, carried.captured);
         continue;
       }
       const approved = target.items[index];
+      const schedule = itemSchedule(item);
       itemIds.push(
         await store.insertRunItem({
           runId,
@@ -155,14 +232,14 @@ export function createSequenceRunner(kit: PersonKit) {
           type: item.type,
           label: item.label,
           command:
-            approved?.type === "run"
+            approved && approved.type !== "delay"
               ? approved.command
-              : item.type === "run"
+              : item.type !== "delay"
                 ? item.command
                 : null,
           seconds: item.type === "delay" ? item.seconds : null,
           reason: item.type === "delay" ? item.reason : null,
-          onFail: item.type === "run" ? item.onFail : "stop",
+          onFail: item.type !== "delay" ? item.onFail : "stop",
           status: "waiting",
           startedAt: null,
           finishedAt: null,
@@ -177,6 +254,9 @@ export function createSequenceRunner(kit: PersonKit) {
           captured: {},
           skippedBy: null,
           fromRunId: null,
+          maxAttempts: schedule ? maxAttempts(schedule.attempts) : null,
+          endsBy: null,
+          nextAttemptAt: null,
         }),
       );
     }
@@ -190,7 +270,7 @@ export function createSequenceRunner(kit: PersonKit) {
     });
     record.sequence = true;
     // Started inside the request, so it keeps acting as this person after
-    // the answer is sent: every item, delay and access check.
+    // the answer is sent: every item, delay, attempt and access check.
     record.done = runItems(req, runId, step, target, {
       from,
       itemIds,
@@ -240,49 +320,50 @@ export function createSequenceRunner(kit: PersonKit) {
           };
           break;
         }
-        if (index > state.from) {
-          const access = await ctx.hosts
-            .checkAccess(target.hostId, "connect")
-            .catch(() => ({ hasAccess: false }));
-          if (!access.hasAccess) {
-            const at = now();
-            await store.updateRunItem(itemId, {
-              status: "failed",
-              startedAt: at,
-              finishedAt: at,
-              error: NO_ACCESS,
-            });
-            await audit(
-              req,
-              "runbooks_step_run",
-              step,
-              `${where(step, target, position)}: not started, ${target.by} can no longer connect to the host`,
-              false,
-            );
-            failure = {
-              position,
-              end: {
-                passed: false,
-                reason: "exit",
-                error: NO_ACCESS,
-                slow: [],
-              },
-            };
-            break;
-          }
+        if (index > state.from && !(await stillAllowed(target))) {
+          const at = now();
+          await store.updateRunItem(itemId, {
+            status: "failed",
+            startedAt: at,
+            finishedAt: at,
+            error: NO_ACCESS,
+          });
+          await auditNoAccess(req, step, target, position, "not started");
+          failure = { position, end: noAccessEnd() };
+          break;
         }
+        const context = {
+          position,
+          values: state.values,
+          hidden: state.hidden,
+          typed,
+        };
         const end =
           item.type === "delay"
             ? await runDelay(req, runId, step, target, item, itemId, position)
-            : await runCommand(req, runId, step, target, item, itemId, {
-                position,
-                values: state.values,
-                hidden: state.hidden,
-                typed,
-              });
+            : itemSchedule(item)
+              ? await runAttempts(
+                  req,
+                  runId,
+                  step,
+                  target,
+                  item,
+                  itemId,
+                  context,
+                )
+              : await runCommand(
+                  req,
+                  runId,
+                  step,
+                  target,
+                  item,
+                  itemId,
+                  context,
+                );
         slow.push(...end.slow);
         if (end.passed) continue;
         if (
+          end.final ||
           end.reason === "stopped" ||
           end.reason === "interrupted" ||
           item.type === "delay" ||
@@ -309,6 +390,40 @@ export function createSequenceRunner(kit: PersonKit) {
   /** "runbook 3 step 2 item 4 on host 1", for the audit log. */
   function where(step: StepRow, target: SequenceTarget, position: number) {
     return `runbook ${step.runbookId} step ${stepLabel(step)} item ${position} on host ${target.hostId}`;
+  }
+
+  /** Whether the person who pressed Run may still connect to the host. */
+  async function stillAllowed(target: SequenceTarget): Promise<boolean> {
+    const access = await ctx.hosts
+      .checkAccess(target.hostId, "connect")
+      .catch(() => ({ hasAccess: false }));
+    return access.hasAccess;
+  }
+
+  async function auditNoAccess(
+    req: Request,
+    step: StepRow,
+    target: SequenceTarget,
+    position: number,
+    what: string,
+  ): Promise<void> {
+    await audit(
+      req,
+      "runbooks_step_run",
+      step,
+      `${where(step, target, position)}: ${what}, ${target.by} can no longer connect to the host`,
+      false,
+    );
+  }
+
+  function noAccessEnd(): ItemEnd {
+    return {
+      passed: false,
+      reason: "exit",
+      error: NO_ACCESS,
+      slow: [],
+      final: true,
+    };
   }
 
   /**
@@ -388,6 +503,154 @@ export function createSequenceRunner(kit: PersonKit) {
   }
 
   /**
+   * Runs one command of a run or wait item on a connection of its own, its
+   * output streaming into the item, secrets hidden. A Stop ends it. Never
+   * throws: no connection, or an error before the command ended, comes
+   * back as not run, with the output that came so far.
+   */
+  async function execOnce(
+    runId: number,
+    step: StepRow,
+    item: CommandItemSpec,
+    command: string,
+    timeoutMs: number,
+    context: ItemContext,
+  ): Promise<Executed> {
+    const record = live.get(runId)!;
+    const { typed } = context;
+    const interactive = item.type === "run" && item.interactive;
+    // A pty's output is cleaned, so a value with control characters shows
+    // there cleaned: that copy is hidden too (BUG-010).
+    const copies = (list: SecretText[]) =>
+      interactive ? cleanedCopies(list) : [];
+    const known = [...context.hidden, ...typed];
+    const redactors = {
+      stdout: createRedactor([...known, ...copies(known)]),
+      stderr: createRedactor([...known, ...copies(known)]),
+    };
+    const hiddenAll = () => {
+      const all = [...context.hidden, ...typed];
+      return [...all, ...copies(all)];
+    };
+    let connection: { client: ExecClient; dispose: () => void } | null = null;
+    try {
+      connection = await ctx.ssh.connect<ExecClient>(step.hostId!, {
+        purpose: "runbooks",
+      });
+      let result: StreamExecResult;
+      if (record.stoppedBy || record.interrupted) {
+        result = {
+          stdout: "",
+          stderr: "",
+          code: null,
+          truncated: false,
+          timedOut: false,
+          stopped: true,
+        };
+      } else {
+        const handle = streamExec(
+          connection.client,
+          withWorkdir(command, step.workdir),
+          {
+            timeoutMs,
+            maxOutputBytes: MAX_OUTPUT_BYTES,
+            onOutput: (stream, text) =>
+              live.output(runId, stream, redactors[stream].push(text)),
+            onTruncate: () => live.truncated(runId),
+            pty: interactive ? INTERACTIVE_PTY : undefined,
+          },
+        );
+        record.stop = handle.stop;
+        record.input = {
+          open: handle.inputOpen,
+          send: (sent, hiddenText) => {
+            const value = sent.replace(LINE_END, "");
+            // Enter is CR in a terminal (BUG-010).
+            const text = interactive && value !== sent ? `${value}\r` : sent;
+            if (hiddenText && [...value].length >= MIN_HIDDEN_CHARS) {
+              // Before the write, so its echo can never show.
+              const secret = { name: "typed", value };
+              typed.push(secret);
+              for (const each of [secret, ...copies([secret])]) {
+                redactors.stdout.add(each);
+                redactors.stderr.add(each);
+              }
+            }
+            return handle.write(Buffer.from(text, "utf8"));
+          },
+          end: handle.endInput,
+        };
+        result = await handle.result;
+      }
+      connection.dispose();
+      await live.settle(runId);
+      return { ran: true, result, hiddenAll: hiddenAll() };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await live.settle(runId);
+      const partial = live.get(runId)!;
+      connection?.dispose();
+      return {
+        ran: false,
+        message,
+        stdout: redact(partial.stdout, hiddenAll()),
+        stderr: redact(partial.stderr, hiddenAll()),
+        truncated: partial.truncated,
+        hiddenAll: hiddenAll(),
+      };
+    }
+  }
+
+  /**
+   * An ended command's checks and captures, read with secrets hidden, as
+   * the person sees the output (1.4.1).
+   */
+  function judge(
+    runId: number,
+    item: CommandItemSpec,
+    checks: Check[],
+    result: StreamExecResult,
+    hiddenAll: SecretText[],
+  ): Judged {
+    const record = live.get(runId)!;
+    const stopped = result.stopped || Boolean(record.stoppedBy);
+    const exited =
+      result.code === 0 && !result.timedOut && !stopped && !record.interrupted;
+    const judged = judgeOutput(
+      { checks, captures: item.captures, secretCaptures: [] },
+      exited ? "done" : "failed",
+      {
+        mode: "exec",
+        exitCode: result.code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        pastedOutput: null,
+      },
+      result.stdout,
+      hiddenAll,
+    );
+    const passed = judged.final === "done";
+    // Termix stopping ends the item as interrupted, not as a person's stop.
+    const error =
+      record.interrupted ??
+      (stopped ? `stopped by ${record.stoppedBy ?? "a person"}` : null);
+    return {
+      judged,
+      passed,
+      exited,
+      stopped,
+      error,
+      reason: record.interrupted
+        ? "interrupted"
+        : stopped
+          ? "stopped"
+          : exited
+            ? "check"
+            : "exit",
+    };
+  }
+
+  /**
    * A run item: its command with the values so far (captures of earlier
    * items too), in the step's workdir, over a connection of its own. Its
    * checks and captures read its own output, secrets hidden.
@@ -397,19 +660,14 @@ export function createSequenceRunner(kit: PersonKit) {
     runId: number,
     step: StepRow,
     target: SequenceTarget,
-    item: RunItemSpec,
+    item: CommandItemSpec,
     itemId: number,
-    context: {
-      position: number;
-      values: Values;
-      hidden: SecretText[];
-      typed: SecretText[];
-    },
+    context: ItemContext,
   ): Promise<ItemEnd> {
     const record = live.get(runId)!;
-    const { position, values, typed } = context;
+    const { position, values } = context;
     const resolved = resolveItem(item, position, values, new Set());
-    if (resolved.type !== "run") throw new Error("not a run item");
+    if (resolved.type === "delay") throw new Error("not a command item");
     const startedAt = now();
     if (resolved.missing.length > 0) {
       await store.updateRunItem(itemId, {
@@ -428,89 +686,36 @@ export function createSequenceRunner(kit: PersonKit) {
     });
     await store.persist(true);
     live.beginItem(runId, itemId);
-    // A pty's output is cleaned, so a value with control characters shows
-    // there cleaned: that copy is hidden too (BUG-010).
-    const copies = (list: SecretText[]) =>
-      item.interactive ? cleanedCopies(list) : [];
-    const known = [...context.hidden, ...typed];
-    const redactors = {
-      stdout: createRedactor([...known, ...copies(known)]),
-      stderr: createRedactor([...known, ...copies(known)]),
-    };
-    const hiddenAll = () => {
-      const all = [...context.hidden, ...typed];
-      return [...all, ...copies(all)];
-    };
     const line = where(step, target, position);
-    let connection: { client: ExecClient; dispose: () => void } | null = null;
-    let result: Awaited<ReturnType<typeof streamExec>["result"]>;
-    try {
-      connection = await ctx.ssh.connect<ExecClient>(target.hostId, {
-        purpose: "runbooks",
-      });
-      if (record.stoppedBy || record.interrupted) {
-        result = {
-          stdout: "",
-          stderr: "",
-          code: null,
-          truncated: false,
-          timedOut: false,
-          stopped: true,
-        };
-      } else {
-        const handle = streamExec(
-          connection.client,
-          withWorkdir(resolved.command, step.workdir),
-          {
-            timeoutMs: item.timeoutMs ?? LIMITS.timeoutDefault,
-            maxOutputBytes: MAX_OUTPUT_BYTES,
-            onOutput: (stream, text) =>
-              live.output(runId, stream, redactors[stream].push(text)),
-            onTruncate: () => live.truncated(runId),
-            pty: item.interactive ? INTERACTIVE_PTY : undefined,
-          },
-        );
-        record.stop = handle.stop;
-        record.input = {
-          open: handle.inputOpen,
-          send: (sent, hiddenText) => {
-            const value = sent.replace(LINE_END, "");
-            // Enter is CR in a terminal (BUG-010).
-            const text =
-              item.interactive && value !== sent ? `${value}\r` : sent;
-            if (hiddenText && [...value].length >= MIN_HIDDEN_CHARS) {
-              // Before the write, so its echo can never show.
-              const secret = { name: "typed", value };
-              typed.push(secret);
-              for (const each of [secret, ...copies([secret])]) {
-                redactors.stdout.add(each);
-                redactors.stderr.add(each);
-              }
-            }
-            return handle.write(Buffer.from(text, "utf8"));
-          },
-          end: handle.endInput,
-        };
-        result = await handle.result;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await live.settle(runId);
-      const partial = live.get(runId)!;
+    const executed = await execOnce(
+      runId,
+      step,
+      item,
+      resolved.command,
+      item.timeoutMs ?? LIMITS.timeoutDefault,
+      context,
+    );
+    if (!executed.ran) {
       const why = record.stoppedBy
         ? `stopped by ${record.stoppedBy}`
-        : (record.interrupted ?? message);
+        : (record.interrupted ?? executed.message);
       await store.updateRunItem(itemId, {
         status: "failed",
         finishedAt: now(),
-        stdout: redact(partial.stdout, hiddenAll()),
-        stderr: redact(partial.stderr, hiddenAll()),
-        truncated: partial.truncated,
-        error: redact(why, hiddenAll()),
+        stdout: executed.stdout,
+        stderr: executed.stderr,
+        truncated: executed.truncated,
+        error: redact(why, executed.hiddenAll),
       });
       live.endItem(runId);
-      connection?.dispose();
-      await audit(req, "runbooks_step_run", step, line, false, message);
+      await audit(
+        req,
+        "runbooks_step_run",
+        step,
+        line,
+        false,
+        executed.message,
+      );
       return {
         passed: false,
         reason: record.stoppedBy
@@ -522,32 +727,15 @@ export function createSequenceRunner(kit: PersonKit) {
         slow: [],
       };
     }
-    connection.dispose();
-    await live.settle(runId);
     live.endItem(runId);
-    const stopped = result.stopped || Boolean(record.stoppedBy);
-    const exited =
-      result.code === 0 && !result.timedOut && !stopped && !record.interrupted;
-    // Secrets are found first, so the checks and captures see the output
-    // with them hidden, as the person does (1.4.1).
-    const judged = judgeOutput(
-      { checks: resolved.checks, captures: item.captures, secretCaptures: [] },
-      exited ? "done" : "failed",
-      {
-        mode: "exec",
-        exitCode: result.code,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        pastedOutput: null,
-      },
-      result.stdout,
-      hiddenAll(),
+    const { result } = executed;
+    const { judged, passed, exited, stopped, error, reason } = judge(
+      runId,
+      item,
+      resolved.checks,
+      result,
+      executed.hiddenAll,
     );
-    const passed = judged.final === "done";
-    // Termix stopping ends the item as interrupted, not as a person's stop.
-    const error =
-      record.interrupted ??
-      (stopped ? `stopped by ${record.stoppedBy ?? "a person"}` : null);
     await store.updateRunItem(itemId, {
       status: passed ? "passed" : "failed",
       finishedAt: now(),
@@ -577,16 +765,359 @@ export function createSequenceRunner(kit: PersonKit) {
     );
     return {
       passed,
-      reason: record.interrupted
-        ? "interrupted"
-        : stopped
-          ? "stopped"
-          : exited
-            ? "check"
-            : "exit",
+      reason,
       error,
       slow: passed ? judged.slowCaptures : [],
     };
+  }
+
+  /**
+   * A wait item, or a run item with retry (phase 2): attempts of its
+   * command on its schedule until one passes, a stopIf check matches (a
+   * wait), a failure its retryOn does not name comes (a retry), or the
+   * attempts or the time run out. Each attempt is a record; the item keeps
+   * the last attempt's output, exit code and checks, and the captures of
+   * the attempt that passed only. Between two attempts the item waits on a
+   * timer with the next attempt's time on it, so the page counts down;
+   * Try now ends that wait, Stop ends the item.
+   */
+  async function runAttempts(
+    req: Request,
+    runId: number,
+    step: StepRow,
+    target: SequenceTarget,
+    item: CommandItemSpec,
+    itemId: number,
+    context: ItemContext,
+  ): Promise<ItemEnd> {
+    const record = live.get(runId)!;
+    const schedule = itemSchedule(item)!;
+    const { position, values } = context;
+    const resolved = resolveItem(item, position, values, new Set());
+    if (resolved.type === "delay") throw new Error("not a command item");
+    const startedAt = now();
+    if (resolved.missing.length > 0) {
+      await store.updateRunItem(itemId, {
+        status: "failed",
+        startedAt,
+        finishedAt: startedAt,
+        command: resolved.command,
+        error: NOT_CAPTURED,
+      });
+      return { passed: false, reason: "exit", error: NOT_CAPTURED, slow: [] };
+    }
+    const most = maxAttempts(schedule.attempts);
+    const within = Math.min(
+      schedule.within ?? SCHEDULE_LIMITS.within,
+      SCHEDULE_LIMITS.within,
+    );
+    const endsAt = Date.parse(startedAt) + within * 1000;
+    await store.updateRunItem(itemId, {
+      status: "running",
+      startedAt,
+      command: resolved.command,
+      maxAttempts: most,
+      endsBy: new Date(endsAt).toISOString(),
+    });
+    await store.persist(true);
+    const line = where(step, target, position);
+    const stopIf = resolved.type === "wait" ? resolved.stopIf : [];
+    const timeoutMs = item.timeoutMs ?? LIMITS.timeoutDefault;
+    for (let attempt = 1; ; attempt++) {
+      if (attempt > 1 && !(await stillAllowed(target))) {
+        await store.updateRunItem(itemId, {
+          status: "failed",
+          finishedAt: now(),
+          nextAttemptAt: null,
+          error: NO_ACCESS,
+        });
+        await auditNoAccess(
+          req,
+          step,
+          target,
+          position,
+          `attempt ${attempt} not started`,
+        );
+        live.endItem(runId);
+        return noAccessEnd();
+      }
+      live.beginItem(runId, itemId);
+      const attemptStart = now();
+      await store.updateRunItem(itemId, { nextAttemptAt: null });
+      const attemptId = await store.insertRunAttempt({
+        itemId,
+        runId,
+        runbookId: step.runbookId,
+        attempt,
+        status: "running",
+        startedAt: attemptStart,
+        finishedAt: null,
+        exitCode: null,
+        stdout: null,
+        stderr: null,
+        truncated: false,
+        timedOut: false,
+        error: null,
+        checks: null,
+        stopIf: null,
+        why: null,
+      });
+      await store.persist(true);
+      const executed = await execOnce(
+        runId,
+        step,
+        item,
+        resolved.command,
+        attemptTimeout(timeoutMs, endsAt, Date.now()),
+        context,
+      );
+      const ended = await endAttempt(
+        runId,
+        item,
+        { itemId, attemptId },
+        executed,
+        resolved.checks,
+        stopIf,
+      );
+      if (ended.why === null) {
+        Object.assign(values, ended.captured);
+        await store.updateRunItem(itemId, {
+          status: "passed",
+          finishedAt: now(),
+          captured: ended.captured,
+        });
+        await store.persist(true);
+        live.endItem(runId);
+        await audit(
+          req,
+          "runbooks_step_run",
+          step,
+          `${line}: attempt ${attempt} passed`,
+          true,
+        );
+        return { passed: true, reason: "check", error: null, slow: ended.slow };
+      }
+      // What ends the item here, with its words; null: another attempt.
+      let end: { error: string | null } | null = null;
+      if (ended.why === "stopped" || ended.why === "interrupted") {
+        end = { error: ended.error };
+      } else if (ended.why === "stop-if") {
+        end = { error: stopIfText(ended.stopLabel ?? "stopIf") };
+      } else if (!mayRetry(item, ended.why)) {
+        // A failure its retryOn does not name: as a run item fails.
+        end = { error: ended.error };
+      } else if (attempt >= most) {
+        end = { error: exhaustedText(item.type, attempt, "attempts", within) };
+      }
+      const delay = delayAfter(schedule, attempt);
+      if (end === null && Date.now() + delay >= endsAt) {
+        end = { error: exhaustedText(item.type, attempt, "time", within) };
+      }
+      if (end === null) {
+        const waited = await between(runId, itemId, delay);
+        if (waited.how === "now") {
+          await audit(
+            req,
+            "runbooks_step_try_now",
+            step,
+            `${line}: attempt ${attempt + 1} started early by ${waited.by}`,
+            true,
+          );
+        }
+        if (waited.how !== "stopped") continue;
+        end = {
+          error: record.stoppedBy
+            ? `stopped by ${record.stoppedBy}`
+            : (record.interrupted ?? "stopped"),
+        };
+      }
+      const { error } = end;
+      const reason: FailReason = record.interrupted
+        ? "interrupted"
+        : record.stoppedBy
+          ? "stopped"
+          : ended.why === "exit" ||
+              ended.why === "timeout" ||
+              ended.why === "connect"
+            ? "exit"
+            : "check";
+      await store.updateRunItem(itemId, {
+        status: "failed",
+        finishedAt: now(),
+        nextAttemptAt: null,
+        error: error === null ? null : redact(error, ended.hide),
+      });
+      await store.persist(true);
+      live.endItem(runId);
+      await audit(
+        req,
+        "runbooks_step_run",
+        step,
+        `${line}: ${attempt} attempt${attempt === 1 ? "" : "s"}, ${reason === "stopped" || reason === "interrupted" ? reason : ended.why}`,
+        false,
+      );
+      return { passed: false, reason, error, slow: [] };
+    }
+  }
+
+  /**
+   * Writes an ended attempt: its record, and the item's last output, exit
+   * code and checks. Returns why it did not pass (null: it passed), with
+   * the captures of a pass.
+   */
+  async function endAttempt(
+    runId: number,
+    item: CommandItemSpec,
+    ids: { itemId: number; attemptId: number },
+    executed: Executed,
+    checks: Check[],
+    stopIf: Check[],
+  ): Promise<{
+    why: AttemptWhy | null;
+    error: string | null;
+    stopLabel: string | null;
+    captured: Record<string, string>;
+    slow: string[];
+    hide: SecretText[];
+  }> {
+    const record = live.get(runId)!;
+    const at = now();
+    if (!executed.ran) {
+      const why: AttemptWhy = record.interrupted
+        ? "interrupted"
+        : record.stoppedBy
+          ? "stopped"
+          : "connect";
+      const error =
+        why === "stopped"
+          ? `stopped by ${record.stoppedBy}`
+          : (record.interrupted ?? executed.message);
+      const output = {
+        exitCode: null,
+        stdout: executed.stdout,
+        stderr: executed.stderr,
+        truncated: executed.truncated,
+        timedOut: false,
+        checks: null,
+      };
+      await store.updateRunAttempt(ids.attemptId, {
+        ...output,
+        status: "failed",
+        finishedAt: at,
+        error: redact(error, executed.hiddenAll),
+        why,
+      });
+      await store.updateRunItem(ids.itemId, output);
+      return {
+        why,
+        error,
+        stopLabel: null,
+        captured: {},
+        slow: [],
+        hide: executed.hiddenAll,
+      };
+    }
+    const { result } = executed;
+    const { judged, exited, stopped, error } = judge(
+      runId,
+      item,
+      checks,
+      result,
+      executed.hiddenAll,
+    );
+    // A stopIf check matches when it passes on this attempt's output.
+    const stopJudged =
+      stopIf.length > 0 && !stopped && !record.interrupted
+        ? judgeOutput(
+            { checks: stopIf, captures: [], secretCaptures: [] },
+            "done",
+            {
+              mode: "exec",
+              exitCode: result.code,
+              stdout: result.stdout,
+              stderr: result.stderr,
+              pastedOutput: null,
+            },
+            result.stdout,
+            executed.hiddenAll,
+            { captures: false },
+          ).results
+        : null;
+    const matched = (stopJudged ?? []).find((check) => check.ok) ?? null;
+    const why = attemptWhy({
+      stopped,
+      interrupted: Boolean(record.interrupted),
+      connectFailed: false,
+      timedOut: result.timedOut,
+      exitCode: result.code,
+      checksPassed: exited && judged.final === "done",
+      stopMatched: matched !== null,
+    });
+    const output = {
+      exitCode: result.code,
+      stdout: redact(result.stdout, judged.hide),
+      stderr: redact(result.stderr, judged.hide),
+      truncated: result.truncated,
+      timedOut: result.timedOut,
+      checks: judged.results,
+    };
+    await store.updateRunAttempt(ids.attemptId, {
+      ...output,
+      status: why === null ? "passed" : "failed",
+      finishedAt: at,
+      stopIf: stopJudged,
+      error: error ? redact(error, judged.hide) : null,
+      why,
+    });
+    await store.updateRunItem(ids.itemId, output);
+    return {
+      why,
+      error,
+      stopLabel: matched?.label ?? null,
+      captured: why === null ? judged.captured : {},
+      slow: why === null ? judged.slowCaptures : [],
+      hide: judged.hide,
+    };
+  }
+
+  /**
+   * The wait between two attempts: a timer, with the next attempt's time
+   * on the item so the page counts down. Try now ends it early; Stop, or
+   * Termix stopping, ends the item.
+   */
+  async function between(
+    runId: number,
+    itemId: number,
+    ms: number,
+  ): Promise<{ how: "over" | "now" | "stopped"; by: string | null }> {
+    const record = live.get(runId)!;
+    await store.updateRunItem(itemId, { nextAttemptAt: after(ms) });
+    await store.persist(true);
+    let by: string | null = null;
+    let written: () => void = () => {};
+    const isWritten = new Promise<void>((resolve) => (written = resolve));
+    const how = await new Promise<"over" | "now" | "stopped">((resolve) => {
+      if (record.stoppedBy || record.interrupted) {
+        resolve("stopped");
+        return;
+      }
+      const timer = setTimeout(() => resolve("over"), ms);
+      const end = (value: "now" | "stopped") => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      record.stop = () => end("stopped");
+      record.tryNow = (person) => {
+        by = person;
+        end("now");
+        return isWritten;
+      };
+    });
+    record.stop = null;
+    record.tryNow = null;
+    await store.updateRunItem(itemId, { nextAttemptAt: null });
+    written();
+    return { how, by };
   }
 
   /**
@@ -594,7 +1125,8 @@ export function createSequenceRunner(kit: PersonKit) {
    * continue), failed at the item that stopped it otherwise. The run keeps
    * the items' output joined, so a later step's stdin or when rule reads
    * the step's output as before, and the captures of the items that passed.
-   * One step-done or step-failed event, as for any run.
+   * One step-done or step-failed event, as for any run, however many
+   * attempts its items made.
    */
   async function finish(
     runId: number,
@@ -607,7 +1139,7 @@ export function createSequenceRunner(kit: PersonKit) {
     const stdout = capped(items.map((item) => item.stdout ?? "").join(""));
     const stderr = capped(items.map((item) => item.stderr ?? "").join(""));
     const ran = items.filter(
-      (item) => item.type === "run" && item.status !== "waiting",
+      (item) => item.type !== "delay" && item.status !== "waiting",
     );
     const last = ran[ran.length - 1];
     const stopping = failure
@@ -635,7 +1167,8 @@ export function createSequenceRunner(kit: PersonKit) {
           status,
           finishedAt: at,
           exitCode:
-            (stopping?.type === "run" ? stopping : last)?.exitCode ?? null,
+            (stopping && stopping.type !== "delay" ? stopping : last)
+              ?.exitCode ?? null,
           stdout: stdout.text,
           stderr: stderr.text,
           truncated:
@@ -653,4 +1186,12 @@ export function createSequenceRunner(kit: PersonKit) {
   }
 
   return { start };
+}
+
+/** The most attempts of an item: the author's, never past the top limit. */
+function maxAttempts(attempts: number | null): number {
+  return Math.min(
+    attempts ?? SCHEDULE_LIMITS.attempts,
+    SCHEDULE_LIMITS.attempts,
+  );
 }

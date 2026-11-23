@@ -330,6 +330,39 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
 
   /**
    * @openapi
+   * /plugin-api/runbooks/steps/{id}/try-now:
+   *   post:
+   *     summary: Start the next attempt of the item that waits between two
+   *     description: >
+   *       1.4.10, phase 2. A wait item, or a run item with retry, that waits
+   *       for its next attempt starts it now: the rest of the delay is
+   *       skipped. The attempt counts as one of its attempts and keeps the
+   *       item's time limit. Audited. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       409: { description: No item of this step waits for its next attempt }
+   */
+  router.post(
+    "/steps/:id/try-now",
+    ...act,
+    wrap(async (req) => {
+      const { step } = await stepContext(pathId(req));
+      const record = live.byStep(step.id);
+      if (!record?.tryNow) {
+        throw new InputError(
+          "no item of this step waits for its next attempt",
+          409,
+          { code: "no-wait" },
+        );
+      }
+      await record.tryNow(actor());
+      return shownRun(record.runId);
+    }),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/steps/{id}/stop:
    *   post:
    *     summary: Stop the step's running command

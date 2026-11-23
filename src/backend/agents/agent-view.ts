@@ -36,8 +36,13 @@ import {
 import { stepChoice } from "../decisions/decisions.js";
 import { nextStep } from "../runbooks/view.js";
 import {
+  itemPlan,
+  itemScheduleWords,
   sequenceText,
   withWorkdir,
+  type AttemptState,
+  type CommandItemSpec,
+  type RunAttempt,
   type RunItem,
   type SequenceItem,
 } from "../../shared/sequence.js";
@@ -85,6 +90,10 @@ export function agentView(bundle: RunbookBundle, hostName: HostNames) {
         // 1.4.10: a sequence's items as written, and its workdir.
         sequence: step.sequence,
         workdir: step.workdir,
+        // Phase 2: each wait or retried item's planned attempts, before Run.
+        schedules: agentSchedules(step),
+        // Phase 2: where the attempts of the item that runs now are.
+        attempt: attemptState(stepRuns[0]),
         missing: agentMissing(step, valueMap),
         expect: step.expect,
         // Filled with masked values already. Masked again, the agent's own
@@ -219,7 +228,7 @@ function agentMissing(step: StepRow, values: Values): string[] {
     for (const name of resolveItem(item, index + 1, values, earlier).missing) {
       missing.add(name);
     }
-    if (item.type === "run") {
+    if (item.type !== "delay") {
       for (const capture of item.captures) earlier.add(capture.name);
     }
   }
@@ -278,7 +287,8 @@ function agentItems(
   const sequence: ReadonlyArray<SequenceItem | undefined> = step.sequence ?? [];
   return (run.items ?? []).map((item: RunItem) => {
     const spec = sequence[item.position - 1];
-    const runSpec = spec?.type === "run" ? spec : null;
+    // A run or a wait item (phase 2): both run a command.
+    const runSpec = spec && spec.type !== "delay" ? spec : null;
     const command =
       item.command === null
         ? null
@@ -292,6 +302,11 @@ function agentItems(
       { terminal: false, exitCode: item.exitCode },
       hidden,
     );
+    const attempts = item.attempts
+      ? item.attempts.map((attempt) =>
+          agentAttempt(attempt, runSpec, values, masked, hidden),
+        )
+      : undefined;
     const captured = hidden
       ? item.status === "passed"
         ? Object.fromEntries(
@@ -336,8 +351,106 @@ function agentItems(
       skippedBy: item.skippedBy,
       fromRunId: item.fromRunId,
       lastOutputAt: hidden ? null : (item.lastOutputAt ?? null),
+      // Phase 2: how many attempts and when are visible on a hidden step
+      // too: the agent's own checks tell pass or fail already.
+      maxAttempts: item.maxAttempts,
+      endsBy: item.endsBy,
+      nextAttemptAt: item.nextAttemptAt,
+      ...(attempts ? { attempts } : {}),
     };
   });
+}
+
+/**
+ * One attempt of a wait or retried item as agents read it (phase 2),
+ * hidden as its item is: on a hidden step its output and error read
+ * "[hidden by owner]" or nothing, and it shows no size. Its number, times,
+ * exit code, whether each check passed or each stopIf check matched, and
+ * why it did not pass stay visible, as an item's status and exit code do.
+ */
+function agentAttempt(
+  attempt: RunAttempt,
+  spec: CommandItemSpec | null,
+  values: Values,
+  masked: AgentMask,
+  hidden: boolean,
+) {
+  const shown = { terminal: false, exitCode: attempt.exitCode };
+  const output = (text: string | null) =>
+    text === null ? null : hidden ? HIDDEN : masked.text(text);
+  return {
+    attempt: attempt.attempt,
+    status: attempt.status,
+    startedAt: attempt.startedAt,
+    finishedAt: attempt.finishedAt,
+    exitCode: attempt.exitCode,
+    stdout: output(attempt.stdout),
+    stderr: output(attempt.stderr),
+    truncated: hidden ? false : attempt.truncated,
+    timedOut: attempt.timedOut,
+    error: hidden
+      ? attempt.status === "failed"
+        ? HIDDEN
+        : null
+      : masked.text(attempt.error),
+    checks: agentChecks(
+      attempt.checks,
+      spec?.checks ?? [],
+      values,
+      shown,
+      hidden,
+    ),
+    stopIf: agentChecks(
+      attempt.stopIf,
+      spec?.type === "wait" ? spec.stopIf : [],
+      values,
+      shown,
+      hidden,
+    ),
+    why: attempt.why,
+  };
+}
+
+/**
+ * The planned attempts of each wait or retried item (phase 2), before Run:
+ * {item, attempts, maxSeconds, text}, such as "up to 120 attempts, every
+ * 30 s, at most 1 h". Empty for a step with none.
+ */
+function agentSchedules(step: StepRow) {
+  return (step.sequence ?? []).flatMap((item, index) => {
+    const plan = itemPlan(item);
+    const text = itemScheduleWords(item);
+    return plan && text
+      ? [
+          {
+            item: index + 1,
+            attempts: plan.attempts,
+            maxSeconds: plan.maxSeconds,
+            text,
+          },
+        ]
+      : [];
+  });
+}
+
+/**
+ * Where the attempts of the item that runs now are (phase 2): {item,
+ * attempt, of, nextAt, endsBy}, from the step's latest run while it runs;
+ * null otherwise.
+ */
+export function attemptState(run: ShownRun | undefined): AttemptState | null {
+  if (!run?.running || !run.items) return null;
+  const item = run.items.find(
+    (each) => each.status === "running" && each.maxAttempts !== null,
+  );
+  if (!item) return null;
+  return {
+    item: item.position,
+    attempt: item.attempts?.length ?? 0,
+    of: item.maxAttempts!,
+    nextAt: item.nextAttemptAt,
+    endsBy: item.endsBy,
+  };
 }
 
 /**
@@ -383,7 +496,7 @@ function builtCommand(run: ShownRun, step: StepRow, values: Values): string {
         position: _position,
         ...built
       } = resolveItem(item, index + 1, values, earlier);
-      if (item.type === "run") {
+      if (item.type !== "delay") {
         for (const capture of item.captures) earlier.add(capture.name);
       }
       return built as SequenceItem;
