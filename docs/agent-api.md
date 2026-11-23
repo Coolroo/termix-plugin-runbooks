@@ -297,12 +297,15 @@ A step that Termix runs on a host may be a **sequence** of items instead of one 
       "label": "Deploy",
       "command": "sudo paseo-deploy up media enforcarr"
     },
-    { "type": "delay", "seconds": 30, "reason": "let the container start" },
+    { "type": "delay", "seconds": 10, "reason": "let the old container stop" },
     {
-      "type": "run",
-      "label": "Health",
+      "type": "wait",
+      "label": "Healthy",
       "command": "docker inspect -f {{.State.Health.Status}} enforcarr",
-      "checks": [{ "type": "contains", "text": "healthy" }]
+      "checks": [{ "type": "contains", "text": "healthy" }],
+      "stopIf": [{ "type": "contains", "text": "unhealthy" }],
+      "within": 180,
+      "every": 5
     },
     {
       "type": "run",
@@ -314,12 +317,15 @@ A step that Termix runs on a host may be a **sequence** of items instead of one 
 }
 ```
 
-| Item    | Fields                                                                                                                                                                                  |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run`   | `command` (required), `label`, `checks`, `captures`, `timeoutMs` (1000 to 600000), `onFail` (`"stop"`, the default, or `"continue"`) and `interactive`, each as for a one-command step. |
-| `delay` | `seconds` (1 to 3600), `label` and `reason`. A timer in Termix: nothing runs on the host. The person sees a countdown and may **Skip** it.                                              |
+| Item    | Fields                                                                                                                                                                                                                              |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`   | `command` (required), `label`, `checks`, `captures`, `timeoutMs` (1000 to 600000), `onFail` (`"stop"`, the default, or `"continue"`) and `interactive`, each as for a one-command step.                                             |
+| `delay` | `seconds` (1 to 3600), `label` and `reason`. A timer in Termix: nothing runs on the host. The person sees a countdown and may **Skip** it.                                                                                          |
+| `wait`  | `command`, `checks` (at least one) and `within` (required), `stopIf`, `attempts`, the schedule, `label`, `captures`, `timeoutMs` and `onFail`. Runs the command until its checks pass. See [Waits and retries](#waits-and-retries). |
 
-- A sequence has 1 to 20 items and at least one `run` item. Other item types (`wait`, `container`, `unit`, `log`, `http`, `port`, `file`, `job`) come in a later version: they are refused with 400 `later-item` for now.
+A `run` item may also have `retry`, for a flaky command: see [Waits and retries](#waits-and-retries).
+
+- A sequence has 1 to 20 items and at least one `run` or `wait` item. Other item types (`container`, `unit`, `log`, `http`, `port`, `file`, `job`) come in a later version: they are refused with 400 `later-item` for now.
 - Each run item is a new shell on a connection of its own: `cd` and variables do not carry over. Set `workdir` on the step (an absolute path) and every run item runs as `cd -- '<workdir>' && <command>`; leave the `cd` out of the commands. `workdir` also works on a one-command step, whose command then shows and runs with the `cd` in front. It is for a POSIX shell (Linux, macOS); on a Windows host keep the `cd` in the command.
 - An item's `captures` fill `{{name}}` in the items after it, and in later steps once the step is done. Capture names are unique in a sequence. Before the run, the person sees such a name as written, with a line that it is filled from an earlier item.
 - An item fails when its command exits non-zero, times out, or a check fails. A failed item stops the sequence and fails the step, unless it has `"onFail": "continue"` (for a read-only report after the main work): then the failure is recorded and the next item runs. A step whose only failures were such items ends done.
@@ -356,18 +362,119 @@ Each run of a sequence step has `items`, one record per item, in order:
 }
 ```
 
-`status` is `waiting`, `running`, `passed`, `failed` or `skipped` (a delay the person skipped). A delay that runs has `plannedEndAt`. An item carried over by Continue has `fromRunId`, the run it passed in. The run itself has the items' output joined in `stdout` and `stderr` (what a later step's `stdin` or a `when` output rule reads), the captures of the items that passed, and an `error` such as `item 3 failed`. A step hidden from agents hides each item's output, captures and error as it hides a run's. You get one `step-done` or `step-failed` event when the step ends, not one per item.
+`status` is `waiting`, `running`, `passed`, `failed` or `skipped` (a delay the person skipped). A delay that runs has `plannedEndAt`. An item carried over by Continue has `fromRunId`, the run it passed in. The run itself has the items' output joined in `stdout` and `stderr` (what a later step's `stdin` or a `when` output rule reads), the captures of the items that passed, and an `error` such as `item 3 failed`. A step hidden from agents hides each item's output, captures and error as it hides a run's. You get one `step-done` or `step-failed` event when the step ends, not one per item. Every item also has `maxAttempts`, `endsBy` and `nextAttemptAt` (null except on a wait or a retried item), and a wait or retried item has `attempts`: see [Waits and retries](#waits-and-retries).
+
+### Waits and retries
+
+A **wait** item runs a command until its checks pass (1.4.10): the general poll, instead of a loop with `sleep`. Each attempt runs the command on its own connection, in the step's `workdir`; an attempt passes when the command exits 0 and every check passes. A failed attempt means "not yet": Runbooks waits the schedule's delay and tries again. The item fails when a `stopIf` check matches (at once: no point waiting, the job failed), or when the attempts or the time run out. A **run** item with `retry` runs a flaky command again on the same schedule when it fails.
+
+Instead of this loop, which the [sleep ban](#no-sleep-in-commands) refuses:
+
+```sh
+for i in $(seq 1 120); do
+  sudo bash setup-deptrack.sh status | grep -q 'mirror osv: COMPLETED' && break
+  sleep 30
+done
+```
+
+write a wait item:
+
+```json
+{
+  "type": "wait",
+  "label": "OSV mirror synced",
+  "command": "sudo bash setup-deptrack.sh status",
+  "checks": [{ "type": "contains", "text": "mirror osv: COMPLETED" }],
+  "stopIf": [{ "type": "contains", "text": "mirror osv: FAILED" }],
+  "attempts": 120,
+  "every": 30,
+  "within": 3600,
+  "timeoutMs": 30000
+}
+```
+
+and a flaky download as a run item with retry:
+
+```json
+{
+  "type": "run",
+  "label": "Fetch the image",
+  "command": "docker pull registry.example.test/app:1.2",
+  "retry": {
+    "attempts": 5,
+    "backoff": "exponential",
+    "every": 2,
+    "jitter": "equal",
+    "retryOn": ["exit", "timeout"]
+  }
+}
+```
+
+| Field       | On                     | Meaning                                                                                                                                                                                                             | Default         | Limits                        |
+| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------------------------- |
+| `checks`    | wait                   | What "ready" looks like, as for a step. At least one.                                                                                                                                                               | (required)      | 20                            |
+| `stopIf`    | wait                   | Checks on each attempt's output; when one **matches** (passes), the item fails at once. It wins over checks that pass. Output checks only (no `value` checks).                                                      | none            | 20                            |
+| `within`    | wait (required), retry | Seconds for all attempts and delays together. No attempt starts after it, and an attempt's time limit is cut to the time left.                                                                                      | retry: 7200     | 1 to 7200 (2 hours)           |
+| `attempts`  | wait, retry (required) | The most attempts, the first one included.                                                                                                                                                                          | wait: 500       | wait 1 to 500, retry 2 to 500 |
+| `every`     | both                   | Seconds: the first delay, and the step of a linear backoff.                                                                                                                                                         | 5               | 1 to 3600                     |
+| `backoff`   | both                   | `fixed`: every delay is `every`; `linear`: `every × n`; `exponential`: `every × factor^(n−1)`, where n is the attempt that failed.                                                                                  | `fixed`         |                               |
+| `factor`    | both                   | Exponential only (400 with any other backoff).                                                                                                                                                                      | 2               | 1.1 to 10                     |
+| `maxDelay`  | both                   | Seconds: the longest one delay may get. At least `every`.                                                                                                                                                           | 300, or `every` | 1 to 3600                     |
+| `jitter`    | both                   | After the cap: `none`; `full`: a random delay from 0 to the delay; `equal`: half the delay plus a random part of the other half.                                                                                    | `none`          |                               |
+| `retryOn`   | retry                  | Which failures get another attempt: `exit` (non-zero exit code), `check` (exit 0, a check failed), `timeout`, `connect` (no connection or an error before the command ran). Another failure fails the item at once. | all four        | at least one                  |
+| `timeoutMs` | both                   | The time limit of one attempt.                                                                                                                                                                                      | 120000          | 1000 to 600000                |
+
+- Bad values are refused with 400 and a message that names the field, such as `sequence[1].within must be an integer from 1 to 7200`, on create, add-steps, update-step, amend and through MCP. `retry` is refused on an `interactive` item.
+- The page and your view show the planned schedule before Run: the step's `schedules` lists `{item, attempts, maxSeconds, text}` for each wait or retried item, such as `"up to 120 attempts, every 30 s, at most 1 h"`. The person approves it with the commands: the schedule is part of the sequence's text and hash.
+- The server runs the attempts after the Run answer, also with the page closed, as the person who pressed Run. Before each attempt after the first it checks that the person may still connect to the host; if not, the item fails and the sequence stops, whatever `onFail` says. One Run press covers all its attempts: they never ask the repeat question.
+- While a wait or retried item waits for its next attempt, the person may press **Try now** (the delay ends and the next attempt starts) or **Stop**. A Termix restart fails the item and its attempt as interrupted; the person continues from that item, and the wait starts again at attempt 1.
+- Captures come only from the attempt that passed; the item's `stdout`, `stderr`, `exitCode` and `checks` are the last attempt's.
+- You get **one** event when the step ends, never one per attempt (the fleet limit is 10 messages an hour).
+
+Each wait or retried item in a run has `attempts`, oldest first:
+
+```json
+{
+  "attempt": 3,
+  "status": "failed",
+  "startedAt": "...",
+  "finishedAt": "...",
+  "exitCode": 0,
+  "stdout": "mirror osv: RUNNING\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "error": null,
+  "checks": [
+    {
+      "label": "the output contains 'mirror osv: COMPLETED'",
+      "ok": false,
+      "detail": "..."
+    }
+  ],
+  "stopIf": [
+    {
+      "label": "the output contains 'mirror osv: FAILED'",
+      "ok": false,
+      "detail": "..."
+    }
+  ],
+  "why": "check"
+}
+```
+
+`status` is `running`, `passed` or `failed`. `why` says why an attempt did not pass: `exit`, `check`, `timeout`, `connect`, `stop-if`, `stopped` or `interrupted` (null when it passed). A `stopIf` result with `ok: true` matched. While an item runs, the step has `attempt`: `{item, attempt, of, nextAt, endsBy}` (the item's number, the attempts made so far, the most it may make, when the next one starts or null while one runs, and when its time limit ends); otherwise `attempt` is null. On a step hidden from agents, each attempt's `stdout`, `stderr` and `error` read `[hidden by owner]` and `truncated` is false; the attempt count, times, exit codes, check and stopIf results and `why` stay visible, as an item's do.
 
 ### No sleep in commands
 
-Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in every run item, when you create a runbook, add steps, change a step or amend one: 400 with `code` `sleep` and a message that points to the `delay` item. What counts as a wait:
+Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in every run and wait item, when you create a runbook, add steps, change a step or amend one: 400 with `code` `sleep` and a message that points to the `delay` and `wait` items. What counts as a wait:
 
 - `sleep` as a word followed by a duration, a variable, a quote or a parenthesis: `sleep 5`, `/usr/bin/sleep 0.5`, `sleep "$DELAY"`, `sleep infinity`, `bash -c 'sleep 5'`, `time.sleep(5)`.
 - `Start-Sleep`, with any arguments; `timeout /t <n>`; `ping -n <n>` to the host itself (127.0.0.1, localhost, ::1) or with its output thrown away (`>nul`, `> $null`).
 
 Not a wait: `sleep` inside a longer word (`sleeping`, `--no-sleep`, `sleep.target`), `sleep` followed by other words (`echo "time to sleep now"`), `timeout 30 curl ...` (a time limit), `docker compose up --wait`, and a `ping` that tests a network address. The text is read as it is, inside quotes too, so `echo "sleep 5 minutes"` is refused: reword it.
 
-Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too; a later version adds wait items that poll for you. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
+Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too: write a [wait item](#waits-and-retries) that runs the check until it passes. The ban reads a wait item's command as well. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
 
 ### Wait timers
 
@@ -846,7 +953,7 @@ Connect the agent with the MCP config above, then ask for a runbook instead of a
 
 Good habits for the prompt:
 
-- Ask for one command per step, with an `expect` line, so each approval is small. Where commands belong together, ask for a sequence (one run item each) instead of a chain with `&&`, and a `delay` item instead of `sleep`.
+- Ask for one command per step, with an `expect` line, so each approval is small. Where commands belong together, ask for a sequence (one run item each) instead of a chain with `&&`, a `delay` item instead of a fixed `sleep`, and a `wait` item instead of a loop that waits for something to be ready.
 - Ask for checks on each step that has an expected result, so a wrong result marks the step failed instead of passing unnoticed.
 - Ask for a wait timer where a step must wait after the one before it, instead of "wait two minutes" in the text.
 - Ask for checks before changes, and a check after each change.
