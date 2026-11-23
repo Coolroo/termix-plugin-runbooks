@@ -325,7 +325,7 @@ A step that Termix runs on a host may be a **sequence** of items instead of one 
 
 A `run` item may also have `retry`, for a flaky command: see [Waits and retries](#waits-and-retries).
 
-- A sequence has 1 to 20 items and at least one `run` or `wait` item. Other item types (`container`, `unit`, `log`, `http`, `port`, `file`, `job`) come in a later version: they are refused with 400 `later-item` for now.
+- A sequence has 1 to 20 items and at least one item that is not a `delay`. The [wait events](#wait-events) (`container`, `unit`, `log`, `http`, `port`, `file`, `job`) are items too.
 - Each run item is a new shell on a connection of its own: `cd` and variables do not carry over. Set `workdir` on the step (an absolute path) and every run item runs as `cd -- '<workdir>' && <command>`; leave the `cd` out of the commands. `workdir` also works on a one-command step, whose command then shows and runs with the `cd` in front. It is for a POSIX shell (Linux, macOS); on a Windows host keep the `cd` in the command.
 - An item's `captures` fill `{{name}}` in the items after it, and in later steps once the step is done. Capture names are unique in a sequence. Before the run, the person sees such a name as written, with a line that it is filled from an earlier item.
 - An item fails when its command exits non-zero, times out, or a check fails. A failed item stops the sequence and fails the step, unless it has `"onFail": "continue"` (for a read-only report after the main work): then the failure is recorded and the next item runs. A step whose only failures were such items ends done.
@@ -465,6 +465,125 @@ Each wait or retried item in a run has `attempts`, oldest first:
 
 `status` is `running`, `passed` or `failed`. `why` says why an attempt did not pass: `exit`, `check`, `timeout`, `connect`, `stop-if`, `stopped` or `interrupted` (null when it passed). A `stopIf` result with `ok: true` matched. While an item runs, the step has `attempt`: `{item, attempt, of, nextAt, endsBy}` (the item's number, the attempts made so far, the most it may make, when the next one starts or null while one runs, and when its time limit ends); otherwise `attempt` is null. On a step hidden from agents, each attempt's `stdout`, `stderr` and `error` read `[hidden by owner]` and `truncated` is false; the attempt count, times, exit codes, check and stopIf results and `why` stay visible, as an item's do.
 
+### Wait events
+
+The **wait events** (1.4.10) are items that wait until a state holds, checked by Termix itself: no loop, `grep` or `test` runs on the host. Each polls on the [wait item's schedule](#waits-and-retries) (`within` is required, up to 7200 seconds; `every`, `backoff`, `factor`, `maxDelay`, `jitter`, `attempts`; `timeoutMs` is one check's limit, default 30000), and each check is an attempt in the item. Use them instead of a wait item that runs `docker inspect`, `systemctl`, `curl` or `test -f`.
+
+| Type        | Waits until                                                          | Fields                                                                       | How Termix checks it                                                                                                                                                  | Hosts             |
+| ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `container` | a container is `healthy`, `running`, `exited` or `gone`              | `name`, `state` (required)                                                   | one fixed `docker container inspect --format '{"State":…,"RestartCount":…}' -- '<name>'` as the SSH user, read as JSON                                                | Linux             |
+| `unit`      | a systemd unit is `active`, or `finished` with `Result=success`      | `name`, `state` (required)                                                   | one fixed `systemctl show --timestamp=unix -p LoadState,ActiveState,SubState,Result,… -- '<unit>'`, read as `key=value`                                               | Linux             |
+| `log`       | a line written after the step started matches `pattern`              | `container` or `unit`, `pattern`, optional `failPattern`, `sudo` (unit only) | `docker logs --timestamps --since <start> -- '<name>'`, or `[sudo -n] journalctl -u '<unit>' --since @<start> -o json --output-fields=MESSAGE`; matched in JavaScript | Linux             |
+| `http`      | an address answers with `status` (default 200) and `contains`        | `url`, `status`, `contains`, `servername`                                    | a loopback URL: a GET over a TCP channel from the host to its own loopback; any other https URL: from Termix itself                                                   | all               |
+| `port`      | a TCP port on the host's loopback is `open` (default) or `closed`    | `port`, `state`, `host` (`127.0.0.1` default, `localhost` or `::1`)          | a TCP channel from the host to that port, through the SSH connection (`forwardOut`)                                                                                   | all               |
+| `file`      | a path `exists` (default), is `nonEmpty` or is `gone`                | `path`, `state`, `sudo`                                                      | SFTP `stat` as the SSH user; `sudo: true` runs one fixed `sudo -n stat -L -c '%s %F' -- '<path>'` instead                                                             | all (sudo: Linux) |
+| `job`       | a long command started in the background ended with `Result=success` | `command`, `unit` (default `runbooks-job-<run>-<item>`), `within` up to 7200 | `sudo -n systemd-run --unit=… --property=RemainAfterExit=yes -- /bin/sh -c '<command>'`, then the unit check and its journal each check                               | Linux             |
+
+**The real loops these replace:**
+
+A deploy, then "wait until the container is healthy", the most common wait:
+
+```json
+{
+  "title": "home-server: Enforcarr on the farm image",
+  "hostId": 1,
+  "workdir": "/mnt/sdd/services/media-server",
+  "sequence": [
+    {
+      "type": "run",
+      "label": "Deploy",
+      "command": "sudo paseo-deploy up media enforcarr"
+    },
+    {
+      "type": "container",
+      "name": "enforcarr",
+      "state": "healthy",
+      "within": 180
+    },
+    {
+      "type": "http",
+      "url": "https://127.0.0.1:8443/health",
+      "servername": "enforcarr.example.com",
+      "contains": "ok",
+      "within": 60
+    }
+  ]
+}
+```
+
+instead of `sudo paseo-deploy up media enforcarr && for i in $(seq 1 36); do docker inspect -f '{{.State.Health.Status}}' enforcarr | grep -q healthy && break; sleep 5; done`.
+
+A backup that runs longer than the 10-minute limit of one command, followed to its end, then its log checked:
+
+```json
+{
+  "sequence": [
+    {
+      "type": "job",
+      "label": "Nightly backup",
+      "command": "restic backup /srv --tag nightly",
+      "unit": "restic-nightly",
+      "within": 7200,
+      "every": 30
+    },
+    {
+      "type": "log",
+      "unit": "restic-nightly.service",
+      "sudo": true,
+      "pattern": "snapshot [0-9a-f]+ saved",
+      "failPattern": "Fatal:",
+      "within": 60
+    }
+  ]
+}
+```
+
+instead of `sudo systemd-run --unit=restic-nightly restic backup /srv` in one step and `until ! systemctl is-active -q restic-nightly; do sleep 30; done` in the next.
+
+A unit started without waiting, then "until it finished", and a file it writes:
+
+```json
+{
+  "sequence": [
+    {
+      "type": "run",
+      "command": "sudo systemctl start --no-block enforcarr-migrate.service"
+    },
+    {
+      "type": "unit",
+      "name": "enforcarr-migrate.service",
+      "state": "finished",
+      "within": 600,
+      "every": 10
+    },
+    {
+      "type": "file",
+      "path": "/srv/enforcarr/migrated.ok",
+      "sudo": true,
+      "within": 30
+    }
+  ]
+}
+```
+
+A port that must close after a stop: `{ "type": "port", "port": 5432, "state": "closed", "within": 60 }`.
+
+**What each reads, and when it fails at once:**
+
+- `container`: a container that is not there yet is "not yet" for `healthy`, `running` and `exited`, and passes `gone`. While it waits for `healthy` or `running`, a container that **exited** or whose **restart count grew** since the first check fails the item at once. `healthy` on a container with no `HEALTHCHECK` fails at once (wait for `running` instead). Permission denied on the Docker socket fails at once.
+- `unit`: an end (`ExecMainExitTimestamp`) before the step started belongs to an earlier run and does not count. `finished` passes on a unit that ran to its end with `Result=success` since then; a unit that **failed** since then fails at once, for `active` too. A unit that is not loaded fails at once: its name is wrong, or it was a transient unit that ended and systemd removed (use a `job`). It needs systemd 248 or later (`--timestamp=unix`).
+- `log`: reads only lines written after the step started (after Continue, after the first item's start in the first run), each line once: the next check reads after the last time (Docker) or the last journal cursor. Each line is cut to 4096 characters. `pattern` and `failPattern` are JavaScript regular expressions of up to 200 characters, one line, with no repeated group that holds a repeat (such as `(a+)+`); patterns never take `{{name}}` values. The first new line that matches `failPattern` fails the item; the first that matches `pattern` passes it. A unit's journal without `sudo` needs an SSH user in the `adm` or `systemd-journal` group.
+- `http`: a URL on `127.0.0.1`, `localhost` or `[::1]` goes through the SSH connection to the **host's own** loopback. Any other URL must be `https://` and goes from Termix itself (core's `ctx.fetch`), never to Termix's own loopback or a link-local address. The certificate is **always** checked: against `servername` (loopback URLs only) or the URL's host name, with the public roots plus the admin's **Extra trusted CAs**. Plain `http://` is allowed only to the host's loopback (the bytes stay inside the SSH connection). Redirects are not followed: a `301` is a status like any other. The first 64 KB of the body are read; the item shows the status line and the first 2 KB. A certificate that fails the check, a closed port, a `503` are all "not yet", so a proxy that shows its default certificate while it starts does not fail the item; the words say what the last check read.
+- `port`, and `http` to a loopback URL: a channel the host's SSH server refuses as **administratively prohibited** (the SSH key Termix uses has `no-port-forwarding`, or its `permitopen` does not allow the port) fails the item at once with words that say so; it is never read as "closed". The key needs `permitopen="127.0.0.1:*"` and `permitlisten="127.0.0.1:1"` instead of `no-port-forwarding`: the host's own ports, and no reverse forwards.
+- `file`: SFTP works with the key as it is. "Permission denied" fails at once (set `sudo: true` on Linux). `nonEmpty` on a directory fails at once.
+- `job`: the first check starts the unit; each check reads its state, then the journal lines since the last check, which stream into the item. It passes when the unit ended with `Result=success`, fails at once when it failed, and then stops and unloads the unit (`systemctl stop`, `reset-failed`). **Stop**, or running out of `within`, stops the unit too. A unit of that name that is already loaded fails at once. The command runs as root (`sudo -n`), in the step's `workdir` (`--working-directory`), with systemd's environment, not a login shell's. The [sleep ban](#no-sleep-in-commands) reads it. A Termix restart leaves the unit running; Continue starts the job again (a new run gets a new default unit name; with your own `unit` name, stop the old one first).
+
+**Names and values.** Names, paths, units, URLs and `servername` are checked when the step is written (400 with the field's name, on create, add-steps, update-step, amend and MCP), and go into the fixed commands in single quotes after `--`, so they are never read as an option or as shell text. They may hold `{{name}}` values, also from an earlier item's capture; the filled value is checked again before the item runs, and a value that is not a valid name fails the item.
+
+**Windows hosts.** `container`, `unit`, `log`, `job` and a `file` with `sudo` need a Linux host. They are refused when written (400, `code` `linux-only`) for a host whose Termix tags include `windows` (`list_hosts` shows `"windows": true`, kept when a person saves the token's hosts), and for a host a run found to be Windows. Termix tells plugins nothing about a host's system, so Runbooks reads the SSH server's version string from the handshake (`OpenSSH_for_Windows_9.5`): a Linux-only event on such a host fails at once with words that say so, and Runbooks remembers the host until Termix restarts. `port`, `http` and `file` without `sudo` work on Windows hosts (SFTP paths look like `/C:/Users/...`).
+
+**What you read.** An event item's `command` is what it checks: the fixed command with `# until ...`, or the channel it opens (`"TCP 127.0.0.1:8443 on home-server, through the SSH connection: until open"`). Each attempt has `result`, the state it read in fixed words (`healthy`, `exited (1)`, `restarting (restart 3)`, `active (running)`, `failed (exit-code, status 3)`, `finished (success)`, `HTTP 503`, `HTTP 200, text not found`, `certificate not trusted`, `port closed`, `forwarding refused`, `file exists, 13 bytes`, `not there`, `no match yet (12 new lines)`, `matched`, `Windows host`); the item's `result` is the last one. `why` is `not-yet` (not the state yet), `fail-state` (a state that fails at once), `timeout`, `connect`, `stopped` or `interrupted`. The attempt's `stdout` and `stderr` are what the check read (the command's output, the HTTP status and body, the journal messages); a job's item keeps its whole journal. On a step hidden from agents, `stdout`, `stderr` and `error` read `[hidden by owner]`; `result` stays visible, as an exit code does: it is built from fixed words and numbers only, never text from the host.
+
 ### No sleep in commands
 
 Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in every run and wait item, when you create a runbook, add steps, change a step or amend one: 400 with `code` `sleep` and a message that points to the `delay` and `wait` items. What counts as a wait:
@@ -474,7 +593,7 @@ Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in
 
 Not a wait: `sleep` inside a longer word (`sleeping`, `--no-sleep`, `sleep.target`), `sleep` followed by other words (`echo "time to sleep now"`), `timeout 30 curl ...` (a time limit), `docker compose up --wait`, and a `ping` that tests a network address. The text is read as it is, inside quotes too, so `echo "sleep 5 minutes"` is refused: reword it.
 
-Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too: write a [wait item](#waits-and-retries) that runs the check until it passes. The ban reads a wait item's command as well. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
+Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too: use a [wait event](#wait-events) (container, unit, log, http, port, file, job), or a [wait item](#waits-and-retries) that runs the check until it passes. A `job` item's command is read too. The ban reads a wait item's command as well. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
 
 ### Wait timers
 

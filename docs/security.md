@@ -32,6 +32,7 @@ Runbooks exists so that an agent can prepare work on your servers without being 
   - **Continue from item N** is a new run that carries the records of the items that passed (they do not run again) and runs the rest. It is refused when the sequence's hash changed since that run (the step or a value it uses changed), when the latest run did not fail, and for a person who may not connect; it skips the repeat question only, not the order, wait or rule questions. **Run** again from item 1 asks the repeat question.
   - A **delay** item is a timer in Runbooks; nothing runs on the host. **Skip** ends it early and is audited. A Termix restart ends the run as interrupted: the item that ran is marked failed, the items after it stay waiting, and the person continues.
   - A **wait** item, and a run item with **retry**, run their command again on a schedule (1.4.10, phase 2). One Run press is the person's consent for every attempt of it: attempts do not ask the repeat question, and the confirm shows the schedule ("up to 120 attempts, every 30 s, at most 1 h"), which is part of the hash the person approves. The server runs the attempts after the answer, also with the page closed, as the person who pressed Run; before each attempt after the first, Runbooks asks core again whether that person may still connect to the host, and stops the item and the sequence if not (whatever the item's `onFail`). Each attempt opens its own connection through core's connect pipeline. Limits per item, whatever the author writes: 500 attempts and 2 hours in all; an attempt's time limit is cut to the time the item has left, so a hung attempt fails at its limit and cannot hold the item past it. **Try now** (start the next attempt before its delay ends) and **Stop** are person routes, refused for agents and API keys; Try now is audited, and so is each item's end with its attempt count (one audit line per item, not per attempt). A Termix restart fails the waiting item and its running attempt as interrupted; the person continues from that item, and its wait starts again at attempt 1.
+  - The **wait events** (1.4.10, phase 3) make attempts as a wait item does, with the same limits, access check before each check after the first, Try now, Stop and audit. See [Wait events](#wait-events) for what each lets a person reach.
   - `workdir` runs each command as `cd -- '<workdir>' && <command>`, the folder in single quotes with each quote escaped, so the folder name cannot add a command.
 - **No sleep in commands** (1.4.10). Runbooks refuses, when a step is written, a command that waits a fixed time (`sleep`, `Start-Sleep`, `timeout /t`, `ping -n` to the host itself), and points to the `delay` item, so the person sees what a step waits for. It is a rule on what agents write, not a sandbox: a script the command calls may still wait. An admin setting turns it off (on by default); steps stored before keep running.
 - **Stop** is a person route like Run, refused for agents and Termix API keys, and audited. On a sequence it ends the item that runs, and the rest do not run.
@@ -46,6 +47,27 @@ Runbooks exists so that an agent can prepare work on your servers without being 
   - It follows the terminal's output from the moment it types the command, and stops reading at the first line after the output that looks like a prompt, so commands typed after it are never read. It starts only when the terminal's last line looks like a prompt (not a tmux status line or a message still printing). When it cannot find the command's line or a prompt for sure, the box says to check the start or the end, and never says the command looks finished. It reads only the terminal the page typed into, only in that browser, and only until Mark done or Mark failed, the run ending on another device, a new Send to terminal on that terminal, or its tab closing; a reload ends it.
   - **Mark failed** sends the text read from the terminal only if the person opened (clicked or tapped into) or changed the box; otherwise it sends no output, as before 1.4.9.
 - A step that has run cannot be changed or removed by the agent, and nothing can be inserted before it. Runs are never deleted.
+
+## Wait events
+
+The wait events (`port`, `http`, `file`, `container`, `unit`, `log`, `job`, 1.4.10) are checked by Runbooks itself, on a connection opened through core's connect pipeline as the person who pressed Run, as a run item's is. The Run confirm shows exactly what each checks: the fixed command it runs, or the channel it opens. That text is part of the hash the person approves.
+
+**Fixed commands, quoted.** `container`, `unit`, `log`, a `file` with `sudo`, and `job` run fixed read-only commands (`docker container inspect`, `systemctl show`, `docker logs`, `journalctl -o json`, `sudo -n stat`) and read their output in JavaScript; the host runs no `grep`, loop or test. A name, path or unit is checked when the step is written (a container name, a systemd unit name, an absolute path, one line), and goes into the command in single quotes, each quote escaped, after `--`, so it can never be read as an option or as shell text. A `{{name}}` value in it is checked again once filled, before the item runs. Log patterns run in JavaScript: at most 200 characters, no repeated group that holds a repeat (`(a+)+`), each line cut to 4096 characters, and never filled with values. No event command uses `sudo` unless the author asked for it (`sudo: true` on a file or a unit's log) or it is a `job`; each uses `sudo -n`, so it never waits for a password.
+
+**`job` runs the author's command as root.** It starts `sudo -n systemd-run --unit=<unit> --property=RemainAfterExit=yes -- /bin/sh -c '<command>'`: a transient system unit, outside the SSH session, so it can run past the 10-minute limit of one command, up to the item's `within` (2 hours at most). The person sees this whole command in the Run confirm. Stop, running out of time, and the end of the job each stop and unload the unit. A Termix restart leaves it running, as a command that a step started with `nohup` would be; the person sees the item interrupted and the unit's name.
+
+**What `port` and `http` let a person reach.**
+
+- A `port` item, and an `http` item whose URL is `127.0.0.1`, `localhost` or `[::1]`, open a TCP channel **from the host to its own loopback**, through the SSH connection (`forwardOut`). Runbooks refuses any other address when the step is written. It is what the host's SSH key allows: for these items the key needs `permitopen="127.0.0.1:*"` with a locked `permitlisten="127.0.0.1:1"` instead of `no-port-forwarding`. That lets a Termix user who may connect to the host reach the host's own loopback ports, and no other address and no reverse forward. A channel the server refuses (`no-port-forwarding`) fails the item at once and is never read as a closed port.
+- An `http` item to any other address goes **from Termix itself**, through core's `ctx.fetch` (`network:outbound`), as the person who pressed Run. It must be `https://`; redirects are not followed; the name may lead to a private address the person named (it is passed to `allowPrivateHosts`), but never to Termix's own loopback, `0.0.0.0` or a link-local address (169.254.0.0/16, fe80::/10, which includes cloud metadata addresses): Runbooks resolves the name first and refuses those. This lets a runbook make Termix send one GET to an address on Termix's network, after a person approved the URL. The item keeps the status and the first 2 KB of the body; on a hidden step agents read neither.
+- **TLS is always checked.** There is no setting and no field that turns it off, and no `rejectUnauthorized: false` in the events. A loopback https URL is checked against `servername` or the URL's host; another URL against its own host name. The trusted CAs are Node's public roots plus the admin setting **Extra trusted CAs** (PEM, one or more certificates; refused when it holds a private key or a certificate Node cannot read). The setting is used only by Runbooks' `http` items: Termix's own connections and the agent webhook (which has its own CA setting) do not read it.
+- **Plain `http://`** is allowed only to the host's own loopback, where the bytes travel inside the SSH connection and never leave the host unencrypted (the one plain-HTTP case our TLS rule accepts: a health check on loopback). Any other plain `http://` URL is refused when the step is written.
+
+**`file`** reads a path's attributes over SFTP as the SSH user: its kind and size, never its content.
+
+**Hidden output.** An event's output (the command's output, the HTTP status and body, the journal lines, an SFTP stat's mode and size) and its error are hidden from agents on a hidden step, as a run's are. Its `result` (`healthy`, `HTTP 503`, `port closed`) stays visible, as an exit code does: Runbooks builds it from fixed words and numbers only, and keeps a Docker or systemd state word only when it is a plain word, so no text from the host reaches it. The hidden-data test G16 proves that a hidden sequence of events whose outputs hold a hidden value reads the same to agents for two values.
+
+**Windows hosts.** Runbooks reads the SSH server's version string that ssh2 keeps from the handshake (no command runs). A Linux-only event on a host whose server says Windows fails at once, and agents may not write one for that host afterwards, nor for a host tagged `windows` in Termix.
 
 ## Host keys
 
@@ -127,15 +149,15 @@ Runbooks writes an audit line for each run, each stop, each start before a wait 
 
 ## Capabilities
 
-| Capability         | Why                                                                         |
-| ------------------ | --------------------------------------------------------------------------- |
-| `db:own`           | The runbooks, steps, runs and tokens tables                                 |
-| `network:serve`    | The routes under `/plugin-api/runbooks/`                                    |
-| `ui:surface`       | The Runbooks tab                                                            |
-| `hosts:read`       | Host names, the hosts offered for a token, and access checks                |
-| `ssh:connect`      | Run a step over SSH, and read whether a host takes SSH and has a stored key |
-| `credentials:use`  | Use the host's stored login for that run                                    |
-| `network:outbound` | Send agent notifications to the admin's webhook (1.4.0); nothing else       |
-| `secrets:own`      | Seal the notification signing secret with Termix's installation key (1.4.0) |
+| Capability         | Why                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `db:own`           | The runbooks, steps, runs and tokens tables                                                                                  |
+| `network:serve`    | The routes under `/plugin-api/runbooks/`                                                                                     |
+| `ui:surface`       | The Runbooks tab                                                                                                             |
+| `hosts:read`       | Host names, the hosts offered for a token, and access checks                                                                 |
+| `ssh:connect`      | Run a step over SSH, and read whether a host takes SSH and has a stored key; the wait events' TCP channels and SFTP (1.4.10) |
+| `credentials:use`  | Use the host's stored login for that run                                                                                     |
+| `network:outbound` | Send agent notifications to the admin's webhook (1.4.0), and an `http` wait item's GET to an address off the host (1.4.10)   |
+| `secrets:own`      | Seal the notification signing secret with Termix's installation key (1.4.0)                                                  |
 
 Runbooks also declares the services `openbao-secrets.store` (`^1.0.0`), for secrets, and `haw.vms` (`^1.0.0`), for VM steps (1.4.7), as optional requirements. They need no capability of their own.
