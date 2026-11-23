@@ -4,7 +4,14 @@
  * shows.
  */
 
-import type { EventRow, RunbookRow, StepRow } from "./store/types.js";
+import type {
+  EventRow,
+  RunbookRow,
+  RunItemRow,
+  RunRow,
+  StepRow,
+} from "./store/types.js";
+import type { RunItem } from "../../shared/sequence.js";
 import type { Store } from "./store/store.js";
 import {
   agentCommand,
@@ -83,7 +90,13 @@ export async function loadBundle(
   const runbook = await store.getRunbook(runbookId);
   if (!runbook) return null;
   const steps = await store.listSteps(runbookId);
-  const rows = await store.listRuns({ runbookId });
+  const rows = withItems(
+    await store.listRuns({ runbookId }),
+    // Only a runbook with a sequence step has items (1.4.10).
+    steps.some((step) => step.sequence)
+      ? await store.listRunItems({ runbookId })
+      : [],
+  );
   const runs = live ? live.show(rows) : rows.map(storedRun);
   const runsByStep = new Map<number, ShownRun[]>();
   for (const run of runs) {
@@ -103,6 +116,32 @@ export async function loadBundle(
       cache: ruleCache(store),
     }),
   };
+}
+
+/** A run item as the views show it: without the ids the run has. */
+export function shownItem(item: RunItemRow): RunItem {
+  const { stepId: _stepId, runbookId: _runbookId, ...rest } = item;
+  return rest;
+}
+
+/**
+ * Runs with their items (1.4.10), in order; a run that has none (any run
+ * that is not a sequence's) gets no items field.
+ */
+export function withItems(runs: RunRow[], items: RunItemRow[]): RunRow[] {
+  if (items.length === 0) return runs;
+  const byRun = new Map<number, RunItem[]>();
+  for (const item of items) {
+    const list = byRun.get(item.runId) ?? [];
+    list.push(shownItem(item));
+    byRun.set(item.runId, list);
+  }
+  return runs.map((run) => {
+    const list = byRun.get(run.id);
+    return list
+      ? { ...run, items: list.sort((a, b) => a.position - b.position) }
+      : run;
+  });
 }
 
 /**
@@ -354,6 +393,8 @@ export function personView(
         hostName: step.hostId === null ? null : hostName(step.hostId),
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
+        // 1.4.10: a sequence's items as one Run runs them.
+        resolvedSequence: resolved.items,
         missing: vmChecks?.missing ?? resolved.missing,
         resolvedChecks: vmChecks?.checks ?? resolved.checks,
         // 1.4.7: a VM step's host, and why it cannot run without asking HAW.

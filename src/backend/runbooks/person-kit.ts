@@ -16,6 +16,7 @@ import {
   loadBundle,
   personView,
   typedSizes,
+  withItems,
   type RunbookBundle,
 } from "./view.js";
 import {
@@ -158,7 +159,10 @@ export function createPersonKit(
   /** One run as the person view shows it, live output included. */
   async function shownRun(runId: number) {
     const run = await store.getRun(runId);
-    return run ? typedSizes(live.show([run])[0], actor()) : null;
+    if (!run) return null;
+    // A sequence's run shows its items (1.4.10).
+    const [withList] = withItems([run], await store.listRunItems({ runId }));
+    return typedSizes(live.show([withList])[0], actor());
   }
 
   async function hostNamer() {
@@ -229,8 +233,16 @@ export function createPersonKit(
       throw new InputError(OUTSIDE_STEP, 409, { code: "outside" });
     }
     if (step.vm) throw vmStepProblem();
-    if (step.hostId === null || step.command === null) {
+    if (step.hostId === null || (step.command === null && !step.sequence)) {
       throw new InputError("this step has no command to run", 400);
+    }
+    // 1.4.10: a terminal runs one command; a sequence has delays and more.
+    if (step.sequence && options.via === "terminal") {
+      throw new InputError(
+        "this step is a sequence of items: use Run; Send to terminal runs one command",
+        409,
+        { code: "sequence" },
+      );
     }
     // The author said how it starts (1.4.6): before the questions a person
     // could answer, since no answer changes it.
@@ -299,6 +311,8 @@ export function createPersonKit(
       hash: resolved.runHash!,
       /** The checks with their values filled in (BUG-007). */
       checks: resolved.checks,
+      /** 1.4.10: a sequence's items as approved; null for one command. */
+      items: resolved.items,
       stdin,
       /** Seconds of the wait the person chose to skip, if any. */
       skippedWait: wait.skippedSeconds,

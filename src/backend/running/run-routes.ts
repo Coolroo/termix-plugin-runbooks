@@ -26,6 +26,8 @@ import { describeStdin, stepStdin } from "./stdin.js";
 import { createRunner, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
 import { MAX_PASTED_CHARS, MAX_TYPED_BYTES } from "../../shared/limits.js";
 import { OUTPUT_SOURCES, type OutputSource } from "../../shared/api.js";
+import { resumeIndex } from "../../shared/sequence.js";
+import { createSequenceRunner } from "./sequence-run.js";
 
 /** How long Stop waits for the run to be written before it answers. */
 const STOP_WAIT_MS = 5000;
@@ -66,6 +68,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
     audit,
   } = kit;
   const { readStdin, madeSecretTexts, finishRun, execute } = createRunner(kit);
+  const sequences = createSequenceRunner(kit);
 
   /**
    * @openapi
@@ -101,6 +104,29 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         // whatever key the server shows. Refuse rather than trust it.
         if (!target.host.hostKeyFingerprint) {
           throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
+        }
+        // 1.4.10: a sequence runs its items one after another.
+        if (step.sequence && target.items) {
+          const hidden = await madeSecretTexts(step, bundle);
+          await auditSkippedWait(req, step, target.skippedWait);
+          await auditNotNeeded(req, step, target.overridden);
+          const runId = await sequences.start(
+            req,
+            step,
+            bundle,
+            {
+              by: actor(),
+              hostId: target.hostId,
+              command: target.command,
+              hash: target.hash,
+              items: target.items,
+              skippedWait: target.skippedWait,
+            },
+            hidden,
+            release,
+          );
+          handedOff = true;
+          return shownRun(runId);
         }
         const input = target.stdin
           ? await readStdin(step, bundle, target.stdin)
@@ -157,6 +183,148 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       } finally {
         if (!handedOff) release();
       }
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/continue:
+   *   post:
+   *     summary: Continue a sequence step from the item where it stopped
+   *     description: >
+   *       Body { revision, commandHash, fromItem?, waitAnyway?, outOfOrder?,
+   *       conditionAnyway? } (1.4.10). The step's latest run must be a
+   *       sequence run that failed, was stopped, or was cut off by a
+   *       restart. Makes a new run: the items that passed are carried over
+   *       and do not run again, and the first item that did not pass runs
+   *       next. fromItem, when given, must be that item's number. Refused
+   *       with 409 when the sequence changed since that run.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The new run, still running }
+   *       409: { description: Nothing to continue, changed, stale, wait or order }
+   */
+  router.post(
+    "/steps/:id/continue",
+    ...act,
+    wrap(async (req) => {
+      const stepId = pathId(req);
+      const release = claim(stepId);
+      let handedOff = false;
+      try {
+        const { step, bundle } = await stepContext(stepId);
+        if (!step.sequence) {
+          throw new InputError(
+            "only a sequence step continues from an item: use Run",
+            400,
+            { code: "not-sequence" },
+          );
+        }
+        const latest = bundle.runsByStep.get(step.id)?.[0];
+        const index = latest?.items ? resumeIndex(latest.items) : null;
+        if (
+          !latest ||
+          latest.mode !== "exec" ||
+          latest.status !== "failed" ||
+          index === null
+        ) {
+          throw new InputError(
+            "this step has no stopped or failed sequence run to continue: use Run",
+            409,
+            { code: "nothing-to-continue" },
+          );
+        }
+        const input = body(req);
+        // The person chose to go on from this run: it is not a repeat.
+        const target = await checkRunnable(
+          step,
+          bundle,
+          { ...input, confirmRepeat: true },
+          { via: "run" },
+        );
+        if (!target.host.hostKeyFingerprint) {
+          throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
+        }
+        if (
+          !target.items ||
+          latest.commandHash !== target.hash ||
+          latest.items!.length !== step.sequence.length
+        ) {
+          throw new InputError(
+            "the sequence changed since that run: run it again from item 1",
+            409,
+            { code: "changed" },
+          );
+        }
+        if (
+          input.fromItem !== undefined &&
+          input.fromItem !== null &&
+          input.fromItem !== index + 1
+        ) {
+          throw new InputError(`that run goes on from item ${index + 1}`, 409, {
+            code: "changed",
+          });
+        }
+        const hidden = await madeSecretTexts(step, bundle);
+        await auditSkippedWait(req, step, target.skippedWait);
+        await auditNotNeeded(req, step, target.overridden);
+        const runId = await sequences.start(
+          req,
+          step,
+          bundle,
+          {
+            by: actor(),
+            hostId: target.hostId,
+            command: target.command,
+            hash: target.hash,
+            items: target.items,
+            skippedWait: target.skippedWait,
+          },
+          hidden,
+          release,
+          { run: latest, index },
+        );
+        handedOff = true;
+        await audit(
+          req,
+          "runbooks_step_continue",
+          step,
+          `runbook ${step.runbookId} step ${stepLabel(step)} run ${runId} continues run ${latest.id} from item ${index + 1}`,
+          true,
+        );
+        return shownRun(runId);
+      } finally {
+        if (!handedOff) release();
+      }
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/skip-delay:
+   *   post:
+   *     summary: End the delay item that runs now, and go on
+   *     description: >
+   *       1.4.10. The delay item ends as skipped, which counts as passed,
+   *       and the next item starts. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       409: { description: No delay of this step runs now }
+   */
+  router.post(
+    "/steps/:id/skip-delay",
+    ...act,
+    wrap(async (req) => {
+      const { step } = await stepContext(pathId(req));
+      const record = live.byStep(step.id);
+      if (!record?.skipDelay) {
+        throw new InputError("no delay of this step is running", 409, {
+          code: "no-delay",
+        });
+      }
+      await record.skipDelay(actor());
+      return shownRun(record.runId);
     }),
   );
 

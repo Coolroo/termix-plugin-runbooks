@@ -21,6 +21,7 @@ import {
 } from "./agents/notifier.js";
 import { registerAdminRoutes } from "./agents/admin-routes.js";
 import { validateColors } from "../shared/step-kinds.js";
+import { BAN_SLEEP_SETTING } from "./runbooks/no-sleep.js";
 
 /** Requests a minute one address may make to the agent routes (core's limit). */
 const PUBLIC_RATE_LIMIT = 600;
@@ -55,6 +56,10 @@ export async function activate(ctx: PluginContext) {
   const ops = createAgentOps(store, live, {
     audit: (line) => ctx.audit.record(line),
     events,
+    // 1.4.10: commands that wait a fixed time are refused unless the admin
+    // turned the ban off (on when never set).
+    banSleep: async () =>
+      (await ctx.settings.get<boolean>(BAN_SLEEP_SETTING)) !== false,
   });
 
   const router = ctx.http.router<Router>({
@@ -93,6 +98,10 @@ export async function deactivate() {
   const live = active;
   active = null;
   if (!live) return;
-  for (const run of live.all()) run.interrupted = PLUGIN_STOPPED;
+  for (const run of live.all()) {
+    run.interrupted = PLUGIN_STOPPED;
+    // A sequence's delay is a timer of its own (1.4.10): end it too.
+    if (run.sequence) run.stop?.();
+  }
   await Promise.all(live.all().map((run) => live.flushNow(run.runId)));
 }
