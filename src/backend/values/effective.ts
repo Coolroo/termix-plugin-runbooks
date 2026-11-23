@@ -10,6 +10,7 @@ import { fillStepText, uniqueNames } from "../../shared/fill.js";
 import { fillChecks, type Check } from "../../shared/checks.js";
 import type { EffectiveValue } from "../../shared/api.js";
 import {
+  itemChecks,
   sequenceText,
   withWorkdir,
   type ResolvedItem,
@@ -103,6 +104,20 @@ export function resolveItem(
   );
   const command = resolve(item.command, known);
   const checks = fillChecks(item.checks, known);
+  if (item.type === "wait") {
+    // Phase 2: a wait's stopIf checks get their values as its checks do.
+    const stopIf = fillChecks(item.stopIf, known);
+    const used = uniqueNames(command.missing, checks.missing, stopIf.missing);
+    return {
+      ...item,
+      command: command.text,
+      checks: checks.checks,
+      stopIf: stopIf.checks,
+      position,
+      later: used.filter((name) => earlier.has(name)),
+      missing: used.filter((name) => !earlier.has(name)),
+    };
+  }
   const used = uniqueNames(command.missing, checks.missing);
   return {
     ...item,
@@ -136,20 +151,18 @@ function resolveSequence(
       earlier,
     );
     missing.push(lacking);
-    if (item.type === "run") {
+    if (item.type !== "delay") {
       for (const capture of item.captures) earlier.add(capture.name);
     }
     return resolved;
   });
   const lacking = uniqueNames(...missing);
+  // The text holds each item's schedule too (phase 2), so the person
+  // approves the attempts and time limits along with the commands.
   const text = sequenceText(items, step.workdir);
   const runHash = lacking.length ? null : commandHash(hostId, text, null);
-  const rawChecks = sequence.flatMap((item) =>
-    item.type === "run" ? item.checks : [],
-  );
-  const filledChecks = items.flatMap((item) =>
-    item.type === "run" ? item.checks : [],
-  );
+  const rawChecks = sequence.flatMap(itemChecks);
+  const filledChecks = items.flatMap(itemChecks);
   return {
     command: text,
     hash: runHash && approvalHash(runHash, rawChecks, filledChecks),

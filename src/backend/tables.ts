@@ -296,8 +296,9 @@ export const state = defineTable(
 /*
  * The items of a sequence step's run (1.4.10), one row each: what the item
  * ran, its output, exit code, check results, captures, start and end. The
- * run row keeps the whole: its status, and the items' output joined. A
- * later phase keeps wait attempts in a table of its own, by item id.
+ * run row keeps the whole: its status, and the items' output joined. The
+ * attempts of a wait item, or of a run item with retry, are rows of
+ * run_attempts, by item id.
  */
 export const runItems = defineTable(
   "run_items",
@@ -308,10 +309,11 @@ export const runItems = defineTable(
     runbookId: integer().notNull(),
     // 1-based: the item's place in the step's sequence.
     position: integer().notNull(),
-    // run | delay
+    // run | delay | wait
     type: varchar(16).notNull(),
     label: text(),
-    // A run item's command as it ran, values filled in; null for a delay.
+    // A run or wait item's command as it ran, values filled in; null for a
+    // delay.
     command: text(),
     // A delay's seconds and reason.
     seconds: integer(),
@@ -325,6 +327,7 @@ export const runItems = defineTable(
     // When a running delay ends, unless a person skips it.
     plannedEndAt: timestamp(),
     exitCode: integer(),
+    // A wait or retried item's: the last attempt's output.
     stdout: text(),
     stderr: text(),
     truncated: boolean().notNull(),
@@ -338,6 +341,12 @@ export const runItems = defineTable(
     skippedBy: varchar(255),
     // Continue from item N: the run this passed item was carried from.
     fromRunId: integer(),
+    // Phase 2, a wait item or a run item with retry: the most attempts,
+    // when its time limit ends, and when the next attempt starts while it
+    // waits between two. Null on any other item.
+    maxAttempts: integer(),
+    endsBy: timestamp(),
+    nextAttemptAt: timestamp(),
   },
   {
     indexes: [
@@ -347,5 +356,54 @@ export const runItems = defineTable(
   },
 );
 
+/*
+ * The attempts of a wait item, or of a run item with retry (1.4.10, phase
+ * 2), one row each, by run item id: its output (capped as a run's), exit
+ * code, check and stopIf results, start, end, and why it did not pass.
+ */
+export const runAttempts = defineTable(
+  "run_attempts",
+  {
+    id: id(),
+    itemId: integer().notNull(),
+    runId: integer().notNull(),
+    runbookId: integer().notNull(),
+    // 1-based.
+    attempt: integer().notNull(),
+    // running | passed | failed
+    status: varchar(16).notNull(),
+    startedAt: timestamp().notNull(),
+    finishedAt: timestamp(),
+    exitCode: integer(),
+    stdout: text(),
+    stderr: text(),
+    truncated: boolean().notNull(),
+    timedOut: boolean().notNull(),
+    error: text(),
+    // JSON arrays of { label, ok, detail }: the item's checks, and a wait
+    // item's stopIf checks (ok: it matched).
+    checks: text(),
+    stopIf: text(),
+    // exit | check | timeout | connect | stop-if | stopped | interrupted;
+    // null while it runs and when it passed.
+    why: varchar(16),
+  },
+  {
+    indexes: [
+      { name: "idx_p_runbooks_run_attempts_item", columns: ["itemId"] },
+      { name: "idx_p_runbooks_run_attempts_runbook", columns: ["runbookId"] },
+    ],
+  },
+);
+
 // termix-plugin migrations reads this list.
-export const tables = [runbooks, steps, runs, tokens, events, state, runItems];
+export const tables = [
+  runbooks,
+  steps,
+  runs,
+  tokens,
+  events,
+  state,
+  runItems,
+  runAttempts,
+];

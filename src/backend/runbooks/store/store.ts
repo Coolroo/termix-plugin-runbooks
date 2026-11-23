@@ -20,6 +20,7 @@ import type { PluginDatabase } from "@termix-ssh/plugin-sdk/backend";
 import {
   events as eventsDef,
   runbooks as runbooksDef,
+  runAttempts as runAttemptsDef,
   runItems as runItemsDef,
   runs as runsDef,
   steps as stepsDef,
@@ -34,6 +35,7 @@ import type {
   RunbookOwner,
   RunbookRow,
   RunbookStatus,
+  RunAttemptRow,
   RunItemRow,
   RunRow,
   RunStatus,
@@ -46,6 +48,7 @@ import {
   columns,
   toEvent,
   toRun,
+  toRunAttempt,
   toRunItem,
   toRunbook,
   toStep,
@@ -96,6 +99,7 @@ export async function createStore(db: PluginDatabase) {
   const tokens: Table = await db.define(tokensDef);
   const events: Table = await db.define(eventsDef);
   const runItems: Table = await db.define(runItemsDef);
+  const runAttempts: Table = await db.define(runAttemptsDef);
   const client = (): Promise<Drizzle> => db.client<Drizzle>();
 
   /** Inserts one row and returns its id. MySQL has no RETURNING. */
@@ -470,6 +474,62 @@ export async function createStore(db: PluginDatabase) {
     return rows.map(toRunItem);
   }
 
+  /** Adds an attempt (1.4.10, phase 2) and returns its id. */
+  async function insertRunAttempt(
+    attempt: Omit<RunAttemptRow, "id">,
+  ): Promise<number> {
+    return insertId(runAttempts, {
+      ...attempt,
+      checks: attempt.checks ? JSON.stringify(attempt.checks) : null,
+      stopIf: attempt.stopIf ? JSON.stringify(attempt.stopIf) : null,
+    });
+  }
+
+  async function updateRunAttempt(
+    id: number,
+    patch: Partial<Omit<RunAttemptRow, "id">>,
+  ): Promise<void> {
+    await (
+      await client()
+    )
+      .update(runAttempts)
+      .set(columns(patch))
+      .where(eq(runAttempts.id, id));
+  }
+
+  /**
+   * Attempts of a runbook, a run, an item or in a status, by item then
+   * attempt number.
+   */
+  async function listRunAttempts(filter: {
+    runbookId?: number;
+    runId?: number;
+    itemId?: number;
+    status?: RunAttemptRow["status"];
+  }): Promise<RunAttemptRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(runAttempts.runbookId, filter.runbookId));
+    }
+    if (filter.runId !== undefined) {
+      conditions.push(eq(runAttempts.runId, filter.runId));
+    }
+    if (filter.itemId !== undefined) {
+      conditions.push(eq(runAttempts.itemId, filter.itemId));
+    }
+    if (filter.status !== undefined) {
+      conditions.push(eq(runAttempts.status, filter.status));
+    }
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(runAttempts)
+      .where(allOf(conditions))
+      .orderBy(asc(runAttempts.itemId), asc(runAttempts.attempt));
+    return rows.map(toRunAttempt);
+  }
+
   async function listTokens(): Promise<TokenRow[]> {
     const rows = await (
       await client()
@@ -648,6 +708,9 @@ export async function createStore(db: PluginDatabase) {
     insertRunItem,
     updateRunItem,
     listRunItems,
+    insertRunAttempt,
+    updateRunAttempt,
+    listRunAttempts,
     listTokens,
     activeTokens,
     findTokenByHash,

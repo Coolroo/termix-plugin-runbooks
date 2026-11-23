@@ -592,6 +592,15 @@
         },
         "fromRunId": {
           "type": "integer"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "endsBy": {
+          "type": "timestamp"
+        },
+        "nextAttemptAt": {
+          "type": "timestamp"
         }
       },
       "indexes": [
@@ -603,6 +612,87 @@
         },
         {
           "name": "idx_p_runbooks_run_items_runbook",
+          "columns": [
+            "runbookId"
+          ]
+        }
+      ]
+    },
+    "run_attempts": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "itemId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "runId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "runbookId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "attempt": {
+          "type": "integer",
+          "notNull": true
+        },
+        "status": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "startedAt": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "finishedAt": {
+          "type": "timestamp"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "stdout": {
+          "type": "text"
+        },
+        "stderr": {
+          "type": "text"
+        },
+        "truncated": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "timedOut": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "error": {
+          "type": "text"
+        },
+        "checks": {
+          "type": "text"
+        },
+        "stopIf": {
+          "type": "text"
+        },
+        "why": {
+          "type": "varchar",
+          "length": 16
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_run_attempts_item",
+          "columns": [
+            "itemId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_run_attempts_runbook",
           "columns": [
             "runbookId"
           ]

@@ -23,6 +23,7 @@ import {
 } from "../../../shared/api.js";
 import type {
   EventRow,
+  RunAttemptRow,
   RunItemRow,
   RunbookRow,
   RunRow,
@@ -166,7 +167,7 @@ export function toRunItem(row: Record<string, unknown>): RunItemRow {
     stepId: Number(row.stepId),
     runbookId: Number(row.runbookId),
     position: Number(row.position),
-    type: row.type === "delay" ? "delay" : "run",
+    type: row.type === "delay" || row.type === "wait" ? row.type : "run",
     label: optString(row.label),
     command: optString(row.command),
     seconds: optNumber(row.seconds),
@@ -188,6 +189,9 @@ export function toRunItem(row: Record<string, unknown>): RunItemRow {
     captured: parseJson<Values>(row.captured, {}),
     skippedBy: optString(row.skippedBy),
     fromRunId: optNumber(row.fromRunId),
+    maxAttempts: optNumber(row.maxAttempts),
+    endsBy: optString(row.endsBy),
+    nextAttemptAt: optString(row.nextAttemptAt),
   };
 }
 
@@ -197,6 +201,44 @@ const ITEM_STATUSES: ReadonlySet<string> = new Set([
   "passed",
   "failed",
   "skipped",
+]);
+
+/** An attempt of a wait item or a retried run item (1.4.10) as stored. */
+export function toRunAttempt(row: Record<string, unknown>): RunAttemptRow {
+  return {
+    id: Number(row.id),
+    itemId: Number(row.itemId),
+    runId: Number(row.runId),
+    runbookId: Number(row.runbookId),
+    attempt: Number(row.attempt),
+    status:
+      row.status === "passed" || row.status === "failed"
+        ? row.status
+        : "running",
+    startedAt: String(row.startedAt),
+    finishedAt: optString(row.finishedAt),
+    exitCode: optNumber(row.exitCode),
+    stdout: optString(row.stdout),
+    stderr: optString(row.stderr),
+    truncated: Boolean(row.truncated),
+    timedOut: Boolean(row.timedOut),
+    error: optString(row.error),
+    checks: parseJson<CheckResult[] | null>(row.checks, null),
+    stopIf: parseJson<CheckResult[] | null>(row.stopIf, null),
+    why: ATTEMPT_WHYS.has(row.why as string)
+      ? (row.why as RunAttemptRow["why"])
+      : null,
+  };
+}
+
+const ATTEMPT_WHYS: ReadonlySet<string> = new Set([
+  "exit",
+  "check",
+  "timeout",
+  "connect",
+  "stop-if",
+  "stopped",
+  "interrupted",
 ]);
 
 export function toToken(row: Record<string, unknown>): TokenRow {
@@ -217,6 +259,7 @@ const JSON_COLUMNS = new Set([
   "ask",
   "captures",
   "checks",
+  "stopIf",
   "captured",
   "stdin",
   "secrets",

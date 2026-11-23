@@ -7,7 +7,11 @@ import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
 import type { VmSpec } from "../../../shared/vms.js";
-import type { RunItem, SequenceItem } from "../../../shared/sequence.js";
+import type {
+  RunAttempt,
+  RunItem,
+  SequenceItem,
+} from "../../../shared/sequence.js";
 import type {
   AmendKind,
   RunbookOwner,
@@ -186,5 +190,11 @@ export interface NewStep {
   workdir?: string | null;
 }
 
-/** A run item as stored (1.4.10). */
-export type RunItemRow = RunItem & { stepId: number; runbookId: number };
+/** A run item as stored (1.4.10), without its attempts. */
+export type RunItemRow = Omit<RunItem, "attempts"> & {
+  stepId: number;
+  runbookId: number;
+};
+
+/** An attempt as stored (1.4.10, phase 2). */
+export type RunAttemptRow = RunAttempt & { runId: number; runbookId: number };

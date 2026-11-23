@@ -26,7 +26,7 @@ import { escapePattern } from "../../shared/checks.js";
 import { stepCaptures } from "../values/effective.js";
 import { placeholders } from "../values/values.js";
 import { isAgentStep, stepValueNames } from "../../shared/steps.js";
-import { runItems } from "../../shared/sequence.js";
+import { itemChecks, runItems } from "../../shared/sequence.js";
 
 export const HIDDEN = "[hidden by owner]";
 
@@ -203,7 +203,8 @@ function readNames(
 ): string[] {
   if (isAgentStep(step)) return [];
   const items = runItems(step.sequence);
-  const checks = [...step.checks, ...items.flatMap((item) => item.checks)];
+  // A wait item's stopIf checks read values as its checks do (phase 2).
+  const checks = [...step.checks, ...items.flatMap(itemChecks)];
   return [
     ...placeholders(step.command),
     ...items.flatMap((item) => placeholders(item.command)),

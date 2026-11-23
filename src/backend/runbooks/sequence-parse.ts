@@ -1,8 +1,9 @@
 /**
  * A step's sequence and workdir as an author writes them (1.4.10): the
  * checks on each item, with errors that name the item ("sequence[2]: ...").
- * Phase 1 takes `run` and `delay` items; the plan's other types are refused
- * with a 400 that says they come later.
+ * Phase 1 takes `run` and `delay` items; phase 2 adds the `wait` item and
+ * `retry` on a run item, with their schedule (src/shared/schedule.ts). The
+ * plan's other types are refused with a 400 that says they come later.
  */
 
 import { InputError } from "../core/errors.js";
@@ -14,11 +15,25 @@ import {
   LATER_ITEM_TYPES,
   SEQUENCE_LIMITS,
   type DelayItemSpec,
+  type OnFail,
+  type RetrySpec,
   type RunItemSpec,
   type SequenceItem,
+  type WaitItemSpec,
 } from "../../shared/sequence.js";
+import {
+  BACKOFFS,
+  JITTERS,
+  RETRY_ON,
+  SCHEDULE_LIMITS,
+  type Backoff,
+  type Jitter,
+  type RetryOn,
+  type Schedule,
+} from "../../shared/schedule.js";
 import { sleepProblem } from "./no-sleep.js";
 
+const SCHEDULE_FIELDS = ["every", "backoff", "factor", "maxDelay", "jitter"];
 const RUN_FIELDS = [
   "type",
   "label",
@@ -28,6 +43,21 @@ const RUN_FIELDS = [
   "timeoutMs",
   "onFail",
   "interactive",
+  "retry",
+];
+const RETRY_FIELDS = ["attempts", "within", "retryOn", ...SCHEDULE_FIELDS];
+const WAIT_FIELDS = [
+  "type",
+  "label",
+  "command",
+  "checks",
+  "stopIf",
+  "captures",
+  "timeoutMs",
+  "onFail",
+  "within",
+  "attempts",
+  ...SCHEDULE_FIELDS,
 ];
 const DELAY_FIELDS = ["type", "label", "seconds", "reason"];
 
@@ -54,18 +84,42 @@ function shortText(value: unknown, field: string, max: number): string | null {
   return text === "" ? null : text;
 }
 
-function parseRunItem(
+/** An integer from min to max, or null when left out or null. */
+function wholeNumber(
+  value: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number | null {
+  if (value === undefined || value === null) return null;
+  if (
+    !Number.isInteger(value) ||
+    (value as number) < min ||
+    (value as number) > max
+  ) {
+    throw new InputError(`${field} must be an integer from ${min} to ${max}`);
+  }
+  return value as number;
+}
+
+/** What a run item and a wait item share: the command and its output. */
+interface CommandParts {
+  command: string;
+  checks: Check[];
+  captures: Array<{ name: string; pattern: string }>;
+  timeoutMs: number | null;
+  onFail: OnFail;
+}
+
+function parseCommandParts(
   raw: Record<string, unknown>,
   field: string,
   rules: SequenceRules,
-): RunItemSpec {
-  strictObject(raw, RUN_FIELDS, {
-    notObject: `${field} must be an object`,
-    field: `${field}`,
-  });
+  kind: "run" | "wait",
+): CommandParts {
   const command = raw.command;
   if (typeof command !== "string" || command.trim() === "") {
-    throw new InputError(`${field}.command is required for a run item`);
+    throw new InputError(`${field}.command is required for a ${kind} item`);
   }
   if (command.length > rules.commandMax) {
     throw new InputError(
@@ -114,28 +168,205 @@ function parseRunItem(
   if (onFail !== "stop" && onFail !== "continue") {
     throw new InputError(`${field}.onFail must be "stop" or "continue"`);
   }
+  return {
+    command,
+    checks: (checks as Check[]).map(normalizeCheck),
+    captures: capturesOut,
+    timeoutMs,
+    onFail,
+  };
+}
+
+/**
+ * The delays between attempts (phase 2): every (default 5 s), backoff
+ * (default fixed), factor (exponential only, default 2), maxDelay (default
+ * 300 s, or every when that is longer) and jitter (default none).
+ */
+function parseSchedule(raw: Record<string, unknown>, field: string): Schedule {
+  const every =
+    wholeNumber(
+      raw.every,
+      `${field}.every`,
+      SCHEDULE_LIMITS.everyMin,
+      SCHEDULE_LIMITS.everyMax,
+    ) ?? SCHEDULE_LIMITS.every;
+  const backoff = (raw.backoff ?? "fixed") as Backoff;
+  if (!BACKOFFS.includes(backoff)) {
+    throw new InputError(
+      `${field}.backoff must be "fixed", "linear" or "exponential"`,
+    );
+  }
+  let factor: number = SCHEDULE_LIMITS.factor;
+  if (raw.factor !== undefined && raw.factor !== null) {
+    if (backoff !== "exponential") {
+      throw new InputError(
+        `${field}.factor is for backoff "exponential" only; leave it out`,
+      );
+    }
+    if (
+      typeof raw.factor !== "number" ||
+      !Number.isFinite(raw.factor) ||
+      raw.factor < SCHEDULE_LIMITS.factorMin ||
+      raw.factor > SCHEDULE_LIMITS.factorMax
+    ) {
+      throw new InputError(
+        `${field}.factor must be a number from ${SCHEDULE_LIMITS.factorMin} to ${SCHEDULE_LIMITS.factorMax}`,
+      );
+    }
+    factor = raw.factor;
+  }
+  const maxDelay =
+    wholeNumber(
+      raw.maxDelay,
+      `${field}.maxDelay`,
+      SCHEDULE_LIMITS.everyMin,
+      SCHEDULE_LIMITS.maxDelayMax,
+    ) ?? Math.max(SCHEDULE_LIMITS.maxDelay, every);
+  if (maxDelay < every) {
+    throw new InputError(
+      `${field}.maxDelay (${maxDelay}) must be at least every (${every})`,
+    );
+  }
+  const jitter = (raw.jitter ?? "none") as Jitter;
+  if (!JITTERS.includes(jitter)) {
+    throw new InputError(`${field}.jitter must be "none", "full" or "equal"`);
+  }
+  return { every, backoff, factor, maxDelay, jitter };
+}
+
+/** A run item's retry (phase 2): attempts are required, 2 to 500. */
+function parseRetry(value: unknown, field: string): RetrySpec | null {
+  if (value === undefined || value === null) return null;
+  const raw = strictObject(value, RETRY_FIELDS, {
+    notObject: `${field} must be an object, such as {"attempts":5,"backoff":"exponential","every":2}`,
+    field,
+  });
+  if (raw.attempts === undefined || raw.attempts === null) {
+    throw new InputError(
+      `${field}.attempts is required: the most attempts, ${SCHEDULE_LIMITS.retryAttemptsMin} to ${SCHEDULE_LIMITS.attempts}`,
+    );
+  }
+  const attempts = wholeNumber(
+    raw.attempts,
+    `${field}.attempts`,
+    SCHEDULE_LIMITS.retryAttemptsMin,
+    SCHEDULE_LIMITS.attempts,
+  )!;
+  const within = wholeNumber(
+    raw.within,
+    `${field}.within`,
+    1,
+    SCHEDULE_LIMITS.within,
+  );
+  let retryOn: RetryOn[] = [...RETRY_ON];
+  if (raw.retryOn !== undefined && raw.retryOn !== null) {
+    if (
+      !Array.isArray(raw.retryOn) ||
+      raw.retryOn.length === 0 ||
+      raw.retryOn.some((each) => !RETRY_ON.includes(each as RetryOn))
+    ) {
+      throw new InputError(
+        `${field}.retryOn must be a list of one or more of "exit", "check", "timeout" and "connect"`,
+      );
+    }
+    // In a fixed order, each once.
+    retryOn = RETRY_ON.filter((each) =>
+      (raw.retryOn as unknown[]).includes(each),
+    );
+  }
+  return { attempts, within, retryOn, ...parseSchedule(raw, field) };
+}
+
+function parseRunItem(
+  raw: Record<string, unknown>,
+  field: string,
+  rules: SequenceRules,
+): RunItemSpec {
+  strictObject(raw, RUN_FIELDS, {
+    notObject: `${field} must be an object`,
+    field: `${field}`,
+  });
+  const parts = parseCommandParts(raw, field, rules, "run");
   const interactive = raw.interactive ?? false;
   if (typeof interactive !== "boolean") {
     throw new InputError(`${field}.interactive must be true or false`);
   }
-  const normalized = (checks as Check[]).map(normalizeCheck);
   if (
     interactive &&
-    normalized.some((check) => "stream" in check && check.stream === "stderr")
+    parts.checks.some((check) => "stream" in check && check.stream === "stderr")
   ) {
     throw new InputError(
       `${field}: an interactive item has one output stream: a check cannot read stream "stderr"; use "stdout" or "any"`,
     );
   }
+  const retry = parseRetry(raw.retry, `${field}.retry`);
+  if (retry && interactive) {
+    throw new InputError(
+      `${field}: an interactive item cannot have retry: Runbooks cannot type into it again for you`,
+    );
+  }
   return {
     type: "run",
     label: shortText(raw.label, `${field}.label`, SEQUENCE_LIMITS.label),
-    command,
-    checks: normalized,
-    captures: capturesOut,
-    timeoutMs,
-    onFail,
+    ...parts,
     interactive,
+    retry,
+  };
+}
+
+/**
+ * A wait item (phase 2): a command and at least one check, run until the
+ * checks pass, within a time limit (required, up to 2 hours).
+ */
+function parseWaitItem(
+  raw: Record<string, unknown>,
+  field: string,
+  rules: SequenceRules,
+): WaitItemSpec {
+  strictObject(raw, WAIT_FIELDS, {
+    notObject: `${field} must be an object`,
+    field: `${field}`,
+  });
+  const parts = parseCommandParts(raw, field, rules, "wait");
+  if (parts.checks.length === 0) {
+    throw new InputError(
+      `${field}.checks needs at least one check: what the output looks like when the wait is over, such as {"type":"contains","text":"healthy"}`,
+    );
+  }
+  const stopIf = raw.stopIf ?? [];
+  // No captures: a stopIf check reads the attempt's output, and an attempt
+  // that does not pass captures nothing.
+  const stopProblem = checksProblem(stopIf, []);
+  if (stopProblem) {
+    throw new InputError(
+      `${field}.stopIf: ${stopProblem.replace(/is not a capture of this step/, "cannot be read: stopIf reads output only")}`,
+    );
+  }
+  if (raw.within === undefined || raw.within === null) {
+    throw new InputError(
+      `${field}.within is required: the most seconds the wait may take, 1 to ${SCHEDULE_LIMITS.within}`,
+    );
+  }
+  const within = wholeNumber(
+    raw.within,
+    `${field}.within`,
+    1,
+    SCHEDULE_LIMITS.within,
+  )!;
+  const attempts = wholeNumber(
+    raw.attempts,
+    `${field}.attempts`,
+    1,
+    SCHEDULE_LIMITS.attempts,
+  );
+  return {
+    type: "wait",
+    label: shortText(raw.label, `${field}.label`, SEQUENCE_LIMITS.label),
+    ...parts,
+    stopIf: (stopIf as Check[]).map(normalizeCheck),
+    within,
+    attempts,
+    ...parseSchedule(raw, field),
   };
 }
 
@@ -197,6 +428,8 @@ export function parseSequence(
     switch (item.type) {
       case "run":
         return parseRunItem(item, field, rules);
+      case "wait":
+        return parseWaitItem(item, field, rules);
       case "delay":
         return parseDelayItem(item, field);
       default:
@@ -204,17 +437,17 @@ export function parseSequence(
           (LATER_ITEM_TYPES as readonly string[]).includes(item.type as string)
         ) {
           throw new InputError(
-            `${field}: the "${String(item.type)}" item comes in a later version of Runbooks; for now use "run" and "delay" items`,
+            `${field}: the "${String(item.type)}" item comes in a later version of Runbooks; for now use "run", "wait" and "delay" items`,
             400,
             { code: "later-item" },
           );
         }
-        throw new InputError(`${field}.type must be "run" or "delay"`);
+        throw new InputError(`${field}.type must be "run", "wait" or "delay"`);
     }
   });
   const seen = new Set<string>();
   for (const [index, item] of items.entries()) {
-    if (item.type !== "run") continue;
+    if (item.type === "delay") continue;
     for (const capture of item.captures) {
       if (seen.has(capture.name)) {
         throw new InputError(
@@ -224,8 +457,8 @@ export function parseSequence(
       seen.add(capture.name);
     }
   }
-  if (!items.some((item) => item.type === "run")) {
-    throw new InputError("sequence needs at least one run item");
+  if (!items.some((item) => item.type !== "delay")) {
+    throw new InputError("sequence needs at least one run or wait item");
   }
   return items;
 }
@@ -262,6 +495,6 @@ export function parseWorkdir(value: unknown): string | null {
 /** Captures of a whole sequence, for the step-level checks on names. */
 export function sequenceCaptures(sequence: SequenceItem[] | null): Capture[] {
   return (sequence ?? []).flatMap((item) =>
-    item.type === "run" ? item.captures : [],
+    item.type !== "delay" ? item.captures : [],
   );
 }

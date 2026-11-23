@@ -67,5 +67,5 @@ function clip(text: string, index: number, length: number): string {
 export function sleepProblem(command: string, field: string): string | null {
   const found = findSleep(command);
   if (found === null) return null;
-  return `${field} waits with "${found}": Runbooks does not run fixed waits in commands. Make the step a sequence and put a delay item where the wait was, such as {"type":"delay","seconds":30,"reason":"let the service start"}, with the commands before and after it as run items`;
+  return `${field} waits with "${found}": Runbooks does not run fixed waits in commands. Make the step a sequence and put a delay item where the wait was, such as {"type":"delay","seconds":30,"reason":"let the service start"}, with the commands before and after it as run items. To wait until something is ready (a loop with sleep), use a wait item, which runs a check command until its checks pass, such as {"type":"wait","command":"curl -fsS https://127.0.0.1:8443/health","checks":[{"type":"contains","text":"ok"}],"within":180,"every":5}`;
 }
