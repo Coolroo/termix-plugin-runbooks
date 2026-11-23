@@ -11,6 +11,8 @@ import type {
 } from "../../runbooks/store/types.js";
 import type { Store } from "../../runbooks/store/store.js";
 import { InputError } from "../../core/errors.js";
+import type { Platforms } from "../../events/platforms.js";
+import { windowsProblem } from "../../runbooks/event-parse.js";
 
 export interface AgentCaller {
   token: TokenRow;
@@ -36,15 +38,21 @@ export type VmHostIds = (caller: AgentCaller) => Promise<Set<number> | null>;
 export async function tokenHosts(caller: AgentCaller): Promise<AgentHost[]> {
   return caller.token.hosts
     .filter((host) => host.ssh !== false)
-    .map(({ id, name, address, folder }) => ({
+    .map(({ id, name, address, folder, windows }) => ({
       id,
       name,
       address,
       folder,
+      // 1.4.10: agents learn which hosts refuse the Linux-only events.
+      ...(windows ? { windows } : {}),
     }));
 }
 
-export function createAccess(store: Store, vmHostIds?: VmHostIds) {
+export function createAccess(
+  store: Store,
+  vmHostIds?: VmHostIds,
+  platforms?: Platforms,
+) {
   const owner = (caller: AgentCaller) => caller.token.createdBy;
   const listHosts = tokenHosts;
 
@@ -109,6 +117,36 @@ export function createAccess(store: Store, vmHostIds?: VmHostIds) {
     }
   }
 
+  /**
+   * Refuses the Linux-only events (container, unit, log, job, a file with
+   * sudo) in a step for a host known to be Windows (1.4.10, phase 3): its
+   * Termix tags say so in the token's copy, or a run found its SSH server
+   * to be a Windows one (platforms.ts). A host not known either way is
+   * checked when it runs.
+   */
+  function checkPlatforms(
+    caller: AgentCaller,
+    stepList: Array<{
+      hostId?: number | null;
+      sequence?: ReadonlyArray<{ type: string }> | null;
+    }>,
+  ): void {
+    for (const step of stepList) {
+      if (typeof step.hostId !== "number" || !step.sequence) continue;
+      const host = caller.token.hosts.find((each) => each.id === step.hostId);
+      const windows =
+        host?.windows === true || (platforms?.isWindows(step.hostId) ?? false);
+      if (!windows) continue;
+      const problem = windowsProblem(
+        step.sequence,
+        host?.name || host?.address || `host ${step.hostId}`,
+      );
+      if (problem) {
+        throw new InputError(problem, 400, { code: "linux-only" });
+      }
+    }
+  }
+
   async function ownRunbook(
     caller: AgentCaller,
     runbookId: number,
@@ -147,6 +185,7 @@ export function createAccess(store: Store, vmHostIds?: VmHostIds) {
     listHosts,
     hostNamer,
     checkHosts,
+    checkPlatforms,
     ownRunbook,
     ownStep,
     requireOpen,

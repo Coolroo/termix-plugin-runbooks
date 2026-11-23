@@ -36,6 +36,8 @@ import {
 import { stepChoice } from "../decisions/decisions.js";
 import { nextStep } from "../runbooks/view.js";
 import {
+  isCommandItem,
+  isEventItem,
   itemPlan,
   itemScheduleWords,
   sequenceText,
@@ -46,6 +48,7 @@ import {
   type RunItem,
   type SequenceItem,
 } from "../../shared/sequence.js";
+import { eventWhat, type EventItemSpec } from "../../shared/events.js";
 import type { Check, CheckResult } from "../../shared/checks.js";
 
 /**
@@ -228,7 +231,7 @@ function agentMissing(step: StepRow, values: Values): string[] {
     for (const name of resolveItem(item, index + 1, values, earlier).missing) {
       missing.add(name);
     }
-    if (item.type !== "delay") {
+    if (isCommandItem(item)) {
       for (const capture of item.captures) earlier.add(capture.name);
     }
   }
@@ -288,13 +291,27 @@ function agentItems(
   return (run.items ?? []).map((item: RunItem) => {
     const spec = sequence[item.position - 1];
     // A run or a wait item (phase 2): both run a command.
-    const runSpec = spec && spec.type !== "delay" ? spec : null;
+    const runSpec = spec && isCommandItem(spec) ? spec : null;
+    // Phase 3: an event says what it checks, built again from the item.
+    const eventSpec = spec && isEventItem(spec) ? spec : null;
     const command =
       item.command === null
         ? null
         : runSpec
           ? resolve(runSpec.command, values).text
-          : HIDDEN;
+          : eventSpec
+            ? eventWhat(
+                resolveItem(
+                  eventSpec,
+                  item.position,
+                  values,
+                  new Set(),
+                ) as EventItemSpec,
+                null,
+                item.fromRunId ?? run.id,
+                item.position,
+              )
+            : HIDDEN;
     const checks = agentChecks(
       item.checks,
       runSpec?.checks ?? [],
@@ -356,6 +373,9 @@ function agentItems(
       maxAttempts: item.maxAttempts,
       endsBy: item.endsBy,
       nextAttemptAt: item.nextAttemptAt,
+      // Phase 3: the state an event read, in fixed words ("healthy",
+      // "HTTP 503"), visible on a hidden step as an exit code is.
+      result: item.result,
       ...(attempts ? { attempts } : {}),
     };
   });
@@ -408,6 +428,7 @@ function agentAttempt(
       hidden,
     ),
     why: attempt.why,
+    result: attempt.result,
   };
 }
 
@@ -496,7 +517,7 @@ function builtCommand(run: ShownRun, step: StepRow, values: Values): string {
         position: _position,
         ...built
       } = resolveItem(item, index + 1, values, earlier);
-      if (item.type !== "delay") {
+      if (isCommandItem(item)) {
         for (const capture of item.captures) earlier.add(capture.name);
       }
       return built as SequenceItem;

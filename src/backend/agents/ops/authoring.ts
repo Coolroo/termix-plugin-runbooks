@@ -249,7 +249,14 @@ export function checkSecretReads(
 export function createAuthoring(
   store: Store,
   events: Events,
-  { owner, checkHosts, ownRunbook, ownStep, requireOpen }: Access,
+  {
+    owner,
+    checkHosts,
+    checkPlatforms,
+    ownRunbook,
+    ownStep,
+    requireOpen,
+  }: Access,
   { getRunbook }: Pick<Reads, "getRunbook">,
   /** 1.4.10: whether a command may not wait a fixed time (no-sleep.ts). */
   banSleep: () => Promise<boolean> = async () => true,
@@ -284,6 +291,7 @@ export function createAuthoring(
     const steps = parseSteps(raw.steps, await banSleep());
     checkStepCount(steps.length);
     await checkHosts(caller, steps);
+    checkPlatforms(caller, steps);
     checkSecretReads(
       steps.map((step, index) => ({ ...step, position: index + 1 })),
     );
@@ -402,6 +410,7 @@ export function createAuthoring(
       );
     }
     await checkHosts(caller, steps);
+    checkPlatforms(caller, steps);
     // Numbers in stdin are those after the insert, as the answer shows.
     const shift = steps.length;
     const added = steps.map((step, index) => ({
@@ -511,6 +520,12 @@ export function createAuthoring(
       workdir: patch.workdir !== undefined ? patch.workdir : step.workdir,
     });
     await checkHosts(caller, [patch]);
+    checkPlatforms(caller, [
+      {
+        hostId: patch.hostId !== undefined ? patch.hostId : step.hostId,
+        sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
+      },
+    ]);
     checkSecretReads(
       (await store.listSteps(runbook.id)).map((other) =>
         other.id === stepId

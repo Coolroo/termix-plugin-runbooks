@@ -47,7 +47,7 @@ export function createComplete(
   store: Store,
   events: Events,
   options: { audit?: AgentAudit; banSleep?: () => Promise<boolean> },
-  { checkHosts, ownStep }: Access,
+  { checkHosts, checkPlatforms, ownStep }: Access,
   { getRunbook }: Pick<Reads, "getRunbook">,
 ) {
   /**
@@ -225,6 +225,7 @@ export function createComplete(
       fresh = { ...fresh, hideOutputFromAgents: true };
     }
     await checkHosts(caller, [fresh]);
+    checkPlatforms(caller, [fresh]);
     const group = steps.filter((s) => s.position === step.position);
     const last = Math.max(-1, ...group.map((s) => suffixIndex(s.suffix)));
     const own = { position: step.position, suffix: suffixAt(last + 1) };

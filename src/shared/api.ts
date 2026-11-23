@@ -498,6 +498,12 @@ export interface TokenHost {
    * on hosts saved before 1.4.7.
    */
   vm?: TokenHostVm;
+  /**
+   * The host's Termix tags named it a Windows host when the token's hosts
+   * were saved (1.4.10, phase 3): steps for it may not hold the Linux-only
+   * events. Absent when not known.
+   */
+  windows?: boolean;
 }
 
 /** A VM on a token host, as HAW listed it when the hosts were saved. */

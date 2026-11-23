@@ -19,6 +19,9 @@ import {
   type TestServer,
 } from "./helpers";
 import { HIDDEN } from "../../src/backend/agents/agent-mask";
+import http from "node:http";
+import net from "node:net";
+import fixtures from "./fixtures/event-readers.json";
 
 useTestServer();
 
@@ -1141,6 +1144,154 @@ describe("1.4.10 phase 2: a wait's attempts are hidden as its item is", () => {
     ]);
     expect(items[0].captured).toEqual({ tok: HIDDEN });
     expect(items[0].maxAttempts).toBe(500);
+  }, 20_000);
+});
+
+describe("1.4.10 phase 3: the wait events are hidden as their item is", () => {
+  /**
+   * A hidden sequence of events whose outputs hold the hidden value: a
+   * container's health log, a log line, an HTTP body over the SSH channel,
+   * a job's journal, and a container that exited with it in its error. Its
+   * state words (result) are the same for both values: they are fixed
+   * words, never text from the host.
+   */
+  const eventsRun = async (secret: string, options: { hidden: boolean }) => {
+    const x = await setup([
+      {
+        title: "Deploy and wait",
+        hostId: 1,
+        hideOutputFromAgents: options.hidden,
+        sequence: [
+          { type: "container", name: "web", state: "healthy", within: 60 },
+          { type: "log", container: "web", pattern: "ready", within: 60 },
+          {
+            type: "http",
+            url: "http://127.0.0.1:8080/health",
+            contains: "ok",
+            within: 60,
+          },
+          { type: "job", command: "backup", within: 60 },
+          {
+            type: "container",
+            name: "web2",
+            state: "running",
+            within: 60,
+          },
+        ],
+      },
+    ]);
+    const healthy = fixtures.dockerInspect.healthy.stdout.replace(
+      /"Output":""/,
+      `"Output":"probe ${secret}"`,
+    );
+    const exited = fixtures.dockerInspect["exited-3"].stdout.replace(
+      '"Error":""',
+      `"Error":"${secret}"`,
+    );
+    const at = Math.floor(Date.now() / 1000) + 5;
+    x.s.setExec(async (_h, command) => {
+      if (
+        command.includes("-- 'web'") &&
+        command.startsWith("docker container")
+      ) {
+        return execResult(healthy);
+      }
+      if (command.startsWith("docker container")) return execResult(exited);
+      if (command.startsWith("docker logs")) {
+        return execResult(
+          `2099-01-01T00:00:00.000000000Z ready token=${secret}\n`,
+        );
+      }
+      if (command.startsWith("sudo -n systemd-run")) {
+        return execResult("", {
+          stderr: `Running as unit: x.service; ${secret}\n`,
+        });
+      }
+      if (command.startsWith("systemctl show")) {
+        return execResult(
+          fixtures.systemctlShow["t038-ok"].stdout.replace(/@\d+/, `@${at}`),
+        );
+      }
+      if (command.startsWith("sudo -n journalctl")) {
+        return execResult(`{"MESSAGE":"done ${secret}","__CURSOR":"c1"}\n`, {
+          stderr: `warn ${secret}`,
+        });
+      }
+      return execResult("");
+    });
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end(`ok ${secret}\n`);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as net.AddressInfo).port;
+    x.s.setForward(() => net.connect(port, "127.0.0.1"));
+    try {
+      const shown = await view(x.s, x.runbook.id);
+      const step = shown.steps[0];
+      const started = await x.s.person("POST", `/steps/${step.id}/run`, {
+        revision: step.revision,
+        commandHash: step.commandHash,
+      });
+      expect(started.status, JSON.stringify(started.body)).toBe(200);
+      const ended = await waitForRun(x.s, x.runbook.id, started.body.id);
+      expect(ended.status, JSON.stringify(ended.items)).toBe("failed");
+      expect(
+        ended.items.map((item: { status: string }) => item.status),
+      ).toEqual(["passed", "passed", "passed", "passed", "failed"]);
+      return { after: await agentSees(x) };
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  };
+
+  it("G16 a hidden sequence of events: output, errors and the HTTP body; the words stay", async () => {
+    const found = await compare(
+      "G16 hidden events",
+      (secret) => eventsRun(secret, { hidden: true }),
+      S17,
+    );
+    expect(found, found.join("\n")).toEqual([]);
+    const { after } = (await eventsRun(S17[0], { hidden: true })) as {
+      after: { runbook: { body: { steps: Array<{ runs: unknown[] }> } } };
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items = (after.runbook.body.steps[0].runs[0] as any).items;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(items.map((item: any) => item.result)).toEqual([
+      "healthy",
+      "matched",
+      "HTTP 200",
+      "finished (success)",
+      "exited (3)",
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(items.map((item: any) => item.stdout)).toEqual(
+      Array(5).fill(HIDDEN),
+    );
+    expect(items[4].error).toBe(HIDDEN);
+    // What each item checks stays visible: the fixed command.
+    expect(items[0].command).toContain("docker container inspect");
+  }, 20_000);
+
+  it("G16 control: the same visible sequence differs, so the test can see a leak", async () => {
+    const found = await compare(
+      "G16 control",
+      (secret) => eventsRun(secret, { hidden: false }),
+      S17,
+    );
+    expect(paths(found)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/items\.0\.attempts\.0\.stdout$/),
+        expect.stringMatching(/items\.1\.stdout$/),
+        expect.stringMatching(/items\.2\.stdout$/),
+        expect.stringMatching(/items\.3\.stdout$/),
+        expect.stringMatching(/items\.3\.attempts\.0\.stderr$/),
+        expect.stringMatching(/items\.4\.attempts\.0\.stdout$/),
+      ]),
+    );
   }, 20_000);
 });
 

@@ -15,6 +15,7 @@ import { createReads } from "./reads.js";
 import { createAuthoring } from "./authoring.js";
 import { createComplete } from "./complete.js";
 import { listVms, vmHostIds } from "./vms.js";
+import type { Platforms } from "../../events/platforms.js";
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
@@ -39,11 +40,13 @@ export function createAgentOps(
      * admin setting banSleep). Left out: refused.
      */
     banSleep?: () => Promise<boolean>;
+    /** 1.4.10, phase 3: hosts runs found to be Windows hosts. */
+    platforms?: Platforms;
   } = {},
 ) {
   const events = options.events ?? createEvents(store);
   // VM steps (1.4.7): HAW's hosts, from the copy the token keeps (H3).
-  const access = createAccess(store, vmHostIds);
+  const access = createAccess(store, vmHostIds, options.platforms);
   const reads = createReads(store, live, access);
   const banSleep = options.banSleep ?? (async () => true);
   const authoring = createAuthoring(store, events, access, reads, banSleep);

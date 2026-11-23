@@ -1,5 +1,6 @@
 /** The person's side of agent tokens: list, make, change hosts, revoke. */
 
+import { windowsTagged } from "../events/platforms.js";
 import type { Router } from "express";
 import { InputError } from "../core/errors.js";
 import { body, wrap } from "../core/http.js";
@@ -53,6 +54,8 @@ export function registerTokenRoutes(router: Router, kit: PersonKit): void {
         address: host.ip,
         folder: host.folder,
         ssh: true,
+        // 1.4.10: a host tagged "windows" gets no Linux-only events.
+        ...(windowsTagged(host.tags) ? { windows: true } : {}),
       });
     }
     return readTokenVms(haw, chosen, `token ${tokenName}`);
