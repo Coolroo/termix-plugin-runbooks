@@ -56,6 +56,7 @@ const known = (step: AuthorStep) => ({
   hideOutputFromAgents: step.hideOutputFromAgents,
   interactive: step.interactive,
   vm: step.vm,
+  sequence: step.sequence ?? null,
 });
 
 /** A step and its amendments: the steps that share its position. */
@@ -77,15 +78,20 @@ export function objectBody(
   return strictObject(input, keys, { notObject: "body must be an object" });
 }
 
-function parseSteps(input: unknown): AuthorStep[] {
+function parseSteps(input: unknown, banSleep: boolean): AuthorStep[] {
   if (input === undefined) return [];
   if (!Array.isArray(input)) throw new InputError("steps must be an array");
   return input.map((raw, index) => {
     try {
-      return completeStep(parseStepInput(raw));
+      return completeStep(parseStepInput(raw, { banSleep }));
     } catch (error) {
       if (error instanceof InputError) {
-        throw new InputError(`steps[${index}]: ${error.message}`);
+        // The code stays (1.4.10: "sleep", "later-item").
+        throw new InputError(
+          `steps[${index}]: ${error.message}`,
+          error.status,
+          error.extra,
+        );
       }
       throw error;
     }
@@ -245,6 +251,8 @@ export function createAuthoring(
   events: Events,
   { owner, checkHosts, ownRunbook, ownStep, requireOpen }: Access,
   { getRunbook }: Pick<Reads, "getRunbook">,
+  /** 1.4.10: whether a command may not wait a fixed time (no-sleep.ts). */
+  banSleep: () => Promise<boolean> = async () => true,
 ) {
   /**
    * Numbers the steps that are not amendments 1, 2, 3 in `order`. Each
@@ -273,7 +281,7 @@ export function createAuthoring(
     const values = parseValues(raw.values);
     const runbookOwner = parseOwner(raw.owner);
     const notify = parseNotify(raw.notify);
-    const steps = parseSteps(raw.steps);
+    const steps = parseSteps(raw.steps, await banSleep());
     checkStepCount(steps.length);
     await checkHosts(caller, steps);
     checkSecretReads(
@@ -360,7 +368,7 @@ export function createAuthoring(
     const runbook = await ownRunbook(caller, runbookId);
     requireOpen(runbook);
     const raw = objectBody(input);
-    const steps = parseSteps(raw.steps);
+    const steps = parseSteps(raw.steps, await banSleep());
     if (steps.length === 0) throw new InputError("steps must not be empty");
     const existing = await store.listSteps(runbookId);
     checkStepCount(existing.length + steps.length);
@@ -456,7 +464,10 @@ export function createAuthoring(
         { code: "replaced" },
       );
     }
-    const patch = parseStepInput(input, { partial: true });
+    const patch = parseStepInput(input, {
+      partial: true,
+      banSleep: await banSleep(),
+    });
     if (Object.keys(patch).length === 0) {
       throw new InputError("nothing to change");
     }
@@ -496,6 +507,8 @@ export function createAuthoring(
       timeoutMs:
         patch.timeoutMs !== undefined ? patch.timeoutMs : step.timeoutMs,
       vm: patch.vm !== undefined ? patch.vm : step.vm,
+      sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
+      workdir: patch.workdir !== undefined ? patch.workdir : step.workdir,
     });
     await checkHosts(caller, [patch]);
     checkSecretReads(
@@ -523,6 +536,7 @@ export function createAuthoring(
       hideOutputFromAgents:
         patch.hideOutputFromAgents ?? step.hideOutputFromAgents,
       interactive: patch.interactive ?? step.interactive,
+      sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
     };
     const all = (await store.listSteps(runbook.id)).map((other) =>
       other.id === stepId ? changed : other,
@@ -553,7 +567,8 @@ export function createAuthoring(
       patch.captures !== undefined ||
       patch.decision !== undefined ||
       patch.vm !== undefined ||
-      patch.interactive !== undefined
+      patch.interactive !== undefined ||
+      patch.sequence !== undefined
     ) {
       recheckReaders(
         all,

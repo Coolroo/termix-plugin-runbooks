@@ -7,6 +7,7 @@ import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
 import type { VmSpec } from "../../../shared/vms.js";
+import type { RunItem, SequenceItem } from "../../../shared/sequence.js";
 import type {
   AmendKind,
   RunbookOwner,
@@ -119,6 +120,10 @@ export interface StepRow {
   interactive: boolean;
   /** 1.4.7: a VM step's action through HAW; null if not. */
   vm: VmSpec | null;
+  /** 1.4.10: the items one Run runs in order; null for a one-command step. */
+  sequence: SequenceItem[] | null;
+  /** 1.4.10: the folder the command, or each run item, starts in. */
+  workdir: string | null;
   /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
   suffix: string | null;
   /** 1.4.0: the step this one amends, how, why and by which token. */
@@ -175,4 +180,11 @@ export interface NewStep {
   interactive?: boolean;
   /** 1.4.7: a VM step; null or left out for any other step. */
   vm?: VmSpec | null;
+  /** 1.4.10: a sequence step's items; null or left out for any other. */
+  sequence?: SequenceItem[] | null;
+  /** 1.4.10: left out: none. */
+  workdir?: string | null;
 }
+
+/** A run item as stored (1.4.10). */
+export type RunItemRow = RunItem & { stepId: number; runbookId: number };

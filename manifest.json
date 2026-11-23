@@ -111,6 +111,13 @@
           "requires": "notifyEnabled"
         },
         {
+          "key": "banSleep",
+          "type": "boolean",
+          "labelKey": "settings.banSleep.label",
+          "descriptionKey": "settings.banSleep.description",
+          "default": true
+        },
+        {
           "key": "stepColorsEditor",
           "type": "custom",
           "component": "step-colors"

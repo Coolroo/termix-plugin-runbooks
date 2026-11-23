@@ -10,6 +10,7 @@ import type { AskSpec, GenerateSpec } from "../../../shared/secret-steps.js";
 import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
 import type { VmSpec } from "../../../shared/vms.js";
+import type { SequenceItem } from "../../../shared/sequence.js";
 import {
   OUTPUT_SOURCES,
   type OutputSource,
@@ -22,6 +23,7 @@ import {
 } from "../../../shared/api.js";
 import type {
   EventRow,
+  RunItemRow,
   RunbookRow,
   RunRow,
   StepRow,
@@ -112,6 +114,8 @@ export function toStep(row: Record<string, unknown>): StepRow {
     decision: parseJson<DecisionSpec | null>(row.decision, null),
     interactive: Boolean(row.interactive),
     vm: parseJson<VmSpec | null>(row.vm, null),
+    sequence: parseJson<SequenceItem[] | null>(row.sequence, null),
+    workdir: (row.workdir as string | null | undefined) || null,
     suffix: (row.suffix as string | null | undefined) || null,
     amendsStepId: optNumber(row.amendsStepId),
     amendKind:
@@ -154,6 +158,47 @@ export function toRun(row: Record<string, unknown>): RunRow {
   };
 }
 
+/** A run item (1.4.10) as stored. */
+export function toRunItem(row: Record<string, unknown>): RunItemRow {
+  return {
+    id: Number(row.id),
+    runId: Number(row.runId),
+    stepId: Number(row.stepId),
+    runbookId: Number(row.runbookId),
+    position: Number(row.position),
+    type: row.type === "delay" ? "delay" : "run",
+    label: optString(row.label),
+    command: optString(row.command),
+    seconds: optNumber(row.seconds),
+    reason: optString(row.reason),
+    onFail: row.onFail === "continue" ? "continue" : "stop",
+    status: ITEM_STATUSES.has(row.status as string)
+      ? (row.status as RunItemRow["status"])
+      : "waiting",
+    startedAt: optString(row.startedAt),
+    finishedAt: optString(row.finishedAt),
+    plannedEndAt: optString(row.plannedEndAt),
+    exitCode: optNumber(row.exitCode),
+    stdout: optString(row.stdout),
+    stderr: optString(row.stderr),
+    truncated: Boolean(row.truncated),
+    timedOut: Boolean(row.timedOut),
+    error: optString(row.error),
+    checks: parseJson<CheckResult[] | null>(row.checks, null),
+    captured: parseJson<Values>(row.captured, {}),
+    skippedBy: optString(row.skippedBy),
+    fromRunId: optNumber(row.fromRunId),
+  };
+}
+
+const ITEM_STATUSES: ReadonlySet<string> = new Set([
+  "waiting",
+  "running",
+  "passed",
+  "failed",
+  "skipped",
+]);
+
 export function toToken(row: Record<string, unknown>): TokenRow {
   return {
     ...(row as unknown as TokenRow),
@@ -167,6 +212,7 @@ const JSON_COLUMNS = new Set([
   "when",
   "decision",
   "vm",
+  "sequence",
   "generate",
   "ask",
   "captures",

@@ -31,14 +31,29 @@ export type AgentAudit = (line: {
 export function createAgentOps(
   store: Store,
   live?: LiveRuns,
-  options: { audit?: AgentAudit; events?: Events } = {},
+  options: {
+    audit?: AgentAudit;
+    events?: Events;
+    /**
+     * 1.4.10: whether commands that wait a fixed time are refused (the
+     * admin setting banSleep). Left out: refused.
+     */
+    banSleep?: () => Promise<boolean>;
+  } = {},
 ) {
   const events = options.events ?? createEvents(store);
   // VM steps (1.4.7): HAW's hosts, from the copy the token keeps (H3).
   const access = createAccess(store, vmHostIds);
   const reads = createReads(store, live, access);
-  const authoring = createAuthoring(store, events, access, reads);
-  const complete = createComplete(store, events, options, access, reads);
+  const banSleep = options.banSleep ?? (async () => true);
+  const authoring = createAuthoring(store, events, access, reads, banSleep);
+  const complete = createComplete(
+    store,
+    events,
+    { ...options, banSleep },
+    access,
+    reads,
+  );
 
   return {
     listHosts: access.listHosts,

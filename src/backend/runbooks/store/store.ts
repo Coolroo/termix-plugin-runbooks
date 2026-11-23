@@ -20,6 +20,7 @@ import type { PluginDatabase } from "@termix-ssh/plugin-sdk/backend";
 import {
   events as eventsDef,
   runbooks as runbooksDef,
+  runItems as runItemsDef,
   runs as runsDef,
   steps as stepsDef,
   tokens as tokensDef,
@@ -33,6 +34,7 @@ import type {
   RunbookOwner,
   RunbookRow,
   RunbookStatus,
+  RunItemRow,
   RunRow,
   RunStatus,
   StepRow,
@@ -44,6 +46,7 @@ import {
   columns,
   toEvent,
   toRun,
+  toRunItem,
   toRunbook,
   toStep,
   toToken,
@@ -92,6 +95,7 @@ export async function createStore(db: PluginDatabase) {
   const runs: Table = await db.define(runsDef);
   const tokens: Table = await db.define(tokensDef);
   const events: Table = await db.define(eventsDef);
+  const runItems: Table = await db.define(runItemsDef);
   const client = (): Promise<Drizzle> => db.client<Drizzle>();
 
   /** Inserts one row and returns its id. MySQL has no RETURNING. */
@@ -275,6 +279,8 @@ export async function createStore(db: PluginDatabase) {
       decision: step.decision ? JSON.stringify(step.decision) : null,
       interactive: step.interactive ?? false,
       vm: step.vm ? JSON.stringify(step.vm) : null,
+      sequence: step.sequence ? JSON.stringify(step.sequence) : null,
+      workdir: step.workdir ?? null,
       endedAt: null,
       revision: 1,
       createdAt: at,
@@ -415,6 +421,53 @@ export async function createStore(db: PluginDatabase) {
         columns(patch, { inputs: "inputsJson", errorParts: "errorPartsJson" }),
       )
       .where(eq(runs.id, id));
+  }
+
+  /** Adds a run item (1.4.10) and returns its id. */
+  async function insertRunItem(item: Omit<RunItemRow, "id">): Promise<number> {
+    return insertId(runItems, {
+      ...item,
+      checks: item.checks ? JSON.stringify(item.checks) : null,
+      captured: JSON.stringify(item.captured ?? {}),
+    });
+  }
+
+  async function updateRunItem(
+    id: number,
+    patch: Partial<Omit<RunItemRow, "id">>,
+  ): Promise<void> {
+    await (
+      await client()
+    )
+      .update(runItems)
+      .set(columns(patch))
+      .where(eq(runItems.id, id));
+  }
+
+  /** Run items of a runbook, a run or in a status, by run then position. */
+  async function listRunItems(filter: {
+    runbookId?: number;
+    runId?: number;
+    status?: RunItemRow["status"];
+  }): Promise<RunItemRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(runItems.runbookId, filter.runbookId));
+    }
+    if (filter.runId !== undefined) {
+      conditions.push(eq(runItems.runId, filter.runId));
+    }
+    if (filter.status !== undefined) {
+      conditions.push(eq(runItems.status, filter.status));
+    }
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(runItems)
+      .where(allOf(conditions))
+      .orderBy(asc(runItems.runId), asc(runItems.position));
+    return rows.map(toRunItem);
   }
 
   async function listTokens(): Promise<TokenRow[]> {
@@ -592,6 +645,9 @@ export async function createStore(db: PluginDatabase) {
     lastRunOfHash,
     insertRun,
     updateRun,
+    insertRunItem,
+    updateRunItem,
+    listRunItems,
     listTokens,
     activeTokens,
     findTokenByHash,

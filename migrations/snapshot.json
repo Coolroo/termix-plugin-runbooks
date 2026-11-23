@@ -201,6 +201,12 @@
         "vm": {
           "type": "text"
         },
+        "sequence": {
+          "type": "text"
+        },
+        "workdir": {
+          "type": "text"
+        },
         "revision": {
           "type": "integer",
           "notNull": true
@@ -494,6 +500,114 @@
         }
       },
       "indexes": []
+    },
+    "run_items": {
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "runId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "stepId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "runbookId": {
+          "type": "integer",
+          "notNull": true
+        },
+        "position": {
+          "type": "integer",
+          "notNull": true
+        },
+        "type": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "label": {
+          "type": "text"
+        },
+        "command": {
+          "type": "text"
+        },
+        "seconds": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "text"
+        },
+        "onFail": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "status": {
+          "type": "varchar",
+          "length": 16,
+          "notNull": true
+        },
+        "startedAt": {
+          "type": "timestamp"
+        },
+        "finishedAt": {
+          "type": "timestamp"
+        },
+        "plannedEndAt": {
+          "type": "timestamp"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "stdout": {
+          "type": "text"
+        },
+        "stderr": {
+          "type": "text"
+        },
+        "truncated": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "timedOut": {
+          "type": "boolean",
+          "notNull": true
+        },
+        "error": {
+          "type": "text"
+        },
+        "checks": {
+          "type": "text"
+        },
+        "captured": {
+          "type": "text"
+        },
+        "skippedBy": {
+          "type": "varchar",
+          "length": 255
+        },
+        "fromRunId": {
+          "type": "integer"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_p_runbooks_run_items_run",
+          "columns": [
+            "runId"
+          ]
+        },
+        {
+          "name": "idx_p_runbooks_run_items_runbook",
+          "columns": [
+            "runbookId"
+          ]
+        }
+      ]
     }
   }
 }

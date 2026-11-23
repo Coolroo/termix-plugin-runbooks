@@ -192,6 +192,8 @@ describe("resolved commands and their hashes", () => {
       runHash: entry.hash,
       missing: entry.missing,
       checks: [],
+      // 1.4.10: only a sequence step has resolved items.
+      items: null,
     });
     expect(
       resolveStep(step, entry.values, {

@@ -12,6 +12,7 @@ import type { Check, CheckResult } from "./checks.js";
 import type { StepCondition, WhenRule } from "./conditions.js";
 import type { DecisionChoice, DecisionSpec } from "./decisions.js";
 import type { VmSpec } from "./vms.js";
+import type { ResolvedItem, RunItem, SequenceItem } from "./sequence.js";
 import type { AskField, ByHand, GenerateField } from "./secret-steps.js";
 
 export type {
@@ -21,6 +22,12 @@ export type {
   GenerateField,
 } from "./secret-steps.js";
 export type { Check, CheckResult };
+export type {
+  ItemStatus,
+  ResolvedItem,
+  RunItem,
+  SequenceItem,
+} from "./sequence.js";
 
 export type RunbookStatus = "open" | "done" | "abandoned";
 /** "replaced" (1.4.0): an amendment replaced it; it counts as ended. */
@@ -190,6 +197,12 @@ export interface RunRecord {
    * pasted output, and for runs from before.
    */
   outputSource: OutputSource | null;
+  /**
+   * 1.4.10: a sequence step's run has one record per item, in order;
+   * absent on any other run. The run's stdout and stderr are the items'
+   * output joined, once it ended.
+   */
+  items?: RunItem[];
 }
 
 /**
@@ -385,6 +398,15 @@ export interface Step extends AmendmentView {
   decisionRan: StepName[];
   /** 1.4.7: a VM step's action through HAW; null on any other step. */
   vm: VmSpec | null;
+  /** 1.4.10: a sequence step's items as written; null on any other step. */
+  sequence: SequenceItem[] | null;
+  /**
+   * 1.4.10: the items with their values filled in, as one Run runs them; a
+   * name an earlier item captures stays as written until it ran.
+   */
+  resolvedSequence: ResolvedItem[] | null;
+  /** 1.4.10: the folder the command or each run item starts in. */
+  workdir: string | null;
   /** 1.4.7: the VM host's name in Termix; null on any other step. */
   vmHostName: string | null;
   /**
