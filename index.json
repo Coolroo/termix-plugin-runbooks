@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-20T02:00:34.000Z",
+  "updatedAt": "2026-11-23T16:02:30.000Z",
   "plugins": [
     {
       "id": "runbooks",
@@ -36,6 +36,31 @@
       "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.4.8",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.8/runbooks-1.4.8.tmxplug",
+          "sha256": "5cb42a280508283a29a27a6d154a22d263edeaae2c60342da2cba155e18cf2d9",
+          "signature": "2j31zyZ9fXtlFk3Ua5oWR3PkePCvPSJd4ZzirjINRHQ9ZB89Mxuq5pYBZlZ1UmSVLtA/+SQaNfxiM5TnPhcUCg==",
+          "size": 1016066,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.8",
+          "notes": "### Fixed\n\n- **A VM step's card no longer shows an old read.** The card read its VM only when it opened and when its own step ran, so a VM that an earlier step made or changed still showed as not found, and the button stayed off until the person found **Read again**. The card now reads the VM again when a run of any step of the runbook ends, and when the page shows again after a minute or more; one read runs at a time. **Read again** is an outline button with an icon next to the VM's state, and the card says how old the read is (\"read 3 min ago\"). A failed read, or a VM HAW cannot act on now, shows in a box with the time of the read, a line that an earlier step may have made or changed the VM, and **Read again**. The action button stays as it was after a failed read: pressing it asks HAW again.",
+          "publishedAt": "2026-11-23T16:02:30Z"
+        },
         {
           "version": "1.4.7",
           "api": "1",
