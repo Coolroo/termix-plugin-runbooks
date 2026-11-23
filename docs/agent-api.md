@@ -85,6 +85,8 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 | `when`                     | object or null  | When the step is needed, as a rule on earlier steps (1.4.6). See [Conditional steps](#conditional-steps).           |
 | `decision`                 | object or null  | A Decision step: options the person chooses from (1.4.6). See [Decision steps](#decision-steps).                    |
 | `interactive`              | boolean         | Run opens a terminal (pty), for sudo, ssh and other prompts (1.4.6). See [Typed input](#typed-input).               |
+| `sequence`                 | array or null   | Items one Run runs in order, instead of `command` (1.4.10). See [Sequences](#sequences).                            |
+| `workdir`                  | string or null  | An absolute folder the command, or each run item, starts in (1.4.10). See [Sequences](#sequences).                  |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Amend it instead (see [Amendments](#amendments)).
 
@@ -279,6 +281,93 @@ Each run has the results in the same order, as `checks: [{ "label", "ok", "detai
 ```
 
 A detail never repeats the output itself, so it is the same for a hidden step. A step that ran cannot change its checks: add a new step with the checks you want.
+
+### Sequences
+
+A step that Termix runs on a host may be a **sequence** of items instead of one command (1.4.10). One **Run** runs the items in order, as the person who pressed it, and the step card shows each item with its label, its type, the exact command (or the wait), its state (waiting, running, passed, failed, skipped) and the time it took. Use it instead of chaining commands with `&&` or `;`, and instead of `sleep` (see [No sleep in commands](#no-sleep-in-commands)).
+
+```json
+{
+  "title": "Deploy enforcarr",
+  "hostId": 3,
+  "workdir": "/mnt/sdd/services/media-server",
+  "sequence": [
+    {
+      "type": "run",
+      "label": "Deploy",
+      "command": "sudo paseo-deploy up media enforcarr"
+    },
+    { "type": "delay", "seconds": 30, "reason": "let the container start" },
+    {
+      "type": "run",
+      "label": "Health",
+      "command": "docker inspect -f {{.State.Health.Status}} enforcarr",
+      "checks": [{ "type": "contains", "text": "healthy" }]
+    },
+    {
+      "type": "run",
+      "label": "Report",
+      "command": "docker ps --filter name=enforcarr",
+      "onFail": "continue"
+    }
+  ]
+}
+```
+
+| Item    | Fields                                                                                                                                                                                  |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`   | `command` (required), `label`, `checks`, `captures`, `timeoutMs` (1000 to 600000), `onFail` (`"stop"`, the default, or `"continue"`) and `interactive`, each as for a one-command step. |
+| `delay` | `seconds` (1 to 3600), `label` and `reason`. A timer in Termix: nothing runs on the host. The person sees a countdown and may **Skip** it.                                              |
+
+- A sequence has 1 to 20 items and at least one `run` item. Other item types (`wait`, `container`, `unit`, `log`, `http`, `port`, `file`, `job`) come in a later version: they are refused with 400 `later-item` for now.
+- Each run item is a new shell on a connection of its own: `cd` and variables do not carry over. Set `workdir` on the step (an absolute path) and every run item runs as `cd -- '<workdir>' && <command>`; leave the `cd` out of the commands. `workdir` also works on a one-command step, whose command then shows and runs with the `cd` in front. It is for a POSIX shell (Linux, macOS); on a Windows host keep the `cd` in the command.
+- An item's `captures` fill `{{name}}` in the items after it, and in later steps once the step is done. Capture names are unique in a sequence. Before the run, the person sees such a name as written, with a line that it is filled from an earlier item.
+- An item fails when its command exits non-zero, times out, or a check fails. A failed item stops the sequence and fails the step, unless it has `"onFail": "continue"` (for a read-only report after the main work): then the failure is recorded and the next item runs. A step whose only failures were such items ends done.
+- **Stop** ends the item that runs, and the rest do not run. After a stop, a failure, or a Termix restart in the middle, the person can **Continue from item N**: a new run that carries the items that passed (they do not run again) and starts at the first item that did not. **Run** again starts from item 1, with the usual repeat question. Continue is refused with 409 `changed` when the sequence or its values changed since that run.
+- Before each item after the first, Runbooks checks that the person may still connect to the host; if not, the item fails and the sequence stops.
+- Not on a sequence step: `command`, `checks`, `captures`, `timeoutMs`, `interactive` (put them on the run items), `stdin`, `secretCaptures`, `where`, `owner: "agent"`, and `runIn: "terminal"` (a terminal runs one command; Send to terminal is refused for a sequence).
+- To make a one-command step a sequence with `update_step`, send `sequence` and `"command": null`.
+
+Each run of a sequence step has `items`, one record per item, in order:
+
+```json
+{
+  "position": 3,
+  "type": "run",
+  "label": "Health",
+  "command": "docker inspect -f ...",
+  "status": "failed",
+  "startedAt": "...",
+  "finishedAt": "...",
+  "plannedEndAt": null,
+  "exitCode": 0,
+  "stdout": "starting\n",
+  "stderr": "",
+  "checks": [
+    { "label": "the output contains 'healthy'", "ok": false, "detail": "..." }
+  ],
+  "captured": {},
+  "error": null,
+  "onFail": "stop",
+  "seconds": null,
+  "reason": null,
+  "skippedBy": null,
+  "fromRunId": null
+}
+```
+
+`status` is `waiting`, `running`, `passed`, `failed` or `skipped` (a delay the person skipped). A delay that runs has `plannedEndAt`. An item carried over by Continue has `fromRunId`, the run it passed in. The run itself has the items' output joined in `stdout` and `stderr` (what a later step's `stdin` or a `when` output rule reads), the captures of the items that passed, and an `error` such as `item 3 failed`. A step hidden from agents hides each item's output, captures and error as it hides a run's. You get one `step-done` or `step-failed` event when the step ends, not one per item.
+
+### No sleep in commands
+
+Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in every run item, when you create a runbook, add steps, change a step or amend one: 400 with `code` `sleep` and a message that points to the `delay` item. What counts as a wait:
+
+- `sleep` as a word followed by a duration, a variable, a quote or a parenthesis: `sleep 5`, `/usr/bin/sleep 0.5`, `sleep "$DELAY"`, `sleep infinity`, `bash -c 'sleep 5'`, `time.sleep(5)`.
+- `Start-Sleep`, with any arguments; `timeout /t <n>`; `ping -n <n>` to the host itself (127.0.0.1, localhost, ::1) or with its output thrown away (`>nul`, `> $null`).
+
+Not a wait: `sleep` inside a longer word (`sleeping`, `--no-sleep`, `sleep.target`), `sleep` followed by other words (`echo "time to sleep now"`), `timeout 30 curl ...` (a time limit), `docker compose up --wait`, and a `ping` that tests a network address. The text is read as it is, inside quotes too, so `echo "sleep 5 minutes"` is refused: reword it.
+
+Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too; a later version adds wait items that poll for you. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
 
 ### Wait timers
 
@@ -757,7 +846,7 @@ Connect the agent with the MCP config above, then ask for a runbook instead of a
 
 Good habits for the prompt:
 
-- Ask for one command per step, with an `expect` line, so each approval is small.
+- Ask for one command per step, with an `expect` line, so each approval is small. Where commands belong together, ask for a sequence (one run item each) instead of a chain with `&&`, and a `delay` item instead of `sleep`.
 - Ask for checks on each step that has an expected result, so a wrong result marks the step failed instead of passing unnoticed.
 - Ask for a wait timer where a step must wait after the one before it, instead of "wait two minutes" in the text.
 - Ask for checks before changes, and a check after each change.
