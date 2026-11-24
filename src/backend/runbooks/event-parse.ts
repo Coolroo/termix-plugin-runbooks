@@ -98,12 +98,84 @@ export function logPatternProblem(
   } catch {
     return `${field} is not a valid regular expression`;
   }
-  if (
-    /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,?\d*\})/.test(
-      pattern,
-    )
-  ) {
-    return `${field} has a repeated group that holds a repeat, such as (a+)+, which can make a match take very long; write it without the nesting`;
+  const nested = nestedRepeat(pattern);
+  if (nested === "repeat") {
+    return `${field} has a repeated group that holds a repeat, such as (a+)+ or ((a+))+, which can make a match take very long; write it without the nesting`;
+  }
+  if (nested === "alternation") {
+    return `${field} has a repeated group that holds alternatives, such as (a|aa)+, which can make a match take very long; write it without the repeat around the alternatives`;
+  }
+  return null;
+}
+
+/**
+ * The length of a quantifier that repeats (+, *, {n,}, {n,m} with m > 1,
+ * {n} with n > 1) at `at`, with its lazy "?"; 0 for none or for "?".
+ */
+function repeatAt(pattern: string, at: number): number {
+  const char = pattern[at];
+  let size = 0;
+  if (char === "+" || char === "*") size = 1;
+  else if (char === "{") {
+    const brace = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(at));
+    if (brace) {
+      const most = brace[2] === undefined ? Number(brace[1]) : brace[3];
+      if (most === "" || Number(most) > 1) size = brace[0].length;
+    }
+  }
+  if (size > 0 && pattern[at + size] === "?") size += 1;
+  return size;
+}
+
+/**
+ * Whether a repeated group holds a repeat or alternatives, at any depth
+ * (BUG-022 H1): (a+)+, ((a+))+, (a|a)+ and (a|aa)+ backtrack without end on
+ * a line that almost matches. The time limit (readers.ts) still stops any
+ * pattern this misses.
+ */
+function nestedRepeat(pattern: string): "repeat" | "alternation" | null {
+  const groups: Array<{ repeat: boolean; alternation: boolean }> = [
+    { repeat: false, alternation: false },
+  ];
+  let at = 0;
+  while (at < pattern.length) {
+    const char = pattern[at];
+    const top = groups[groups.length - 1];
+    if (char === "(") {
+      groups.push({ repeat: false, alternation: false });
+      at += 1;
+      continue;
+    }
+    if (char === "|") {
+      top.alternation = true;
+      at += 1;
+      continue;
+    }
+    if (char === ")" && groups.length > 1) {
+      const group = groups.pop()!;
+      const parent = groups[groups.length - 1];
+      const repeated = repeatAt(pattern, at + 1);
+      if (repeated > 0 && group.repeat) return "repeat";
+      if (repeated > 0 && group.alternation) return "alternation";
+      parent.repeat ||= group.repeat || repeated > 0;
+      parent.alternation ||= group.alternation;
+      at += 1 + repeated;
+      continue;
+    }
+    // One atom: an escape, a character class or a character.
+    if (char === "\\") at += 2;
+    else if (char === "[") {
+      at += 1;
+      if (pattern[at] === "^") at += 1;
+      if (pattern[at] === "]") at += 1;
+      while (at < pattern.length && pattern[at] !== "]") {
+        at += pattern[at] === "\\" ? 2 : 1;
+      }
+      at += 1;
+    } else at += 1;
+    const repeated = repeatAt(pattern, at);
+    if (repeated > 0) top.repeat = true;
+    at += repeated;
   }
   return null;
 }

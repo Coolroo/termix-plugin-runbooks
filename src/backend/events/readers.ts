@@ -15,6 +15,7 @@
  * code does, so free text from the host never goes into them.
  */
 
+import vm from "node:vm";
 import type {
   ContainerItemSpec,
   FileItemSpec,
@@ -338,27 +339,64 @@ export function readDockerLogs(
 }
 
 /**
+ * How long the patterns of one check may take on all its new lines. They
+ * run in a separate context with this limit, as captures and step checks
+ * do (BUG-022 H1): a pattern that backtracks without end on a line stops
+ * there, and Termix goes on.
+ */
+export const LOG_MATCH_TIME_LIMIT_MS = 250;
+
+/** The loop below, as it runs in the separate context. */
+const MATCH_LINES = `(() => {
+  const p = new RegExp(pattern, flags);
+  const f = fail === null ? null : new RegExp(fail, failFlags);
+  for (let i = 0; i < lines.length; i++) {
+    if (f !== null && f.test(lines[i])) return "fail";
+    if (p.test(lines[i])) return "pass";
+  }
+  return null;
+})()`;
+
+/**
  * Tests the new lines in order: the first that matches failPattern fails
  * the item, the first that matches pattern passes it. Each line is cut to
- * 4096 characters first.
+ * 4096 characters first. The patterns run in a separate context with a
+ * time limit: when they do not finish in time, the item fails.
  */
 export function matchLog(
   lines: string[],
   pattern: RegExp,
   failPattern: RegExp | null,
   seen: number,
+  timeLimitMs = LOG_MATCH_TIME_LIMIT_MS,
 ): Reading {
-  for (const line of lines) {
-    const text = line.slice(0, EVENT_LIMITS.logLine);
-    if (failPattern?.test(text)) {
-      return {
-        verdict: "fail",
-        result: "failPattern matched",
-        error: `a new log line matched failPattern /${failPattern.source}/`,
-      };
-    }
-    if (pattern.test(text)) return { verdict: "pass", result: "matched" };
+  const sandbox = vm.createContext({
+    lines: lines.map((line) => line.slice(0, EVENT_LIMITS.logLine)),
+    pattern: pattern.source,
+    flags: pattern.flags.replace(/[gy]/g, ""),
+    fail: failPattern?.source ?? null,
+    failFlags: failPattern?.flags.replace(/[gy]/g, "") ?? "",
+  });
+  let found: "pass" | "fail" | null;
+  try {
+    found = vm.runInContext(MATCH_LINES, sandbox, {
+      timeout: timeLimitMs,
+    }) as "pass" | "fail" | null;
+  } catch {
+    return {
+      verdict: "fail",
+      result: "pattern too slow",
+      error: `the log patterns took longer than ${timeLimitMs} ms on the new lines and were stopped: write pattern and failPattern so they cannot backtrack for long (no repeated group that holds a repeat or alternatives that match the same text)`,
+    };
   }
+  if (found === "fail") {
+    return {
+      verdict: "fail",
+      result: "failPattern matched",
+      error: `a new log line matched failPattern /${failPattern!.source}/`,
+    };
+  }
+  if (found === "pass") return { verdict: "pass", result: "matched" };
   const total = seen + lines.length;
   return {
     verdict: "wait",

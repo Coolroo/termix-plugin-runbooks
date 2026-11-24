@@ -1171,8 +1171,28 @@ export function createSequenceRunner(kit: PersonKit) {
     const since = await stepStart(runId, startedAt);
     const memory = newMemory();
     const line = where(step, target, position);
-    const hide = (text: string) => redact(text, hidden);
-    // A job streams its journal into the item across its checks.
+    // Secrets, and hidden input typed into an earlier item, are hidden in
+    // every text of the item, as in a run item's output (BUG-022 L4).
+    const known = [...hidden, ...context.typed];
+    const hide = (text: string) => redact(text, known);
+    // A job streams its journal into the item across its checks, through
+    // the same streaming redactor as a run item's output, before it is
+    // live or stored (BUG-022 H2); cut at the output limit.
+    const journal =
+      event.type === "job"
+        ? { redactor: createRedactor(known), bytes: 0, cut: false }
+        : null;
+    const streamJournal = (text: string) => {
+      if (!journal || journal.cut) return;
+      const shown = journal.redactor.push(text);
+      journal.bytes += Buffer.byteLength(shown);
+      if (journal.bytes > MAX_OUTPUT_BYTES) {
+        journal.cut = true;
+        live.truncated(runId);
+        return;
+      }
+      live.output(runId, "stdout", shown);
+    };
     if (event.type === "job") live.beginItem(runId, itemId);
     for (let attempt = 1; ; attempt++) {
       if (attempt > 1 && !(await stillAllowed(target))) {
@@ -1219,6 +1239,7 @@ export function createSequenceRunner(kit: PersonKit) {
         since,
         memory,
         position,
+        onOutput: journal ? streamJournal : undefined,
         timeoutMs: attemptTimeout(
           event.timeoutMs ?? EVENT_LIMITS.timeoutMs,
           endsAt,
@@ -1368,6 +1389,8 @@ export function createSequenceRunner(kit: PersonKit) {
       memory: EventMemory;
       position: number;
       timeoutMs: number;
+      /** A job's journal as it comes, secrets hidden already. */
+      onOutput?: (text: string) => void;
     },
   ): Promise<
     | { kind: "checked"; outcome: ProbeOutcome }
@@ -1405,7 +1428,7 @@ export function createSequenceRunner(kit: PersonKit) {
           url: string,
           init: Record<string, unknown>,
         ) => Promise<Response>,
-        onOutput: (text) => live.output(runId, "stdout", text),
+        onOutput: input.onOutput,
       });
       return { kind: "checked", outcome };
     } catch (error) {
