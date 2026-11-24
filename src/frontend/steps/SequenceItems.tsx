@@ -28,7 +28,7 @@ import {
   itemSchedule,
 } from "../../shared/sequence";
 import { eventWhat, isEventType, type EventType } from "../../shared/events";
-import { ChecksList, checksWords } from "./ChecksList";
+import { CapturesList, ChecksList, checksWords } from "./ChecksList";
 import { LiveOutput, Output } from "./output";
 import { AttemptPlan, AttemptProgress, EarlierAttempts } from "./Attempts";
 import type { StepActions } from "./StepButtons";
@@ -376,6 +376,8 @@ function ItemRow({
       {record && attempts && (
         <EarlierAttempts record={record} checks={checks} />
       )}
+      {/* BUG-022 L3: what reads the item's output, with its patterns. */}
+      {commandPlan && <CapturesList t={t} captures={commandPlan.captures} />}
     </li>
   );
 }

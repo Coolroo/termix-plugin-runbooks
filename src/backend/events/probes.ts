@@ -98,6 +98,12 @@ export interface EventMemory {
   lines: number;
   /** job: its unit started (Unix seconds), or null before. */
   jobStarted: number | null;
+  /**
+   * job: systemd-run was sent, and did not answer that it refused. A Stop
+   * or a time limit during systemd-run leaves jobStarted null while the
+   * unit may be running: the unit is stopped on this flag (BUG-022 L5).
+   */
+  jobStartSent: boolean;
   /** job: the journal so far, capped. */
   journal: string;
 }
@@ -109,6 +115,7 @@ export function newMemory(): EventMemory {
     lastLogTime: null,
     lines: 0,
     jobStarted: null,
+    jobStartSent: false,
     journal: "",
   };
 }
@@ -620,11 +627,35 @@ async function checkJob(
   const unit = jobUnit(item, input.runId, input.position);
   let started = "";
   if (memory.jobStarted === null) {
+    // Before the call: a Stop during it throws, and the unit may run.
+    memory.jobStartSent = true;
     const start = await exec(
       input,
       jobStartCommand(unit, item.command, input.workdir),
     );
+    if (start.timedOut) {
+      // systemd-run may have started it: stop it, as Stop would.
+      await exec(input, jobCleanupCommand(unit)).catch(() => {});
+      memory.jobStartSent = false;
+      return outcome(
+        {
+          verdict: "fail",
+          result: "not started in time",
+          error: `systemd-run did not answer in time; the unit ${unit} was stopped in case it started`,
+        },
+        {
+          stdout: start.stdout,
+          stderr: start.stderr,
+          exitCode: start.code,
+          truncated: start.truncated,
+          timedOut: true,
+        },
+      );
+    }
     if (start.code !== 0) {
+      // systemd-run refused it: no unit of this item runs (a loaded unit
+      // of that name is someone else's, and is not stopped).
+      memory.jobStartSent = false;
       const exists = /already loaded|already exists/i.test(start.stderr);
       const sudo = /^sudo: /m.test(start.stderr);
       return fromCommand(

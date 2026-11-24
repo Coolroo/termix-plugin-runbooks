@@ -1589,9 +1589,12 @@ export function createSequenceRunner(kit: PersonKit) {
   }
 
   /**
-   * Stops and unloads a job's unit when the item ends before the job did.
-   * Best effort: a host that cannot be reached keeps it running, and the
-   * item's words say the job ended without it.
+   * Stops and unloads a job's unit when the item ends before the job did,
+   * also when the item ended while systemd-run was starting it (BUG-022
+   * L5). Best effort: a host that cannot be reached keeps it running, and
+   * the item's words say the job ended without it. Termix or Runbooks
+   * stopping leaves it running, as docs/security.md says: the plugin is
+   * going away, and the person sees the item interrupted and the unit.
    */
   async function stopUnfinishedJob(
     step: StepRow,
@@ -1600,7 +1603,9 @@ export function createSequenceRunner(kit: PersonKit) {
     runId: number,
     position: number,
   ): Promise<void> {
-    if (event.type !== "job" || memory.jobStarted === null) return;
+    if (event.type !== "job") return;
+    if (memory.jobStarted === null && !memory.jobStartSent) return;
+    if (live.get(runId)?.interrupted) return;
     let connection: { client: ProbeClient; dispose: () => void } | null = null;
     try {
       connection = await ctx.ssh.connect<ProbeClient>(step.hostId!, {

@@ -180,6 +180,74 @@ describe("a sequence step's card", () => {
     );
   });
 
+  it("shows each item's checks, stopIf, captures, onFail and interactive before Run (BUG-022 L3)", async () => {
+    const sequence: SequenceItem[] = [
+      {
+        type: "run",
+        label: "Version",
+        command: "app --version",
+        checks: [{ type: "value", name: "ver", matches: "^[0-9.]+$" }],
+        captures: [{ name: "ver", pattern: "version=(\\S+)" }],
+        timeoutMs: null,
+        onFail: "continue",
+        interactive: true,
+      },
+      {
+        type: "wait",
+        label: "Healthy",
+        command: "status",
+        checks: [{ type: "contains", text: "healthy" }],
+        stopIf: [{ type: "contains", text: "FAILED" }],
+        captures: [],
+        timeoutMs: null,
+        onFail: "stop",
+        within: 600,
+        attempts: null,
+        every: 5,
+        backoff: "fixed",
+        factor: 2,
+        maxDelay: 300,
+        jitter: "none",
+      },
+    ];
+    const step = seqStep({
+      sequence,
+      resolvedSequence: sequence.map((each, index) => ({
+        ...each,
+        position: index + 1,
+        later: [],
+      })),
+    });
+    const { el } = await open(step);
+    // The card shows the capture's pattern.
+    expect(
+      el.querySelector('[data-item="1"] [data-confirm-captures]')!.textContent,
+    ).toContain("version=(\\S+)");
+    fireEvent.click(within(el).getByRole("button", { name: locales.step.run }));
+    const dialog = await screen.findByRole("alertdialog");
+    const first = dialog.querySelector('[data-confirm-item="1"]')!;
+    expect(first.querySelector("[data-checks]")!.textContent).toContain(
+      "^[0-9.]+$",
+    );
+    expect(
+      first.querySelector("[data-confirm-captures]")!.textContent,
+    ).toContain("version=(\\S+)");
+    expect(first.querySelector("[data-confirm-on-fail]")!.textContent).toBe(
+      locales.item.onFailContinue,
+    );
+    expect(first.querySelector("[data-confirm-interactive]")!.textContent).toBe(
+      locales.kind.mark.interactive,
+    );
+    const second = dialog.querySelector('[data-confirm-item="2"]')!;
+    expect(second.querySelector("[data-checks]")!.textContent).toContain(
+      "healthy",
+    );
+    expect(
+      second.querySelector("[data-confirm-stop-if]")!.textContent,
+    ).toContain("FAILED");
+    expect(second.querySelector("[data-confirm-on-fail]")).toBeNull();
+  });
+
   it("streams the running item's output and counts a delay down with Skip", async () => {
     const now = Date.now();
     const running = seqStep({

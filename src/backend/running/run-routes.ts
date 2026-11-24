@@ -351,6 +351,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
           code: "no-delay",
         });
       }
+      await mayHurry(record.runId);
       await record.skipDelay(actor());
       return shownRun(record.runId);
     }),
@@ -384,10 +385,35 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
           { code: "no-wait" },
         );
       }
+      await mayHurry(record.runId);
       await record.tryNow(actor());
       return shownRun(record.runId);
     }),
   );
+
+  /**
+   * Skip and Try now make the next item or attempt start sooner, on the
+   * host, as the person who pressed Run (BUG-022 L2): only that person, or
+   * a person who may connect to the host too, may press them. Stop needs
+   * neither: it only ends work.
+   */
+  async function mayHurry(runId: number): Promise<void> {
+    const run = await store.getRun(runId);
+    if (!run || run.userId === actor()) return;
+    const access =
+      run.hostId === null
+        ? { hasAccess: false }
+        : await kit.ctx.hosts
+            .checkAccess(run.hostId, "connect")
+            .catch(() => ({ hasAccess: false }));
+    if (!access.hasAccess) {
+      throw new InputError(
+        `only ${run.userId}, who started this run, or a person who can connect to its host can do this`,
+        403,
+        { code: "not-your-run" },
+      );
+    }
+  }
 
   /**
    * @openapi

@@ -41,6 +41,8 @@ import { isSshHost } from "../../shared/hosts.js";
 import { isOutsideStep, stepLabel } from "../../shared/steps.js";
 import type { RepeatConflict, RunSummary } from "../../shared/api.js";
 import { notNeededIds, type StepCondition } from "../conditions/conditions.js";
+import { BAN_SLEEP_SETTING, filledSleep, itemFilledSleep } from "./no-sleep.js";
+import { withWorkdir } from "../../shared/sequence.js";
 
 const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** How long a failed delete of a closed runbook's secrets waits to retry. */
@@ -260,6 +262,21 @@ export function createPersonKit(
     requireRevision(step, input);
     requireValues(resolved.missing);
     if (input.commandHash !== resolved.hash) throw staleProblem();
+    // A value that makes the command wait a fixed time (BUG-022 L6): the
+    // ban reads commands when written, and values only once filled in.
+    if ((await ctx.settings.get<boolean>(BAN_SLEEP_SETTING)) !== false) {
+      const sleep = resolved.items
+        ? step.sequence!.reduce<string | null>(
+            (found, item, index) =>
+              found ?? itemFilledSleep(item, resolved.items![index]),
+            null,
+          )
+        : filledSleep(
+            withWorkdir(step.command!, step.workdir),
+            resolved.command!,
+          );
+      if (sleep) throw new InputError(sleep, 400, { code: "sleep" });
+    }
     // Before the questions about order and repeats: no answer to them makes
     // a remote desktop host run a shell command.
     const host = await sshHostFor(
