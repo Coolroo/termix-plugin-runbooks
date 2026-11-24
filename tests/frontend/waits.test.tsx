@@ -169,10 +169,15 @@ function seqStep(overrides: Partial<Step> = {}): Step {
   });
 }
 
-async function open(step: Step, post = vi.fn(async () => ({ data: {} }))) {
+async function open(
+  step: Step,
+  post = vi.fn(async () => ({ data: {} })),
+  get?: (url: string) => unknown,
+) {
   const client = fakeApi({
     detail: () => makeRunbook([step], { title: "Mirror" }),
     post,
+    get,
   });
   await openRunbook(client, {
     title: "Mirror",
@@ -324,7 +329,13 @@ describe("a wait item and a retry on the step card", () => {
   });
 
   it("folds earlier attempts; each opens to its output and checks", async () => {
-    const { el } = await open(waiting(3, 5000));
+    // BUG-022 M2: the view gives attempts without output; an attempt's
+    // output is read when its fold opens.
+    const { el, client } = await open(waiting(3, 5000), undefined, (url) =>
+      url === "/runs/21/attempts/501"
+        ? { ...attempt(1, Date.now()), stdout: "mirror osv: RUNNING (1)\n" }
+        : undefined,
+    );
     const wait = el.querySelector('[data-item="2"]')!;
     const folded = wait.querySelector("[data-attempts-earlier]")!;
     expect(folded.hasAttribute("open")).toBe(false);
@@ -338,7 +349,16 @@ describe("a wait item and a retry on the step card", () => {
     const first = folded.querySelector('[data-attempt="1"]')!;
     expect(first.textContent).toContain("Attempt 1");
     expect(first.textContent).toContain(locales.attempts.why.check);
-    expect(first.textContent).toContain("mirror osv: RUNNING (1)");
+    // Nothing is read before the fold opens.
+    expect(client.get).not.toHaveBeenCalledWith("/runs/21/attempts/501");
+    expect(first.textContent).not.toContain("mirror osv: RUNNING (1)");
+    const fold = first.querySelector("details")!;
+    fold.open = true;
+    fireEvent(fold, new Event("toggle"));
+    await vi.waitFor(() =>
+      expect(first.textContent).toContain("mirror osv: RUNNING (1)"),
+    );
+    expect(client.get).toHaveBeenCalledWith("/runs/21/attempts/501");
     expect(
       first
         .querySelector("[data-check-state]")!

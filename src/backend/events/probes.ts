@@ -34,6 +34,7 @@ import {
   type LogItemSpec,
 } from "../../shared/events.js";
 import { streamExec, type ExecClient } from "../running/stream-exec.js";
+import { addressKind } from "./addresses.js";
 import { MAX_OUTPUT_BYTES } from "../running/runner.js";
 import {
   matchLog,
@@ -392,24 +393,17 @@ async function httpOverSsh(
   });
 }
 
-/** Addresses Termix must never reach for an author: its own, link-local. */
-function localOnly(address: string): boolean {
-  const lower = address.toLowerCase();
-  return (
-    /^127\./.test(lower) ||
-    lower === "::1" ||
-    /^0\./.test(lower) ||
-    lower === "::" ||
-    /^169\.254\./.test(lower) ||
-    /^fe[89ab][0-9a-f]:/.test(lower) ||
-    /^::ffff:127\./.test(lower)
-  );
-}
-
 /**
  * GET from Termix itself, through core's ctx.fetch: redirects are not
  * followed (a 301 is a status like any other), and the name must not lead
- * to Termix's own loopback or a link-local address. The same CAs.
+ * to Termix's own loopback, a link-local or unspecified address, or one of
+ * Termix's own addresses, in any spelling (addresses.ts). The same CAs.
+ *
+ * Only a private address gets core's allowPrivateHosts; for a public one,
+ * core's own check refuses any private answer when it connects. An address
+ * in the URL is the one core connects to. A name with a private address
+ * is resolved again by core, and ctx.fetch has no way to pin the address
+ * read here: docs/security.md says what that leaves (BUG-022 M4).
  */
 async function httpFromTermix(
   input: ProbeInput,
@@ -420,14 +414,16 @@ async function httpFromTermix(
     input.lookup ??
     ((name: string) => dns.lookup(name, { all: true, verbatim: true }));
   const addresses = net.isIP(host) ? [{ address: host }] : await lookup(host);
-  if (addresses.some((each) => localOnly(each.address))) {
+  const kinds = addresses.map((each) => addressKind(each.address));
+  if (kinds.length === 0 || kinds.includes("refused")) {
     throw Object.assign(
       new Error(
-        `${host} leads to a loopback or link-local address, which Termix does not reach for a runbook`,
+        `${host} leads to a loopback, link-local or unspecified address, or to Termix's own address, which Termix does not reach for a runbook`,
       ),
       { code: "local-address" },
     );
   }
+  const privateHost = kinds.includes("private");
   const cas = await input.cas();
   const controller = new AbortController();
   return bounded(input, async ({ cleanup }) => {
@@ -437,7 +433,7 @@ async function httpFromTermix(
       headers: { "User-Agent": "termix-runbooks", Accept: "*/*" },
       redirect: "manual",
       timeoutMs: input.timeoutMs,
-      allowPrivateHosts: [host],
+      ...(privateHost ? { allowPrivateHosts: [host] } : {}),
       signal: controller.signal,
       tls: { ca: cas.join("\n") },
     });

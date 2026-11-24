@@ -243,6 +243,21 @@ describe("the ban on sleep", () => {
     "ping -n 6 127.0.0.1 >nul",
     "ping -n 3 localhost",
     "ping 1.2.3.4 -n 5 > $null",
+    // BUG-022 L6: the gaps the 1.4.10 review found.
+    "sleep${IFS}5",
+    "sleep -- 5",
+    "s''leep 5",
+    "s\\leep 5",
+    '"sl"eep 5',
+    "read -t 5 x < /dev/zero",
+    "read -rt 5",
+    "timeout 5 tail -f /dev/null",
+    "timeout -s KILL 5 tail -f /dev/null",
+    "timeout 5s cat",
+    "timeout 10 journalctl -fu app.service",
+    "timeout 5 ping 1.1.1.1",
+    "ping -c 5 127.0.0.1",
+    "node -e 'await sleep(100)'",
   ];
   const allowed = [
     "docker compose up -d --wait",
@@ -255,6 +270,13 @@ describe("the ban on sleep", () => {
     "ping -c 3 192.168.1.1",
     "grep -r sleepy /var/log",
     "my-sleep-tool status",
+    // BUG-022 L6: not waits.
+    "systemctl status systemd-suspend sleep.target",
+    "timeout 5 ping -c 2 1.1.1.1",
+    "timeout 60 cat /etc/hosts",
+    "timeout 30 docker compose logs app",
+    "git log --format='%s' | cat",
+    "docker run --read-only -t app",
   ];
 
   it.each(refused)(
@@ -365,7 +387,11 @@ describe("running a sequence", () => {
           run("deploy app", { label: "Deploy" }),
           run("show version", {
             captures: [{ name: "ver", pattern: "version=(\\S+)" }],
-            checks: [{ type: "contains", text: "version=" }],
+            // BUG-022 M3: a captured value goes into a command with a pattern.
+            checks: [
+              { type: "contains", text: "version=" },
+              { type: "value", name: "ver", matches: "^[0-9.]+$" },
+            ],
           }),
           run("echo got {{ver}}"),
         ],
@@ -404,6 +430,7 @@ describe("running a sequence", () => {
       exitCode: 0,
     });
     expect(ran.body.items[1].checks).toEqual([
+      expect.objectContaining({ ok: true }),
       expect.objectContaining({ ok: true }),
     ]);
     expect(s.execCalls.map((call) => call.command)).toEqual([
@@ -669,7 +696,11 @@ describe("Continue from item N", () => {
   it("after a failure: the items that passed are carried, the rest run; values flow on", async () => {
     const { s, runbook } = await setupRunbook([
       seqStep([
-        run("make", { captures: [{ name: "id", pattern: "id=(\\d+)" }] }),
+        // BUG-022 M3: a captured value goes into a command with a pattern.
+        run("make", {
+          captures: [{ name: "id", pattern: "id=(\\d+)" }],
+          checks: [{ type: "value", name: "id", matches: "^\\d+$" }],
+        }),
         run("use {{id}}"),
         run("last"),
       ]),

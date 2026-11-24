@@ -23,7 +23,7 @@ import crypto from "node:crypto";
 import type { RunRow, StepRow } from "../runbooks/store/types.js";
 import type { EffectiveValue, RunMode } from "../../shared/api.js";
 import { escapePattern } from "../../shared/checks.js";
-import { stepCaptures } from "../values/effective.js";
+import { itemTextNames, stepCaptures } from "../values/effective.js";
 import { placeholders } from "../values/values.js";
 import { isAgentStep, stepValueNames } from "../../shared/steps.js";
 import { itemChecks, runItems } from "../../shared/sequence.js";
@@ -195,8 +195,10 @@ function unmaskedNames(
 
 /**
  * The values a step's command, checks and standard input read; for a
- * sequence (1.4.10), every run item's command and checks. An agent step's
- * checks read the values agents see, and Termix runs nothing of it.
+ * sequence (1.4.10), every run item's command and checks, and every event
+ * item's text fields (a job's command, an http URL, a path: BUG-022 M1),
+ * as resolveItem fills them. An agent step's checks read the values agents
+ * see, and Termix runs nothing of it.
  */
 function readNames(
   step: Pick<StepRow, "owner" | "command" | "checks" | "stdin" | "sequence">,
@@ -207,7 +209,7 @@ function readNames(
   const checks = [...step.checks, ...items.flatMap(itemChecks)];
   return [
     ...placeholders(step.command),
-    ...items.flatMap((item) => placeholders(item.command)),
+    ...(step.sequence ?? []).flatMap(itemTextNames),
     ...placeholders(JSON.stringify(checks)),
     ...checks.flatMap((check) => (check.type === "value" ? [check.name] : [])),
     ...(step.stdin?.from === "value" ? [step.stdin.name] : []),

@@ -439,7 +439,12 @@ function kind(mode: number): "file" | "directory" | "other" {
   return type === 0o100000 ? "file" : type === 0o040000 ? "directory" : "other";
 }
 
-/** The verdict of a path that is there, with its kind and size. */
+/**
+ * The verdict of a path that is there, with its kind and size. The words
+ * hold no size, only whether it is empty (which state "nonEmpty" tells
+ * anyway): they show on a hidden step, and a secret file's size is its
+ * length (BUG-022 L1). The size is in the check's stdout, hidden there.
+ */
 function present(
   state: FileItemSpec["state"],
   what: "file" | "directory" | "other",
@@ -448,7 +453,7 @@ function present(
   const result =
     what === "directory"
       ? "directory exists"
-      : `${what === "file" ? "file" : "path"} exists, ${size} byte${size === 1 ? "" : "s"}`;
+      : `${what === "file" ? "file" : "path"} exists${size === 0 ? ", empty" : ""}`;
   if (state === "gone") return { verdict: "wait", result };
   if (state === "exists") return { verdict: "pass", result };
   if (what === "directory") {

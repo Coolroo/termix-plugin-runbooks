@@ -7,7 +7,8 @@
  * is the item's own (SequenceItems shows it).
  */
 
-import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
+import { useEffect, useState } from "react";
+import { usePluginApi, useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { Button, cn } from "@termix-ssh/plugin-sdk/ui";
 import type { Translate } from "../../shared/step-kinds";
 import type { Schedule, SchedulePlan } from "../../shared/schedule";
@@ -212,6 +213,138 @@ export function AttemptProgress({
 }
 
 /**
+ * An earlier attempt's output, read when its fold opens (BUG-022 M2): the
+ * runbook's view gives attempts without output. An earlier attempt keeps
+ * only the last 4 KB of each stream.
+ */
+function AttemptOutput({
+  runId,
+  attemptId,
+}: {
+  runId: number;
+  attemptId: number;
+}) {
+  const { t } = useTranslation();
+  const api = usePluginApi();
+  const [read, setRead] = useState<
+    | { state: "loading" }
+    | { state: "failed"; error: string }
+    | { state: "read"; attempt: RunAttempt }
+  >({ state: "loading" });
+  useEffect(() => {
+    let current = true;
+    api
+      .get<RunAttempt>(`/runs/${runId}/attempts/${attemptId}`)
+      .then(({ data }) => {
+        if (current) setRead({ state: "read", attempt: data });
+      })
+      .catch((error: unknown) => {
+        if (current) {
+          setRead({
+            state: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [api, runId, attemptId]);
+  if (read.state === "loading") {
+    return (
+      <p className="mt-1 text-muted-foreground" data-attempt-loading>
+        {t("attempts.loadingOutput")}
+      </p>
+    );
+  }
+  if (read.state === "failed") {
+    return (
+      <p className="mt-1 text-destructive" data-attempt-output-failed>
+        {t("attempts.outputFailed", { error: read.error })}
+      </p>
+    );
+  }
+  const { stdout, stderr, truncated } = read.attempt;
+  if (!stdout && !stderr) {
+    return (
+      <p className="mt-1 text-muted-foreground" data-attempt-no-output>
+        {t("attempts.noOutput")}
+      </p>
+    );
+  }
+  return (
+    <div data-attempt-output>
+      {truncated && (
+        <p className="mt-1 text-muted-foreground">{t("attempts.tailOnly")}</p>
+      )}
+      <Output label={t("run.stdout")} text={stdout} />
+      <Output label={t("run.stderr")} text={stderr} />
+    </div>
+  );
+}
+
+/** One earlier attempt, folded; its output is read once it opens. */
+function EarlierAttempt({
+  record,
+  attempt,
+  checks,
+}: {
+  record: RunItem;
+  attempt: RunAttempt;
+  checks: Check[];
+}) {
+  const { t } = useTranslation();
+  const [opened, setOpened] = useState(false);
+  const state = dotState(attempt, record.type);
+  const took =
+    attempt.finishedAt &&
+    formatDuration(
+      Date.parse(attempt.finishedAt) - Date.parse(attempt.startedAt),
+    );
+  const matched = (attempt.stopIf ?? []).filter((each) => each.ok);
+  return (
+    <li data-attempt={attempt.attempt}>
+      <details
+        onToggle={(event) => {
+          if (event.currentTarget.open) setOpened(true);
+        }}
+      >
+        <summary className="cursor-pointer">
+          <span
+            className={cn(
+              "mr-1 inline-block size-2 rounded-full",
+              DOT_CLASS[state],
+            )}
+          />
+          {t("attempts.attempt", { attempt: attempt.attempt })}
+          <span className="text-muted-foreground">
+            {" · "}
+            {whyText(t, attempt) ?? t(`attempts.dot.${state}`)}
+            {took ? ` · ${took}` : ""}
+          </span>
+        </summary>
+        {attempt.error && (
+          <p className="mt-1 text-destructive">{attempt.error}</p>
+        )}
+        {matched.map((each, index) => (
+          <p key={index} className="mt-1 text-destructive" data-stop-if-matched>
+            {t("attempts.stopIfMatched", { label: each.label })}
+          </p>
+        ))}
+        {opened && (
+          <AttemptOutput runId={record.runId} attemptId={attempt.id} />
+        )}
+        <ChecksList
+          checks={checks}
+          results={attempt.checks}
+          words={checksWords(t)}
+        />
+      </details>
+    </li>
+  );
+}
+
+/**
  * The attempts before the last one, folded: each opens to its output, its
  * check results and a stopIf match. The last attempt is the item's own
  * output and checks.
@@ -232,54 +365,14 @@ export function EarlierAttempts({
         {t("attempts.earlier", { count: earlier.length })}
       </summary>
       <ol className="mt-1 flex flex-col gap-1 border-l border-border pl-2">
-        {[...earlier].reverse().map((attempt) => {
-          const state = dotState(attempt, record.type);
-          const took =
-            attempt.finishedAt &&
-            formatDuration(
-              Date.parse(attempt.finishedAt) - Date.parse(attempt.startedAt),
-            );
-          const matched = (attempt.stopIf ?? []).filter((each) => each.ok);
-          return (
-            <li key={attempt.attempt} data-attempt={attempt.attempt}>
-              <details>
-                <summary className="cursor-pointer">
-                  <span
-                    className={cn(
-                      "mr-1 inline-block size-2 rounded-full",
-                      DOT_CLASS[state],
-                    )}
-                  />
-                  {t("attempts.attempt", { attempt: attempt.attempt })}
-                  <span className="text-muted-foreground">
-                    {" · "}
-                    {whyText(t, attempt) ?? t(`attempts.dot.${state}`)}
-                    {took ? ` · ${took}` : ""}
-                  </span>
-                </summary>
-                {attempt.error && (
-                  <p className="mt-1 text-destructive">{attempt.error}</p>
-                )}
-                {matched.map((each, index) => (
-                  <p
-                    key={index}
-                    className="mt-1 text-destructive"
-                    data-stop-if-matched
-                  >
-                    {t("attempts.stopIfMatched", { label: each.label })}
-                  </p>
-                ))}
-                <Output label={t("run.stdout")} text={attempt.stdout} />
-                <Output label={t("run.stderr")} text={attempt.stderr} />
-                <ChecksList
-                  checks={checks}
-                  results={attempt.checks}
-                  words={checksWords(t)}
-                />
-              </details>
-            </li>
-          );
-        })}
+        {[...earlier].reverse().map((attempt) => (
+          <EarlierAttempt
+            key={attempt.attempt}
+            record={record}
+            attempt={attempt}
+            checks={checks}
+          />
+        ))}
       </ol>
     </details>
   );

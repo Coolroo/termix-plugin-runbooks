@@ -130,5 +130,53 @@ export function createReads(
     return { runbookId, values: agentValues(bundle) };
   }
 
-  return { getRunbook, listEvents, listRunbooks, getValues };
+  /**
+   * One attempt of a wait or retried item, with its output (BUG-022 M2):
+   * the runbook's view gives attempts without it. Masked exactly as the
+   * runbook's view masks the attempt: it is taken from that same view.
+   */
+  async function getAttempt(
+    caller: AgentCaller,
+    runbookId: number,
+    query: { runId?: unknown; item?: unknown; attempt?: unknown },
+  ) {
+    await ownRunbook(caller, runbookId);
+    const number = (value: unknown, name: string) => {
+      const parsed = typeof value === "string" ? Number(value) : value;
+      if (!Number.isInteger(parsed) || (parsed as number) < 1) {
+        throw new InputError(`${name} must be a whole number from 1`);
+      }
+      return parsed as number;
+    };
+    const runId = number(query.runId, "runId");
+    const position = number(query.item, "item");
+    const attempt = number(query.attempt, "attempt");
+    const item = (await store.listRunItems({ runbookId, runId })).find(
+      (each) => each.position === position,
+    );
+    const row = item
+      ? (
+          await store.listRunAttempts({ itemId: item.id }, { output: false })
+        ).find((each) => each.attempt === attempt)
+      : undefined;
+    if (!row) throw new InputError("attempt not found", 404);
+    const bundle = (await loadBundle(
+      store,
+      runbookId,
+      live,
+      undefined,
+      row.id,
+    ))!;
+    const view = agentView(bundle, await hostNamer(caller));
+    for (const step of view.steps) {
+      const shown = step.runs
+        .find((run) => run.id === runId)
+        ?.items?.find((each) => each.position === position)
+        ?.attempts?.find((each) => each.attempt === attempt);
+      if (shown) return { runbookId, runId, item: position, ...shown };
+    }
+    throw new InputError("attempt not found", 404);
+  }
+
+  return { getRunbook, listEvents, listRunbooks, getValues, getAttempt };
 }

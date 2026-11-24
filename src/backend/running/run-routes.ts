@@ -2,7 +2,7 @@
 
 import type { Router } from "express";
 import { InputError } from "../core/errors.js";
-import { body, wrap } from "../core/http.js";
+import { body, idParam, wrap } from "../core/http.js";
 import { optionalText, parseOutcome } from "../core/parse.js";
 import { now } from "../runbooks/store/store.js";
 import {
@@ -69,6 +69,34 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
   } = kit;
   const { readStdin, madeSecretTexts, finishRun, execute } = createRunner(kit);
   const sequences = createSequenceRunner(kit);
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/runs/{id}/attempts/{attemptId}:
+   *   get:
+   *     summary: One attempt of a wait or retried item, with its output
+   *     description: >
+   *       1.4.10 (BUG-022 M2). The runbook's views read attempts without
+   *       their output; the page reads one attempt's output here when the
+   *       person opens it. Secrets in it are hidden as in any run output.
+   *       An earlier attempt keeps only the last 4 KB of each stream.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The attempt }
+   *       404: { description: No such attempt in this run }
+   */
+  router.get(
+    "/runs/:id/attempts/:attemptId",
+    ...kit.use,
+    wrap(async (req) => {
+      const runId = pathId(req);
+      const attemptId = idParam(req, "attempt not found", "attemptId");
+      const [attempt] = await store.listRunAttempts({ id: attemptId, runId });
+      if (!attempt) throw new InputError("attempt not found", 404);
+      const { runId: _runId, runbookId: _runbookId, ...shown } = attempt;
+      return shown;
+    }),
+  );
 
   /**
    * @openapi

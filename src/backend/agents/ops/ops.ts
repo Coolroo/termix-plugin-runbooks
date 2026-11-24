@@ -70,6 +70,7 @@ export function createAgentOps(
     removeStep: authoring.removeStep,
     reorderSteps: authoring.reorderSteps,
     getValues: reads.getValues,
+    getAttempt: reads.getAttempt,
     completeAgentStep: complete.completeAgentStep,
     amendStep: complete.amendStep,
     listEvents: reads.listEvents,

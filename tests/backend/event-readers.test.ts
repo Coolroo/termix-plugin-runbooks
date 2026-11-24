@@ -309,11 +309,11 @@ describe("file: SFTP stat and sudo stat", () => {
   it("reads ssh2's stat attributes", () => {
     expect(readSftpStat(sftp.file, "exists")).toEqual({
       verdict: "pass",
-      result: "file exists, 13 bytes",
+      result: "file exists",
     });
     expect(readSftpStat(sftp.empty, "nonEmpty")).toEqual({
       verdict: "wait",
-      result: "file exists, 0 bytes",
+      result: "file exists, empty",
     });
     expect(readSftpStat(sftp.file, "nonEmpty").verdict).toBe("pass");
     expect(readSftpStat(sftp.dir, "exists").result).toBe("directory exists");
@@ -338,9 +338,7 @@ describe("file: SFTP stat and sudo stat", () => {
 
   it("reads stat -c '%s %F' and its errors", () => {
     const stat = fixtures.stat;
-    expect(readSudoStat(stat.file, "exists").result).toBe(
-      "file exists, 6 bytes",
-    );
+    expect(readSudoStat(stat.file, "exists").result).toBe("file exists");
     expect(readSudoStat(stat.empty, "nonEmpty").verdict).toBe("wait");
     expect(readSudoStat(stat.dir, "exists").result).toBe("directory exists");
     expect(readSudoStat(stat.nosuch, "gone").verdict).toBe("pass");

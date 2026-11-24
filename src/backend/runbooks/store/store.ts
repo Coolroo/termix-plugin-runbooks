@@ -8,6 +8,7 @@ import {
   asc,
   desc,
   eq,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -499,14 +500,20 @@ export async function createStore(db: PluginDatabase) {
 
   /**
    * Attempts of a runbook, a run, an item or in a status, by item then
-   * attempt number.
+   * attempt number. With `output: false`, stdout and stderr are not read
+   * (null): the views load an attempt's output only on request (BUG-022
+   * M2).
    */
-  async function listRunAttempts(filter: {
-    runbookId?: number;
-    runId?: number;
-    itemId?: number;
-    status?: RunAttemptRow["status"];
-  }): Promise<RunAttemptRow[]> {
+  async function listRunAttempts(
+    filter: {
+      runbookId?: number;
+      runId?: number;
+      itemId?: number;
+      status?: RunAttemptRow["status"];
+      id?: number;
+    },
+    options: { output?: boolean } = {},
+  ): Promise<RunAttemptRow[]> {
     const conditions: SQL[] = [];
     if (filter.runbookId !== undefined) {
       conditions.push(eq(runAttempts.runbookId, filter.runbookId));
@@ -520,10 +527,18 @@ export async function createStore(db: PluginDatabase) {
     if (filter.status !== undefined) {
       conditions.push(eq(runAttempts.status, filter.status));
     }
+    if (filter.id !== undefined) {
+      conditions.push(eq(runAttempts.id, filter.id));
+    }
+    const drizzle = await client();
+    const {
+      stdout: _stdout,
+      stderr: _stderr,
+      ...short
+    } = getTableColumns(runAttempts);
     const rows = await (
-      await client()
+      options.output === false ? drizzle.select(short) : drizzle.select()
     )
-      .select()
       .from(runAttempts)
       .where(allOf(conditions))
       .orderBy(asc(runAttempts.itemId), asc(runAttempts.attempt));

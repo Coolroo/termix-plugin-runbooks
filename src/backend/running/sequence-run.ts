@@ -36,14 +36,20 @@ import { now } from "../runbooks/store/store.js";
 import type { PersonKit } from "../runbooks/person-kit.js";
 import { LIMITS } from "../runbooks/parse.js";
 import type { RunbookBundle } from "../runbooks/view.js";
-import { resolveItem, valuesObject } from "../values/effective.js";
-import type { Values } from "../values/values.js";
+import {
+  itemTextNames,
+  resolveItem,
+  valuesObject,
+} from "../values/effective.js";
+import { valuePattern } from "../runbooks/captured-reads.js";
+import { matchesWhole, type Values } from "../values/values.js";
 import { judgeOutput, type Check, type Judgement } from "../checks/checks.js";
 import type { FailReason } from "../agents/events.js";
 import { stepLabel } from "../../shared/steps.js";
 import { MIN_HIDDEN_CHARS } from "../../shared/limits.js";
 import { SCHEDULE_LIMITS, secondsWords } from "../../shared/schedule.js";
 import {
+  isCommandItem,
   isEventItem,
   itemSchedule,
   withWorkdir,
@@ -71,6 +77,7 @@ import {
 import { readPlatform } from "../events/readers.js";
 import { HTTP_CA_SETTING, trustedCas } from "../events/trust.js";
 import { filledEventProblem } from "../runbooks/event-parse.js";
+import { BAN_SLEEP_SETTING, itemFilledSleep } from "../runbooks/no-sleep.js";
 import {
   INTERACTIVE_PTY,
   streamExec,
@@ -78,6 +85,12 @@ import {
   type StreamExecResult,
 } from "./stream-exec.js";
 import { createRedactor, redact, type SecretText } from "./redact.js";
+import {
+  bytesOf,
+  OUTPUT_LIMITS,
+  OutputBudget,
+  tailOf,
+} from "./output-limits.js";
 import { cleanedCopies, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
 import { errorText, hasError, noErrorParts } from "./run-error.js";
 import {
@@ -131,6 +144,56 @@ interface ItemContext {
   values: Values;
   hidden: SecretText[];
   typed: SecretText[];
+  /** The ban on sleep is on (no-sleep.ts): it reads filled values too. */
+  banSleep: boolean;
+  /** What the run may still keep of output (output-limits.ts). */
+  output: OutputBudget;
+  /** The step's items, as written. */
+  sequence: readonly SequenceItem[];
+}
+
+/**
+ * A value an earlier item captured that does not match, as a whole, the
+ * pattern its item checks it with (BUG-022 M3): the item's own check
+ * reads the pattern per line, so "1.2" and a second line pass it. Null
+ * when each does, or when its item has no pattern (a runbook written
+ * before the rule).
+ */
+function unmatchedCapture(
+  written: SequenceItem,
+  context: ItemContext,
+): string | null {
+  for (const name of itemTextNames(written)) {
+    const value = context.values[name];
+    if (value === undefined) continue;
+    const capturer = context.sequence
+      .slice(0, context.position - 1)
+      .filter(isCommandItem)
+      .findLast((item) => item.captures.some((each) => each.name === name));
+    const pattern = capturer ? valuePattern(capturer.checks, name) : null;
+    if (pattern === null) continue;
+    if (matchesWhole(pattern, value) !== true) {
+      return `value ${name}, captured by an earlier item, does not match /${pattern}/ as a whole: it does not go into this item's command`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why an item with its values filled in does not start, or null: a value
+ * an earlier item captures is not there or does not match its pattern, or
+ * a value makes its command wait a fixed time (BUG-022 L6).
+ */
+function notRunnable(
+  written: SequenceItem,
+  filled: SequenceItem & { missing: string[] },
+  context: ItemContext,
+): string | null {
+  if (filled.missing.length > 0) return NOT_CAPTURED;
+  return (
+    unmatchedCapture(written, context) ??
+    (context.banSleep ? itemFilledSleep(written, filled) : null)
+  );
 }
 
 /** How one command ended: run to its end, or not run (no connection). */
@@ -223,7 +286,7 @@ export function createSequenceRunner(kit: PersonKit) {
           id: _id,
           runId: _runId,
           lastOutputAt: _last,
-          attempts,
+          attempts: _attempts,
           ...kept
         } = carried;
         const itemId = await store.insertRunItem({
@@ -233,8 +296,17 @@ export function createSequenceRunner(kit: PersonKit) {
           runbookId: step.runbookId,
           fromRunId: carried.fromRunId ?? previous!.run.id,
         });
-        for (const attempt of attempts ?? []) {
-          const { id: _attemptId, ...record } = attempt;
+        // With their output: the views read attempts without it (M2).
+        for (const attempt of await store.listRunAttempts({
+          itemId: carried.id,
+        })) {
+          const {
+            id: _attemptId,
+            runId: _fromRun,
+            runbookId: _fromRunbook,
+            itemId: _fromItem,
+            ...record
+          } = attempt;
           await store.insertRunAttempt({
             ...record,
             itemId,
@@ -324,6 +396,10 @@ export function createSequenceRunner(kit: PersonKit) {
     const slow: string[] = [];
     let failure: { position: number; end: ItemEnd } | null = null;
     try {
+      // What the run keeps of output, across its items (M2).
+      const output = new OutputBudget();
+      const banSleep =
+        (await ctx.settings.get<boolean>(BAN_SLEEP_SETTING)) !== false;
       for (let index = state.from; index < sequence.length; index++) {
         const item = sequence[index];
         const itemId = state.itemIds[index];
@@ -359,6 +435,9 @@ export function createSequenceRunner(kit: PersonKit) {
           values: state.values,
           hidden: state.hidden,
           typed,
+          banSleep,
+          sequence,
+          output,
         };
         const end =
           item.type === "delay"
@@ -701,15 +780,16 @@ export function createSequenceRunner(kit: PersonKit) {
       throw new Error("not a command item");
     }
     const startedAt = now();
-    if (resolved.missing.length > 0) {
+    const refused = notRunnable(item, resolved, context);
+    if (refused) {
       await store.updateRunItem(itemId, {
         status: "failed",
         startedAt,
         finishedAt: startedAt,
         command: resolved.command,
-        error: NOT_CAPTURED,
+        error: refused,
       });
-      return { passed: false, reason: "exit", error: NOT_CAPTURED, slow: [] };
+      return { passed: false, reason: "exit", error: refused, slow: [] };
     }
     await store.updateRunItem(itemId, {
       status: "running",
@@ -731,12 +811,13 @@ export function createSequenceRunner(kit: PersonKit) {
       const why = record.stoppedBy
         ? `stopped by ${record.stoppedBy}`
         : (record.interrupted ?? executed.message);
+      const kept = context.output.take(executed.stdout, executed.stderr);
       await store.updateRunItem(itemId, {
         status: "failed",
         finishedAt: now(),
-        stdout: executed.stdout,
-        stderr: executed.stderr,
-        truncated: executed.truncated,
+        stdout: kept.stdout,
+        stderr: kept.stderr,
+        truncated: executed.truncated || kept.cut,
         error: redact(why, executed.hiddenAll),
       });
       live.endItem(runId);
@@ -768,13 +849,17 @@ export function createSequenceRunner(kit: PersonKit) {
       result,
       executed.hiddenAll,
     );
+    const kept = context.output.take(
+      redact(result.stdout, judged.hide),
+      redact(result.stderr, judged.hide),
+    );
     await store.updateRunItem(itemId, {
       status: passed ? "passed" : "failed",
       finishedAt: now(),
       exitCode: result.code,
-      stdout: redact(result.stdout, judged.hide),
-      stderr: redact(result.stderr, judged.hide),
-      truncated: result.truncated,
+      stdout: kept.stdout,
+      stderr: kept.stderr,
+      truncated: result.truncated || kept.cut,
       timedOut: result.timedOut,
       checks: judged.results,
       captured: passed ? judged.captured : {},
@@ -830,15 +915,16 @@ export function createSequenceRunner(kit: PersonKit) {
       throw new Error("not a command item");
     }
     const startedAt = now();
-    if (resolved.missing.length > 0) {
+    const refused = notRunnable(item, resolved, context);
+    if (refused) {
       await store.updateRunItem(itemId, {
         status: "failed",
         startedAt,
         finishedAt: startedAt,
         command: resolved.command,
-        error: NOT_CAPTURED,
+        error: refused,
       });
-      return { passed: false, reason: "exit", error: NOT_CAPTURED, slow: [] };
+      return { passed: false, reason: "exit", error: refused, slow: [] };
     }
     const most = maxAttempts(schedule.attempts);
     const within = Math.min(
@@ -857,6 +943,9 @@ export function createSequenceRunner(kit: PersonKit) {
     const line = where(step, target, position);
     const stopIf = resolved.type === "wait" ? resolved.stopIf : [];
     const timeoutMs = item.timeoutMs ?? LIMITS.timeoutDefault;
+    // The attempt before this one, and what the earlier ones keep (M2).
+    let lastAttemptId: number | null = null;
+    const earlier = { bytes: 0 };
     for (let attempt = 1; ; attempt++) {
       if (attempt > 1 && !(await stillAllowed(target))) {
         await store.updateRunItem(itemId, {
@@ -874,6 +963,9 @@ export function createSequenceRunner(kit: PersonKit) {
         );
         live.endItem(runId);
         return noAccessEnd();
+      }
+      if (lastAttemptId !== null) {
+        await shrinkAttempt(lastAttemptId, earlier, context.output);
       }
       live.beginItem(runId, itemId);
       const attemptStart = now();
@@ -906,6 +998,7 @@ export function createSequenceRunner(kit: PersonKit) {
         attemptTimeout(timeoutMs, endsAt, Date.now()),
         context,
       );
+      lastAttemptId = attemptId;
       const ended = await endAttempt(
         runId,
         item,
@@ -913,6 +1006,7 @@ export function createSequenceRunner(kit: PersonKit) {
         executed,
         resolved.checks,
         stopIf,
+        context.output,
       );
       if (ended.why === null) {
         Object.assign(values, ended.captured);
@@ -996,6 +1090,37 @@ export function createSequenceRunner(kit: PersonKit) {
   }
 
   /**
+   * An attempt that is no longer the last one keeps only the end of its
+   * output (output-limits.ts, BUG-022 M2): 4 KB per stream, while the
+   * item's earlier attempts keep less than 256 KB together; none after
+   * that. Its exit code, checks, state and why stay.
+   */
+  async function shrinkAttempt(
+    attemptId: number,
+    earlier: { bytes: number },
+    budget: OutputBudget,
+  ): Promise<void> {
+    const [row] = await store.listRunAttempts({ id: attemptId });
+    if (!row) return;
+    const room = Math.max(0, OUTPUT_LIMITS.itemEarlier - earlier.bytes);
+    const each = Math.min(OUTPUT_LIMITS.earlierTail, Math.floor(room / 2));
+    const stdout = tailOf(row.stdout, each);
+    const stderr = tailOf(row.stderr, each);
+    if (!stdout.cut && !stderr.cut) {
+      earlier.bytes += bytesOf(row.stdout) + bytesOf(row.stderr);
+      return;
+    }
+    const kept = bytesOf(stdout.text) + bytesOf(stderr.text);
+    earlier.bytes += kept;
+    budget.giveBack(bytesOf(row.stdout) + bytesOf(row.stderr) - kept);
+    await store.updateRunAttempt(attemptId, {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated: true,
+    });
+  }
+
+  /**
    * Writes an ended attempt: its record, and the item's last output, exit
    * code and checks. Returns why it did not pass (null: it passed), with
    * the captures of a pass.
@@ -1007,6 +1132,7 @@ export function createSequenceRunner(kit: PersonKit) {
     executed: Executed,
     checks: Check[],
     stopIf: Check[],
+    budget: OutputBudget,
   ): Promise<{
     why: AttemptWhy | null;
     error: string | null;
@@ -1027,11 +1153,12 @@ export function createSequenceRunner(kit: PersonKit) {
         why === "stopped"
           ? `stopped by ${record.stoppedBy}`
           : (record.interrupted ?? executed.message);
+      const kept = budget.take(executed.stdout, executed.stderr);
       const output = {
         exitCode: null,
-        stdout: executed.stdout,
-        stderr: executed.stderr,
-        truncated: executed.truncated,
+        stdout: kept.stdout,
+        stderr: kept.stderr,
+        truncated: executed.truncated || kept.cut,
         timedOut: false,
         checks: null,
       };
@@ -1088,11 +1215,15 @@ export function createSequenceRunner(kit: PersonKit) {
       checksPassed: exited && judged.final === "done",
       stopMatched: matched !== null,
     });
+    const kept = budget.take(
+      redact(result.stdout, judged.hide),
+      redact(result.stderr, judged.hide),
+    );
     const output = {
       exitCode: result.code,
-      stdout: redact(result.stdout, judged.hide),
-      stderr: redact(result.stderr, judged.hide),
-      truncated: result.truncated,
+      stdout: kept.stdout,
+      stderr: kept.stderr,
+      truncated: result.truncated || kept.cut,
       timedOut: result.timedOut,
       checks: judged.results,
     };
@@ -1146,7 +1277,8 @@ export function createSequenceRunner(kit: PersonKit) {
     const startedAt = now();
     const what = eventWhat(event, await nameOf(target.hostId), runId, position);
     const problem =
-      missing.length > 0 ? NOT_CAPTURED : filledEventProblem(event);
+      notRunnable(item, { ...event, missing }, context) ??
+      filledEventProblem(event);
     if (problem) {
       await store.updateRunItem(itemId, {
         status: "failed",
@@ -1194,6 +1326,9 @@ export function createSequenceRunner(kit: PersonKit) {
       live.output(runId, "stdout", shown);
     };
     if (event.type === "job") live.beginItem(runId, itemId);
+    // The check before this one, and what the earlier ones keep (M2).
+    let lastAttemptId: number | null = null;
+    const earlier = { bytes: 0 };
     for (let attempt = 1; ; attempt++) {
       if (attempt > 1 && !(await stillAllowed(target))) {
         await stopUnfinishedJob(step, event, memory, runId, position);
@@ -1212,6 +1347,9 @@ export function createSequenceRunner(kit: PersonKit) {
         );
         live.endItem(runId);
         return noAccessEnd();
+      }
+      if (lastAttemptId !== null) {
+        await shrinkAttempt(lastAttemptId, earlier, context.output);
       }
       if (event.type !== "job") live.beginItem(runId, itemId);
       await store.updateRunItem(itemId, { nextAttemptAt: null });
@@ -1235,6 +1373,7 @@ export function createSequenceRunner(kit: PersonKit) {
         result: null,
       });
       await store.persist(true);
+      lastAttemptId = attemptId;
       const checked = await checkOnce(runId, step, event, {
         since,
         memory,
@@ -1270,11 +1409,15 @@ export function createSequenceRunner(kit: PersonKit) {
             : checked.kind === "connect"
               ? checked.message
               : (got?.error ?? null);
+      const kept = context.output.take(
+        got ? hide(got.stdout) : null,
+        got ? hide(got.stderr) : null,
+      );
       const output = {
         exitCode: got?.exitCode ?? null,
-        stdout: got ? hide(got.stdout) : null,
-        stderr: got ? hide(got.stderr) : null,
-        truncated: got?.truncated ?? false,
+        stdout: kept.stdout,
+        stderr: kept.stderr,
+        truncated: (got?.truncated ?? false) || kept.cut,
         timedOut: got?.timedOut ?? false,
       };
       await store.updateRunAttempt(attemptId, {

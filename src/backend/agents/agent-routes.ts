@@ -229,6 +229,31 @@ export function createAgentRouter(
 
   /**
    * @openapi
+   * /plugin-api/runbooks/agent/runbooks/{id}/runs/{runId}/items/{item}/attempts/{attempt}:
+   *   get:
+   *     summary: One attempt of an item, with its output
+   *     description: >
+   *       1.4.10 (BUG-022 M2). The runbook lists attempts without output;
+   *       this reads one, masked as the runbook is. An earlier attempt
+   *       keeps only the last 4 KB of each stream.
+   *     tags: [Runbooks agent]
+   *     responses:
+   *       200: { description: The attempt }
+   *       404: { description: No such attempt }
+   */
+  router.get(
+    "/runbooks/:id/runs/:runId/items/:item/attempts/:attempt",
+    wrap(async (req, res) =>
+      ops.getAttempt(caller(res), pathId(req), {
+        runId: req.params.runId,
+        item: req.params.item,
+        attempt: req.params.attempt,
+      }),
+    ),
+  );
+
+  /**
+   * @openapi
    * /plugin-api/runbooks/agent/steps/{id}:
    *   patch:
    *     summary: Change a step that has not run

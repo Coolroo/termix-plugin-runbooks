@@ -15,6 +15,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import {
+  attemptOutput,
   execResult,
   runStep,
   setupRunbook,
@@ -533,8 +534,8 @@ describe("file", () => {
     expect(done.items[0].status).toBe("passed");
     expect(results(done.items[0])).toEqual([
       "not there",
-      "file exists, 0 bytes",
-      "file exists, 13 bytes",
+      "file exists, empty",
+      "file exists",
     ]);
     expect(paths).toEqual([
       "/srv/app/ready",
@@ -698,8 +699,10 @@ describe("job", () => {
     // The item keeps the journal across checks; each attempt its new lines.
     expect(item.stdout).toContain("oneshot runs");
     expect(item.stdout).toContain("oneshot ends");
-    expect(item.attempts[1].stdout).toContain("oneshot ends");
-    expect(item.attempts[1].stdout).not.toContain("Starting t038-one");
+    // BUG-022 M2: an attempt's output is read on its own.
+    const second = await attemptOutput(s, item.attempts[1], item.runId);
+    expect(second.stdout).toContain("oneshot ends");
+    expect(second.stdout).not.toContain("Starting t038-one");
   });
 
   it("fails at once when the job's unit failed; when a unit of that name is loaded", async () => {
@@ -844,6 +847,8 @@ describe("values in events", () => {
             type: "run",
             command: "echo app=web",
             captures: [{ name: "app", pattern: "app=(\\S+)" }],
+            // BUG-022 M3: a captured value goes into a command with a pattern.
+            checks: [{ type: "value", name: "app", matches: "^[a-z]+$" }],
           },
           ev("container", { name: "{{app}}", state: "running" }),
         ]),
@@ -998,7 +1003,7 @@ describe.skipIf(!certs)("http over the SSH connection, TLS checked", () => {
 
   it("never skips the check: without the extra CA the certificate is not trusted", async () => {
     const port = await serve([200]);
-    const { done } = await runOne(
+    const { done, s } = await runOne(
       [
         ev("http", {
           url: `https://127.0.0.1:${port}/`,
@@ -1012,7 +1017,13 @@ describe.skipIf(!certs)("http over the SSH connection, TLS checked", () => {
     );
     expect(done.items[0].status).toBe("failed");
     expect(results(done.items[0])[0]).toBe("certificate not trusted");
-    expect(done.items[0].attempts[0].stderr).toMatch(/certificate/i);
+    // BUG-022 M2: an attempt's output is read on its own.
+    const first = await attemptOutput(
+      s,
+      done.items[0].attempts[0],
+      done.items[0].runId,
+    );
+    expect(first.stderr).toMatch(/certificate/i);
   });
 
   it("checks the name: a servername the certificate does not hold fails", async () => {
@@ -1040,7 +1051,7 @@ describe("http from Termix", () => {
   it("goes through ctx.fetch with the public roots and the extra CAs, no redirects", async () => {
     const calls: Array<{ url: string; init: Any }> = [];
     const { done } = await runOne(
-      [ev("http", { url: "https://192.0.2.10/health", status: 204 })],
+      [ev("http", { url: "https://10.255.0.10/health", status: 204 })],
       () => {},
       {
         server: {
@@ -1056,15 +1067,34 @@ describe("http from Termix", () => {
       status: "passed",
       result: "HTTP 204",
     });
-    expect(calls[0].url).toBe("https://192.0.2.10/health");
+    expect(calls[0].url).toBe("https://10.255.0.10/health");
+    // A private address that is not loopback: core may reach that one.
     expect(calls[0].init).toMatchObject({
       method: "GET",
       redirect: "manual",
-      allowPrivateHosts: ["192.0.2.10"],
+      allowPrivateHosts: ["10.255.0.10"],
     });
     expect(calls[0].init.tls.rejectUnauthorized).toBeUndefined();
     if (certs) expect(calls[0].init.tls.ca).toContain(certs.ca.trim());
     expect(calls[0].init.tls.ca.length).toBeGreaterThan(100_000);
+  });
+
+  it("gives a public address no allowPrivateHosts: core refuses any private answer (BUG-022 M4)", async () => {
+    const calls: Array<{ url: string; init: Any }> = [];
+    const { done } = await runOne(
+      [ev("http", { url: "https://192.0.2.10/health", status: 204 })],
+      () => {},
+      {
+        server: {
+          fetch: async (url: string, init: Any) => {
+            calls.push({ url, init });
+            return new Response(null, { status: 204 });
+          },
+        },
+      },
+    );
+    expect(done.items[0]).toMatchObject({ status: "passed" });
+    expect(calls[0].init.allowPrivateHosts).toBeUndefined();
   });
 });
 

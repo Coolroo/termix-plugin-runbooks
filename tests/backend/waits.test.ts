@@ -11,6 +11,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  attemptOutput,
   execResult,
   runStep,
   setupRunbook,
@@ -135,6 +136,11 @@ describe("writing a wait item and a retry", () => {
           within: 3600,
           timeoutMs: 30_000,
           captures: [{ name: "ver", pattern: "version=(\\S+)" }],
+          // BUG-022 M3: a captured value goes into a command with a pattern.
+          checks: [
+            { type: "contains", text: "healthy" },
+            { type: "value", name: "ver", matches: "^[0-9.]+$" },
+          ],
         }),
         run("echo {{ver}}"),
       ]),
@@ -164,7 +170,10 @@ describe("writing a wait item and a retry", () => {
         type: "wait",
         label: "Healthy",
         command: "status",
-        checks: [{ type: "contains", text: "healthy", stream: "any" }],
+        checks: [
+          { type: "contains", text: "healthy", stream: "any" },
+          { type: "value", name: "ver", matches: "^[0-9.]+$" },
+        ],
         stopIf: [{ type: "contains", text: "FAILED", stream: "any" }],
         captures: [{ name: "ver", pattern: "version=(\\S+)" }],
         timeoutMs: 30_000,
@@ -366,6 +375,12 @@ describe("running a wait item", () => {
           wait("status", {
             every: 5,
             captures: [{ name: "ver", pattern: "version=(\\S+)" }],
+            // BUG-022 M3: a captured value goes into a command with a
+            // pattern; "old" does not match it, as "unhealthy" fails.
+            checks: [
+              { type: "contains", text: "healthy" },
+              { type: "value", name: "ver", matches: "^[0-9.]+$" },
+            ],
           }),
           run("echo {{ver}}"),
         ]),
@@ -437,13 +452,21 @@ describe("running a wait item", () => {
     expect(ends).toHaveLength(1);
     const agentDone = await s.agent("GET", `/runbooks/${runbook.id}`, token);
     expect(agentDone.body.steps[0].attempt).toBeNull();
-    expect(
-      agentDone.body.steps[0].runs[0].items[0].attempts.map((a: Any) => [
-        a.attempt,
-        a.why,
-        a.stdout,
-      ]),
-    ).toEqual([
+    // BUG-022 M2: the runbook lists attempts without output; the agent
+    // reads each one's output on its own.
+    const agentRun = agentDone.body.steps[0].runs[0];
+    const outputs: Array<[number, string | null, string | null]> = [];
+    for (const a of agentRun.items[0].attempts) {
+      expect(a.stdout).toBeNull();
+      const one = await s.agent(
+        "GET",
+        `/runbooks/${runbook.id}/runs/${agentRun.id}/items/1/attempts/${a.attempt}`,
+        token,
+      );
+      expect(one.status).toBe(200);
+      outputs.push([a.attempt, a.why, one.body.stdout]);
+    }
+    expect(outputs).toEqual([
       [1, "check", "starting version=old\n"],
       [2, "exit", "unhealthy version=old\n"],
       [3, null, "healthy version=2.1\n"],
@@ -649,7 +672,13 @@ describe("running a wait item", () => {
       (r: Any) => r.status !== "running",
     );
     expect(whys(done.items[0])).toEqual(["stopped"]);
-    expect(done.items[0].attempts[0].stdout).toBe("starting\n");
+    // BUG-022 M2: an attempt's output is read on its own.
+    const first = await attemptOutput(
+      s,
+      done.items[0].attempts[0],
+      done.items[0].runId,
+    );
+    expect(first.stdout).toBe("starting\n");
     expect(channels).toHaveLength(1);
   });
 

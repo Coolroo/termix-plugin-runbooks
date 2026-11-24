@@ -640,3 +640,20 @@ export function auditText(s: TestServer): string {
     s.mock.audits.map(({ request: _request, ...rest }) => rest),
   );
 }
+
+/**
+ * One attempt with its output, as the page reads it when the person opens
+ * it (BUG-022 M2): the views list attempts without output.
+ */
+export async function attemptOutput(
+  server: TestServer,
+  attempt: { id: number; itemId: number },
+  runId: number,
+) {
+  const reply = await server.person(
+    "GET",
+    `/runs/${runId}/attempts/${attempt.id}`,
+  );
+  if (reply.status !== 200) throw new Error(JSON.stringify(reply.body));
+  return reply.body as { stdout: string | null; stderr: string | null };
+}

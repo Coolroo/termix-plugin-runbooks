@@ -33,9 +33,9 @@ export function wrap(
   };
 }
 
-/** The positive integer :id in the path; 404 with `message` otherwise. */
-export function idParam(req: Request, message: string): number {
-  const id = Number(req.params.id);
+/** The positive integer :id (or :name) in the path; 404 with `message` otherwise. */
+export function idParam(req: Request, message: string, name = "id"): number {
+  const id = Number(req.params[name]);
   if (!Number.isInteger(id) || id <= 0) throw new InputError(message, 404);
   return id;
 }

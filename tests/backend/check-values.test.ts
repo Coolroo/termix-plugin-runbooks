@@ -73,6 +73,8 @@ describe("checks with values when a run ends (BUG-007)", () => {
           hostId: 1,
           command: "pull",
           captures: [{ name: "ver", pattern: "pulled (\\S+)" }],
+          // BUG-022 M3: a captured value goes into a command with a pattern.
+          checks: [{ type: "value", name: "ver", matches: "^[0-9.]+$" }],
         },
         {
           title: "Deploy",

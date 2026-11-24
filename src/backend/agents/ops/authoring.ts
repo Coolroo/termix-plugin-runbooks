@@ -18,6 +18,10 @@ import {
   type AuthorStep,
 } from "../../runbooks/parse.js";
 import { secretReadsProblem } from "../../secrets/secret-view.js";
+import {
+  newCapturedRead,
+  type CapturingStep,
+} from "../../runbooks/captured-reads.js";
 import { StdinPositionError, storeStdin } from "../../running/stdin.js";
 import {
   hiddenValueNames,
@@ -246,6 +250,21 @@ export function checkSecretReads(
   if (problem) throw new InputError(problem, status);
 }
 
+/**
+ * A captured value in a command needs a pattern on what captures it
+ * (BUG-022 M3): refused for what the change brings, not for what the
+ * runbook held before.
+ */
+export function checkCapturedReads(
+  before: readonly CapturingStep[],
+  after: readonly CapturingStep[],
+): void {
+  const problem = newCapturedRead(before, after);
+  if (problem) {
+    throw new InputError(problem, 400, { code: "captured-value" });
+  }
+}
+
 export function createAuthoring(
   store: Store,
   events: Events,
@@ -293,6 +312,10 @@ export function createAuthoring(
     await checkHosts(caller, steps);
     checkPlatforms(caller, steps);
     checkSecretReads(
+      steps.map((step, index) => ({ ...step, position: index + 1 })),
+    );
+    checkCapturedReads(
+      [],
       steps.map((step, index) => ({ ...step, position: index + 1 })),
     );
     const hiddenValues = hiddenValueNames(steps);
@@ -419,6 +442,11 @@ export function createAuthoring(
       suffix: null,
     }));
     checkSecretReads([
+      ...before,
+      ...added,
+      ...after.map((s) => ({ ...s, position: s.position + shift })),
+    ]);
+    checkCapturedReads(existing, [
       ...before,
       ...added,
       ...after.map((s) => ({ ...s, position: s.position + shift })),
@@ -553,8 +581,23 @@ export function createAuthoring(
       interactive: patch.interactive ?? step.interactive,
       sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
     };
-    const all = (await store.listSteps(runbook.id)).map((other) =>
-      other.id === stepId ? changed : other,
+    const listed = await store.listSteps(runbook.id);
+    const all = listed.map((other) => (other.id === stepId ? changed : other));
+    // A captured value in a command needs a pattern (BUG-022 M3).
+    checkCapturedReads(
+      listed,
+      listed.map((other) =>
+        other.id === stepId
+          ? {
+              ...changed,
+              owner: patch.owner !== undefined ? patch.owner : step.owner,
+              where: patch.where !== undefined ? patch.where : step.where,
+              command:
+                patch.command !== undefined ? patch.command : step.command,
+              checks: patch.checks ?? step.checks,
+            }
+          : other,
+      ),
     );
     if (patch.owner !== undefined || patch.checks !== undefined) {
       checkAgentChecks(

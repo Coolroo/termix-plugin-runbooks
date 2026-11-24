@@ -11,6 +11,7 @@
  * in before it runs.
  */
 
+import net from "node:net";
 import { InputError } from "../core/errors.js";
 import { strictObject } from "../core/parse.js";
 import { isOneLine, PLACEHOLDER } from "../../shared/names.js";
@@ -35,6 +36,7 @@ import {
   type UnitItemSpec,
 } from "../../shared/events.js";
 import { sleepProblem } from "./no-sleep.js";
+import { rangeKind } from "../events/addresses.js";
 import {
   parseSchedule,
   SCHEDULE_FIELDS,
@@ -248,6 +250,12 @@ export function urlProblem(
   const loopback = isLoopbackUrl(plain(url));
   if (parsed.protocol === "http:" && !loopback) {
     return `${field}: plain http:// is allowed only to the host's own loopback (127.0.0.1, localhost or [::1]), through the SSH connection; use https:// for any other address`;
+  }
+  // An address Termix never reaches from itself (BUG-022 M4), in any
+  // spelling: the host's own loopback is 127.0.0.1, localhost or [::1].
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (!loopback && net.isIP(host) && rangeKind(host) === "refused") {
+    return `${field}: ${parsed.hostname} is a loopback, link-local, unspecified or reserved address, which Termix does not reach for a runbook; to reach the host's own loopback through SSH, write 127.0.0.1, localhost or [::1]`;
   }
   if (servername && !loopback) {
     return `${field}: servername is for a loopback URL only; any other address is checked against its own host name`;

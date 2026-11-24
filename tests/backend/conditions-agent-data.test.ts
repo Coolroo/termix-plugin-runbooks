@@ -68,6 +68,8 @@ async function probeRunbook(secret: string) {
       hostId: 1,
       command: "make-password",
       captures: [{ name: "pw", pattern: "password=(\\S+)" }],
+      // BUG-022 M3: a captured value goes into a command with a pattern.
+      checks: [{ type: "value", name: "pw", matches: "^\\S+$" }],
     },
     {
       title: "Print it",
@@ -278,6 +280,8 @@ describe("the review's probes, with an agent token (BUG-010)", () => {
         hostId: 1,
         command: "make-password",
         captures: [{ name: "pw", pattern: "password=(\\S+)" }],
+        // BUG-022 M3: a captured value goes into a command with a pattern.
+        checks: [{ type: "value", name: "pw", matches: "^\\S+$" }],
       },
       { title: "Print it", hostId: 1, command: "echo password={{pw}}" },
       { title: "Three", hostId: 1, command: "three" },

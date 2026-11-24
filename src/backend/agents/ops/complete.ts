@@ -37,6 +37,7 @@ import type { Access, AgentCaller } from "./access.js";
 import type { Reads } from "./reads.js";
 import type { AgentAudit } from "./ops.js";
 import {
+  checkCapturedReads,
   checkSecretReads,
   objectBody,
   recheckReaders,
@@ -230,6 +231,8 @@ export function createComplete(
     const last = Math.max(-1, ...group.map((s) => suffixIndex(s.suffix)));
     const own = { position: step.position, suffix: suffixAt(last + 1) };
     checkSecretReads([...steps, { ...fresh, ...own }]);
+    // A captured value in a command needs a pattern (BUG-022 M3).
+    checkCapturedReads(steps, [...steps, { ...fresh, ...own }]);
     const stored = toStored(
       fresh,
       own,

@@ -85,26 +85,42 @@ function ruleCache(store: Store): RuleCache {
  * A runbook with its steps and runs. With `live`, running runs carry the
  * output that has arrived so far. `budget` is the time its rules' patterns
  * may take, shared when a list reads many runbooks; a new one otherwise.
+ *
+ * Attempts come without their output (stdout and stderr null): a run may
+ * hold hundreds, and every read of the runbook would load them all
+ * (BUG-022 M2). An attempt's item holds its last attempt's output; with
+ * `attemptOutput`, that one attempt comes with its output too, for the
+ * routes that read one attempt.
  */
 export async function loadBundle(
   store: Store,
   runbookId: number,
   live?: LiveRuns,
   budget?: PatternBudget,
+  attemptOutput?: number,
 ): Promise<RunbookBundle | null> {
   const runbook = await store.getRunbook(runbookId);
   if (!runbook) return null;
   const steps = await store.listSteps(runbookId);
+  // Only a runbook with a wait or a retried item has attempts (phase 2).
+  const attempts = steps.some((step) => step.sequence?.some(itemSchedule))
+    ? await store.listRunAttempts({ runbookId }, { output: false })
+    : [];
+  if (attemptOutput !== undefined) {
+    const [full] = await store.listRunAttempts({
+      runbookId,
+      id: attemptOutput,
+    });
+    const at = attempts.findIndex((each) => each.id === attemptOutput);
+    if (full && at !== -1) attempts[at] = full;
+  }
   const rows = withItems(
     await store.listRuns({ runbookId }),
     // Only a runbook with a sequence step has items (1.4.10).
     steps.some((step) => step.sequence)
       ? await store.listRunItems({ runbookId })
       : [],
-    // And only one with a wait or a retried item has attempts (phase 2).
-    steps.some((step) => step.sequence?.some(itemSchedule))
-      ? await store.listRunAttempts({ runbookId })
-      : [],
+    attempts,
   );
   const runs = live ? live.show(rows) : rows.map(storedRun);
   const runsByStep = new Map<number, ShownRun[]>();

@@ -4,7 +4,13 @@
  */
 
 import type { RunRow, RunbookRow, StepRow } from "../runbooks/store/types.js";
-import { approvalHash, commandHash, resolve, type Values } from "./values.js";
+import {
+  approvalHash,
+  commandHash,
+  placeholders,
+  resolve,
+  type Values,
+} from "./values.js";
 import { stdinKey, type StdinSource } from "../running/stdin.js";
 import { fillStepText, uniqueNames } from "../../shared/fill.js";
 import { fillChecks, type Check } from "../../shared/checks.js";
@@ -86,6 +92,26 @@ export interface ResolvedStep {
    * for any other step. `command` is then the whole sequence as one text.
    */
   items: ResolvedItem[] | null;
+}
+
+/**
+ * The {{name}}s in what an item runs or reads on the host: a command
+ * item's command, or an event's text fields (EVENT_TEXT_FIELDS), as
+ * resolveItem fills them. Not its checks.
+ */
+export function itemTextNames(item: SequenceItem): string[] {
+  if (item.type === "delay") return [];
+  if (isEventItem(item)) {
+    const fields = item as unknown as Record<string, unknown>;
+    return uniqueNames(
+      ...EVENT_TEXT_FIELDS[item.type].map((field) =>
+        typeof fields[field] === "string"
+          ? placeholders(fields[field] as string)
+          : [],
+      ),
+    );
+  }
+  return placeholders(item.command);
 }
 
 /**

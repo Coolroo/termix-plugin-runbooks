@@ -603,6 +603,10 @@
     "earlier_other": "Earlier attempts ({{count}})",
     "lastOutput": "Output of attempt {{attempt}}, the last one",
     "runningOutput": "Attempt {{attempt}} runs",
+    "loadingOutput": "Reading its output...",
+    "outputFailed": "Its output could not be read: {{error}}",
+    "noOutput": "No output kept",
+    "tailOnly": "An earlier attempt keeps only the end of its output",
     "dot": {
       "passed": "passed",
       "not-yet": "not yet",

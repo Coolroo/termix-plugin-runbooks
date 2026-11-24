@@ -150,8 +150,33 @@ async function agentSees({ s, token, runbook, hook }: Setup) {
     const result = reply.body.result;
     return result.isError ? result.content : result.structuredContent;
   };
+  const read = await get(`/runbooks/${runbook.id}`);
+  // BUG-022 M2: the runbook lists attempts without output; each attempt's
+  // output is read on its own, by REST and MCP, keyed by where it is.
+  const attemptReads: Record<string, unknown> = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const list = (value: any): any[] => (Array.isArray(value) ? value : []);
+  for (const [si, step] of list(read.body.steps).entries()) {
+    for (const [ri, run] of list(step.runs).entries()) {
+      for (const [ii, item] of list(run.items).entries()) {
+        for (const [ai, attempt] of list(item.attempts).entries()) {
+          const at = `steps.${si}.runs.${ri}.items.${ii}.attempts.${ai}`;
+          attemptReads[`rest.${at}`] = await get(
+            `/runbooks/${runbook.id}/runs/${run.id}/items/${item.position}/attempts/${attempt.attempt}`,
+          );
+          attemptReads[`mcp.${at}`] = await mcp("get_attempt", {
+            runbookId: runbook.id,
+            runId: run.id,
+            item: item.position,
+            attempt: attempt.attempt,
+          });
+        }
+      }
+    }
+  }
   return stable({
-    runbook: await get(`/runbooks/${runbook.id}`),
+    runbook: read,
+    attemptReads,
     values: await get(`/runbooks/${runbook.id}/values`),
     events: await get(`/events`),
     list: await get(`/runbooks`),
@@ -189,6 +214,13 @@ const makeToken = {
   captures: [{ name: "tok", pattern: "token=(\\S+)" }],
   hideOutputFromAgents: true,
 };
+
+/**
+ * BUG-022 M3: a step whose command reads tok needs this check on the step
+ * that captures it.
+ */
+const TOK_CHECK = { type: "value", name: "tok", matches: "^\\S+$" };
+const checkedToken = { ...makeToken, checks: [TOK_CHECK] };
 
 /** Drives each command by hand: `cat`/`show` echo their stdin. */
 function drive(s: TestServer, outputs: Record<string, string>) {
@@ -373,7 +405,7 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
       "G4 short value echoed by visible step",
       async (secret) => {
         const x = await setup([
-          makeToken,
+          checkedToken,
           { title: "Print", hostId: 1, command: "echo tok={{tok}}" },
         ]);
         x.s.setExec(async (_h, command) =>
@@ -727,7 +759,10 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
             ...makeToken,
             captures: [{ name: "tok", pattern: "token=(h\\S*)" }],
           },
-          { title: "Use", hostId: 1, command: "use {{tok}}" },
+          // BUG-022 M3: a command Termix runs may read tok only with a
+          // value check, which fails when tok is not captured; a step run
+          // outside Termix reads it as text, as before.
+          { title: "Use", where: "on the laptop", command: "use {{tok}}" },
         ]);
         x.s.setExec(async () => execResult(`token=${secret}\n`));
         await runStep(x.s, x.runbook.id, x.runbook.steps[0].id);
@@ -743,7 +778,7 @@ describe("BUG-011: agents read nothing that depends on a hidden value", () => {
       "G11 control",
       async (secret) => {
         const x = await setup([
-          { ...makeToken, hideOutputFromAgents: false },
+          { ...checkedToken, hideOutputFromAgents: false },
           {
             title: "Print",
             hostId: 1,
@@ -911,7 +946,7 @@ describe("1.4.10: sequence steps hide each item as a run is hidden", () => {
       "G14 visible sequence reads a hidden value",
       async (secret) => {
         const x = await setup([
-          makeToken,
+          checkedToken,
           {
             title: "Use it",
             hostId: 1,
@@ -920,7 +955,10 @@ describe("1.4.10: sequence steps hide each item as a run is hidden", () => {
                 type: "run",
                 command: "show {{tok}}",
                 captures: [{ name: "echoed", pattern: "shown=(\\S+)" }],
-                checks: [{ type: "contains", text: "{{tok}}" }],
+                checks: [
+                  { type: "contains", text: "{{tok}}" },
+                  { type: "value", name: "echoed", matches: "^\\S+$" },
+                ],
               },
               { type: "run", command: "again {{echoed}}" },
             ],
@@ -992,7 +1030,7 @@ describe("1.4.10 phase 2: a wait's attempts are hidden as its item is", () => {
             type: "wait",
             label: "Ready",
             command: "status",
-            checks: [{ type: "contains", text: "ready" }],
+            checks: [{ type: "contains", text: "ready" }, TOK_CHECK],
             stopIf: [{ type: "contains", text: "FAILED" }],
             captures: [{ name: "tok", pattern: "token=(\\S+)" }],
             within: 600,
@@ -1119,26 +1157,35 @@ describe("1.4.10 phase 2: a wait's attempts are hidden as its item is", () => {
 
   it("G15 shows attempt counts, times, exit codes and why on a hidden step", async () => {
     const { after } = (await waitRun(S17[0], { hidden: true })) as {
-      after: { runbook: { body: { steps: Array<{ runs: unknown[] }> } } };
+      after: {
+        runbook: { body: { steps: Array<{ runs: unknown[] }> } };
+        attemptReads: Record<string, { body: { stdout: unknown } }>;
+      };
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items = (after.runbook.body.steps[0].runs[0] as any).items;
+    // BUG-022 M2: the runbook lists attempts without output; the attempt
+    // route reads it, hidden as the runbook hides it.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const shape = (item: any) =>
+    const shape = (item: any, index: number) =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      item.attempts.map((a: any) => [
-        a.attempt,
-        a.exitCode,
-        a.why,
-        a.stdout,
-        a.error,
-      ]);
-    expect(shape(items[0])).toEqual([
+      item.attempts.map((a: any, n: number) => {
+        expect(a.stdout).toBeNull();
+        return [
+          a.attempt,
+          a.exitCode,
+          a.why,
+          after.attemptReads[`rest.steps.0.runs.0.items.${index}.attempts.${n}`]
+            .body.stdout,
+          a.error,
+        ];
+      });
+    expect(shape(items[0], 0)).toEqual([
       [1, 1, "exit", HIDDEN, HIDDEN],
       [2, 0, "check", HIDDEN, HIDDEN],
       [3, 0, null, HIDDEN, null],
     ]);
-    expect(shape(items[1])).toEqual([
+    expect(shape(items[1], 1)).toEqual([
       [1, 2, "exit", HIDDEN, HIDDEN],
       [2, 0, null, HIDDEN, null],
     ]);
@@ -1417,6 +1464,7 @@ describe("1.4.7: a VM step hidden from agents", () => {
               command: "cat",
               stdin: { from: "step", step: 3, stream: "stdout" },
               captures: [{ name: "s", pattern: "state=(\\w+)" }],
+              checks: [{ type: "value", name: "s", matches: "^\\w+$" }],
             },
             { title: "Use it", hostId: 1, command: "echo again {{s}}" },
             {

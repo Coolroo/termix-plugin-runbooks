@@ -483,6 +483,8 @@ describe("agent API", () => {
           hostId: 1,
           command: "cat /etc/key",
           captures: [{ name: "key", pattern: "key=(\\S+)" }],
+          // BUG-022 M3: a captured value goes into a command with a pattern.
+          checks: [{ type: "value", name: "key", matches: "^\\S+$" }],
         },
         { title: "Use key", hostId: 1, command: "use {{key}}" },
       ],
