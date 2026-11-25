@@ -1,0 +1,4 @@
+0.4	cat site.conf\r
+0.4	\e[200~cat site.conf\e[201~
+0.3	\r
+0.3	exit\r

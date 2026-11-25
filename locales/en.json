@@ -270,19 +270,14 @@
     "anyway": "Run out of order"
   },
   "capture": {
-    "from": "From the terminal: check it, change it if you need to, then mark the step done or failed.",
-    "finished": "The command looks finished: the prompt is back",
-    "check": "Check the text",
+    "from": "Read from the terminal. Change it if you need to, then mark the step done or failed.",
+    "check": "Check the text before you save it",
     "password": "The terminal waits for a password",
-    "startUnsure": "Check the start: Runbooks could not find the command's line for sure, so the text may begin with other lines.",
-    "drawn": "Check the order: the terminal drew on other lines (tmux, a full-screen program or the prompt), so lines may be missing or out of order.",
-    "endUnsure": "Check the end: no prompt after the output yet. The command may still be running, or it changed the prompt.",
-    "endStopped": "Check the end: Runbooks stopped reading before a prompt came back (a new command in this terminal, the tab closed, or a limit).",
+    "drawn": "Runbooks stopped reading where the terminal drew over other lines (clear, a progress display, tmux or a full-screen program): the end may be missing.",
     "failedEmpty": "Mark failed keeps this text only once you open or change the box; otherwise the failure has no output.",
     "readAgain": "Read again",
     "edited": "You changed the text, so it no longer follows the terminal. Read again puts the terminal's text back.",
-    "cut": "The output is longer than a step keeps: only its start is here.",
-    "placeholder": "Nothing from the terminal yet. Press Enter in the terminal to run the command; its output shows here."
+    "cut": "The output is longer than a step keeps: only its start is here."
   },
   "terminal": {
     "opening": "Opening a terminal to {{host}}…",

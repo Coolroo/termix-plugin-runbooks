@@ -20,7 +20,7 @@ import { useFetchedAt, useTick } from "../ui/timers";
 import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
 import { RunInput } from "../running/RunInput";
 import { useCapturedOutput } from "../running/use-captured-output";
-import { looksFinished, type CaptureRead } from "../running/terminal-capture";
+import type { CaptureRead } from "../running/terminal-capture";
 import type { StepActions } from "./StepButtons";
 import type { Run, Step } from "../api-types";
 
@@ -127,9 +127,8 @@ function Output({ label, text }: { label: string; text: string | null }) {
 
 /**
  * Above a paste box that Send to terminal filled (1.4.9): where the text is
- * from, whether the command looks finished, and Read again. When the start
- * or the end of the output is not certain (BUG-019), a warning says what to
- * check, and never "looks finished".
+ * from, and Read again. It only fills the box, so it always asks the person
+ * to check the text, and never says the command finished (BUG-021).
  */
 function CaptureNote({
   read,
@@ -141,22 +140,13 @@ function CaptureNote({
   onReadAgain: () => void;
 }) {
   const { t } = useTranslation();
-  const state = read.passwordPrompt
-    ? { key: "capture.password", tone: "warning" as const }
-    : looksFinished(read)
-      ? { key: "capture.finished", tone: "success" as const }
-      : { key: "capture.check", tone: "warning" as const };
-  const warnings = [
-    !read.startSure && "startUnsure",
-    read.drawn && "drawn",
-    !read.finished && (read.final ? "endStopped" : "endUnsure"),
-  ].filter((key): key is string => !!key);
+  const state = read.passwordPrompt ? "password" : "check";
   return (
-    <div className="flex flex-col gap-1" data-capture={read.from}>
+    <div className="flex flex-col gap-1" data-capture>
       <p className="text-muted-foreground">{t("capture.from")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <span data-capture-state={state.key.slice("capture.".length)}>
-          <ListBadge tone={state.tone}>{t(state.key)}</ListBadge>
+        <span data-capture-state={state}>
+          <ListBadge tone="warning">{t(`capture.${state}`)}</ListBadge>
         </span>
         <Button
           size="xs"
@@ -173,12 +163,11 @@ function CaptureNote({
           {t("capture.readAgain")}
         </Button>
       </div>
-      {!read.passwordPrompt &&
-        warnings.map((key) => (
-          <p key={key} className="text-warning" data-capture-warning={key}>
-            {t(`capture.${key}`)}
-          </p>
-        ))}
+      {read.drawn && (
+        <p className="text-warning" data-capture-warning="drawn">
+          {t("capture.drawn")}
+        </p>
+      )}
       {edited && (
         <p className="text-muted-foreground" data-capture-edited>
           {t("capture.edited")}
@@ -335,9 +324,7 @@ export function RunDetails({
             value={pasted}
             onChange={(event) => box.change(event.target.value)}
             onFocus={box.open}
-            placeholder={
-              box.read ? t("capture.placeholder") : t("run.pastePlaceholder")
-            }
+            placeholder={t("run.pastePlaceholder")}
             className="min-h-24 font-mono text-xs"
             data-paste-box={box.read ? box.source : "pasted"}
           />
@@ -386,8 +373,7 @@ export function RunDetails({
               {t("capture.failedEmpty")}
             </p>
           )}
-          {/* While the terminal is read, the box's placeholder says why. */}
-          {pasted.trim() === "" && !box.read && <PasteFirstHint />}
+          {pasted.trim() === "" && <PasteFirstHint />}
         </div>
       )}
     </div>

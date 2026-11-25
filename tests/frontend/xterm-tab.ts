@@ -61,6 +61,11 @@ export function xtermTab(
   const handle: Record<string, unknown> = {
     readBufferLines: () => readBufferLines(term.buffer.active),
     isAtPasswordPrompt: () => false,
+    getInputModes: () => ({
+      applicationCursor: term.modes.applicationCursorKeysMode,
+      bracketedPaste: term.modes.bracketedPasteMode,
+      backspace: "normal",
+    }),
   };
   if (options.subscribe !== false) {
     handle.subscribeOutput = (listener: (data: string) => void) => {

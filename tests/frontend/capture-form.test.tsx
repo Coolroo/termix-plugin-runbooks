@@ -170,21 +170,15 @@ describe("Send to terminal fills the paste box", () => {
     expect(success).toHaveBeenCalledWith(
       "Typed into web-1. Press Enter there; its output comes back here for you to check.",
     );
-    expect(box().placeholder).toBe(locales.capture.placeholder);
-    // Nothing yet: no prompt after the output, so "check the end".
-    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-      locales.capture.check,
-    );
-    expect(
-      card().querySelector("[data-capture-warning='endUnsure']")?.textContent,
-    ).toBe(locales.capture.endUnsure);
+    // Nothing before the output: the plain paste box.
+    expect(box().placeholder).toBe(locales.run.pastePlaceholder);
+    expect(card().querySelector("[data-capture]")).toBeNull();
 
     finish("active");
     await filled("active");
-    await vi.waitFor(() =>
-      expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-        locales.capture.finished,
-      ),
+    // Filled, and always to check: never "finished" (BUG-021).
+    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
+      locales.capture.check,
     );
     expect(box().dataset.pasteBox).toBe("captured");
     expect(within(card()).getByText(locales.capture.from)).toBeTruthy();
@@ -290,38 +284,40 @@ describe("Mark failed sends the read text only once the person saw it (BUG-019)"
 });
 
 describe("the reading", () => {
-  it("stops once the prompt is back", async () => {
+  it("stops once the prompt is back, and still says to check", async () => {
     await sendIt();
     finish("active");
     await filled("active");
-    await vi.waitFor(() =>
-      expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-        locales.capture.finished,
-      ),
+    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
+      locales.capture.check,
     );
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const reads = terminal.handle.isAtPasswordPrompt.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(terminal.handle.isAtPasswordPrompt.mock.calls.length).toBe(reads);
   });
 
-  it("warns, and never says finished, when the order is not sure", async () => {
+  it("stops where the terminal draws on other rows, and says so", async () => {
     await sendIt();
-    // The host moved the cursor between rows, and the screen has the
-    // command twice: neither can place the output for sure.
-    terminal.print(
-      `\r\nactive\r\n\u001b[5;1H${PROMPT}`,
-      "active",
-      PROMPT + COMMAND,
-      PROMPT,
-    );
+    terminal.print(`\r\nactive\r\n\u001b[5;1H${PROMPT}`, "active", PROMPT);
     await filled("active");
-    await new Promise((resolve) => setTimeout(resolve, 1100));
     expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
       locales.capture.check,
     );
     expect(
       card().querySelector("[data-capture-warning='drawn']")?.textContent,
     ).toBe(locales.capture.drawn);
+  });
+
+  it("a command the person changed: the plain paste box", async () => {
+    await sendIt();
+    // The person adds to the typed command before Enter.
+    terminal.print(" --quiet");
+    finish("active");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(box().value).toBe("");
+    expect(box().dataset.pasteBox).toBe("pasted");
+    expect(card().querySelector("[data-capture]")).toBeNull();
   });
 });
 
