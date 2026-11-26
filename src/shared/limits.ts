@@ -16,5 +16,11 @@ export const MAX_TYPED_BYTES = 4096;
  */
 export const MIN_HIDDEN_CHARS = 4;
 
+/**
+ * The most Mark done takes as a terminal run's output, in characters; what
+ * Send to terminal reads from the terminal is cut to it (1.4.10).
+ */
+export const MAX_PASTED_CHARS = 262_144;
+
 /** A step's time limit when it gives none, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 120_000;

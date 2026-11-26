@@ -23,7 +23,41 @@
     "metaNotNeeded": "{{done}}/{{total}} done · {{notNeeded}} not needed · by {{author}} · {{time}}",
     "failed": "{{count}} failed",
     "amended": "amended",
-    "next": "Next: {{kind}}"
+    "next": "Next: {{kind}}",
+    "search": "Search runbook titles",
+    "noMatch": "No runbook title matches \"{{query}}\".",
+    "noMatchHint": "Press Esc in the search box to show every runbook.",
+    "section": {
+      "open": "Open",
+      "done": "Done",
+      "abandoned": "Abandoned"
+    }
+  },
+  "folder": {
+    "none": "No folder",
+    "moveTo": "Move to folder",
+    "moveTitle": "Move \"{{title}}\" to a folder",
+    "inNone": "It is in no folder now.",
+    "inFolder": "It is in {{folder}} now.",
+    "existing": "Folders",
+    "name": "Folder name",
+    "placeholder": "A folder, or a new name",
+    "rules": "One level: up to {{max}} characters, no \"/\". A new name makes the folder.",
+    "joins": "Same folder as {{folder}}: it goes there.",
+    "move": "Move",
+    "toNone": "No folder",
+    "moveFailed": "The runbook did not move.",
+    "renameTitle": "Rename folder {{folder}}",
+    "renameHint": "Every runbook in it moves to the new name, in all sections.",
+    "renameNamed": "Rename folder {{folder}}",
+    "rename": "Rename",
+    "renameFailed": "The folder was not renamed.",
+    "problem": {
+      "empty": "Type a folder name.",
+      "long": "A folder name is at most {{max}} characters.",
+      "slash": "A folder name has no \"/\": folders hold runbooks, not folders.",
+      "control": "A folder name has no tabs or line breaks."
+    }
   },
   "runbook": {
     "status": {
@@ -93,7 +127,9 @@
     "agentWaiting": "Waiting for the agent ({{label}})",
     "agentCommand": "What the agent will run",
     "agentCommandOn": "What the agent will run on {{host}}",
-    "sendToAgent": "Send to agent"
+    "sendToAgent": "Send to agent",
+    "continueFrom": "Continue from item {{position}}",
+    "runFromStart": "Run again from item 1"
   },
   "runIn": {
     "terminal": "Send to terminal only: this step runs in a terminal.",
@@ -139,6 +175,10 @@
     "stdout": "Output",
     "stderr": "Errors",
     "pasted": "Pasted output",
+    "source": {
+      "captured": "Output read from the terminal",
+      "capturedEdited": "Output read from the terminal, then changed"
+    },
     "captured": "Captured:",
     "pastePlaceholder": "Paste the terminal output here, then mark the step done or failed.",
     "markDone": "Mark done",
@@ -265,6 +305,16 @@
     "hint": "Not done yet: {{steps}}. Run this step anyway?",
     "anyway": "Run out of order"
   },
+  "capture": {
+    "from": "Read from the terminal. Change it if you need to, then mark the step done or failed.",
+    "check": "Check the text before you save it",
+    "password": "The terminal waits for a password",
+    "drawn": "Runbooks stopped reading where the terminal drew over other lines (clear, a progress display, tmux or a full-screen program): the end may be missing.",
+    "failedEmpty": "Mark failed keeps this text only once you open or change the box; otherwise the failure has no output.",
+    "readAgain": "Read again",
+    "edited": "You changed the text, so it no longer follows the terminal. Read again puts the terminal's text back.",
+    "cut": "The output is longer than a step keeps: only its start is here."
+  },
   "terminal": {
     "opening": "Opening a terminal to {{host}}…",
     "openFailed": "Could not open a terminal. Copy the command instead.",
@@ -273,6 +323,7 @@
     "noHost": "This host is not available to you.",
     "notSsh": "{{host}} is not an SSH host, so it has no terminal to send to.",
     "sent": "Typed into {{host}}. Press Enter there, then paste the output here.",
+    "sentRead": "Typed into {{host}}. Press Enter there; its output comes back here for you to check.",
     "sendFailed": "Could not type into the terminal. Copy the command instead."
   },
   "tokens": {
@@ -328,6 +379,17 @@
     },
     "stepColors": {
       "label": "Step colors"
+    },
+    "listCollapsed": {
+      "label": "Runbook list: collapsed sections and folders"
+    },
+    "banSleep": {
+      "label": "Refuse sleep in commands",
+      "description": "Agents cannot write a command that waits a fixed time (sleep, Start-Sleep, timeout /t, ping -n as a delay): they make the step a sequence with a delay item, which the person sees count down. Steps written before stay as they are."
+    },
+    "httpCaPem": {
+      "label": "Extra trusted CAs for http checks (PEM)",
+      "description": "CA certificates that a runbook's http items trust besides the public roots, such as your home CA. Paste one or more, each from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. Only Runbooks' http checks use them; they always check the certificate."
     }
   },
   "notify": {
@@ -498,6 +560,101 @@
       "engine": "KV engine",
       "path": "Path",
       "field": "Field"
+    }
+  },
+  "item": {
+    "title": "Items ({{count}}), run in order",
+    "in": "in {{dir}}",
+    "type": {
+      "run": "Run",
+      "delay": "Delay",
+      "wait": "Wait until",
+      "port": "Port",
+      "http": "HTTP",
+      "file": "File",
+      "container": "Container",
+      "unit": "Unit",
+      "log": "Log line",
+      "job": "Job"
+    },
+    "status": {
+      "waiting": "Waiting",
+      "running": "Running",
+      "passed": "Passed",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "not-run": "Not run"
+    },
+    "delay": "Wait {{time}}",
+    "delayReason": "Wait {{time}}: {{reason}}",
+    "left": "{{time}} left",
+    "skip": "Skip",
+    "skippedBy": "Skipped by {{user}}",
+    "onFailContinue": "On failure: go on",
+    "later": "Fills {{names}} from an earlier item when it runs",
+    "carried": "Passed in run {{run}}; not run again",
+    "inLabel": "Each item starts in",
+    "what": {
+      "port": "Opens a TCP channel from the host to its own port, through the SSH connection:",
+      "http": "Sends a GET and reads the status (the certificate is always checked):",
+      "file": "Reads the path's attributes:",
+      "container": "Runs this read-only command and reads its JSON:",
+      "unit": "Runs this read-only command and reads its values:",
+      "log": "Reads new log lines with this command and matches them:",
+      "job": "Starts the command as a systemd unit and follows it to its end:"
+    },
+    "result": "Last check: {{result}}",
+    "resultPassed": "Passed: {{result}}",
+    "resultFailed": "Last check: {{result}}"
+  },
+  "continue": {
+    "title": "Continue step {{position}} from item {{item}}?",
+    "confirm": "Continue",
+    "carried_one": "Item 1 passed and does not run again. These items run, in order:",
+    "carried_other": "Items 1 to {{count}} passed and do not run again. These items run, in order:"
+  },
+  "attempts": {
+    "schedule": "Up to {{attempts}} attempts, {{delays}}, at most {{total}}",
+    "every": "every {{time}}",
+    "linear": "{{time}} apart, then {{time}} longer each time up to {{cap}}",
+    "exponential": "{{time}} apart, then ×{{factor}} each time up to {{cap}}",
+    "jitter": {
+      "full": " (random: 0 to the delay)",
+      "equal": " (random: half the delay or more)"
+    },
+    "stopIfTitle": "Stops at once if",
+    "stopIfMatched": "Stopped: {{label}} matched",
+    "counter": "Attempt {{attempt}} of {{of}}, {{elapsed}} of {{within}}",
+    "counterNoLimit": "Attempt {{attempt}} of {{of}}, {{elapsed}}",
+    "next": "Next attempt in {{time}}",
+    "tryNow": "Try now",
+    "attempt": "Attempt {{attempt}}",
+    "count_one": "{{count}} attempt",
+    "count_other": "{{count}} attempts",
+    "earlier_one": "Earlier attempt ({{count}})",
+    "earlier_other": "Earlier attempts ({{count}})",
+    "lastOutput": "Output of attempt {{attempt}}, the last one",
+    "runningOutput": "Attempt {{attempt}} runs",
+    "loadingOutput": "Reading its output...",
+    "outputFailed": "Its output could not be read: {{error}}",
+    "noOutput": "No output kept",
+    "tailOnly": "An earlier attempt keeps only the end of its output",
+    "dot": {
+      "passed": "passed",
+      "not-yet": "not yet",
+      "failed": "failed",
+      "running": "running"
+    },
+    "why": {
+      "exit": "exit {{code}}",
+      "check": "checks did not pass",
+      "timeout": "timed out",
+      "connect": "no connection",
+      "stop-if": "a stopIf check matched",
+      "stopped": "stopped",
+      "interrupted": "interrupted",
+      "not-yet": "not yet",
+      "fail-state": "failed at once"
     }
   }
 }

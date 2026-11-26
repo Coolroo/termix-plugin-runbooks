@@ -1,8 +1,14 @@
 /** A run of a step: its status, command, output, and Mark done or failed. */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
-import { Button, Input, ListBadge, Textarea } from "@termix-ssh/plugin-sdk/ui";
+import {
+  Button,
+  Input,
+  ListBadge,
+  PluginIcon,
+  Textarea,
+} from "@termix-ssh/plugin-sdk/ui";
 import {
   describeStdin,
   formatDuration,
@@ -11,8 +17,12 @@ import {
   runSummaryKey,
 } from "../ui/format";
 import { useFetchedAt, useTick } from "../ui/timers";
-import { CodeBlock, PasteFirstHint, SectionLabel } from "../ui/ui";
+import { PasteFirstHint } from "../ui/ui";
+import { LiveOutput, Output } from "./output";
+import { ItemSummary } from "./SequenceItems";
 import { RunInput } from "../running/RunInput";
+import { useCapturedOutput } from "../running/use-captured-output";
+import type { CaptureRead } from "../running/terminal-capture";
 import type { StepActions } from "./StepButtons";
 import type { Run, Step } from "../api-types";
 
@@ -24,38 +34,6 @@ interface InputProps {
 
 /** A silence this long is shown as a warning: the command may be stuck. */
 const SILENCE_WARN_MS = 30_000;
-
-/**
- * Output that grows while the command runs. It follows the end, unless the
- * person scrolled up to read something.
- */
-function LiveOutput({ label, text }: { label: string; text: string }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const follow = useRef(true);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element && follow.current) element.scrollTop = element.scrollHeight;
-  }, [text]);
-  if (!text) return null;
-  return (
-    <div className="mt-1">
-      <SectionLabel>{label}</SectionLabel>
-      <CodeBlock
-        ref={ref}
-        data-live-output={label}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          follow.current =
-            element.scrollTop + element.clientHeight >=
-            element.scrollHeight - 16;
-        }}
-        className="mt-1 max-h-80 overflow-auto"
-      >
-        {text}
-      </CodeBlock>
-    </div>
-  );
-}
 
 /**
  * The running command: elapsed time, silence, its output so far, and the
@@ -105,15 +83,60 @@ function LiveRun({ run, step, onInput }: { run: Run } & InputProps) {
   );
 }
 
-function Output({ label, text }: { label: string; text: string | null }) {
-  if (!text) return null;
+/**
+ * Above a paste box that Send to terminal filled (1.4.10): where the text is
+ * from, and Read again. It only fills the box, so it always asks the person
+ * to check the text, and never says the command finished (BUG-021).
+ */
+function CaptureNote({
+  read,
+  edited,
+  onReadAgain,
+}: {
+  read: CaptureRead;
+  edited: boolean;
+  onReadAgain: () => void;
+}) {
+  const { t } = useTranslation();
+  const state = read.passwordPrompt ? "password" : "check";
   return (
-    <details className="mt-1" open={text.length < 2000}>
-      <SectionLabel as="summary" className="cursor-pointer">
-        {label}
-      </SectionLabel>
-      <CodeBlock className="mt-1 max-h-80 overflow-auto">{text}</CodeBlock>
-    </details>
+    <div className="flex flex-col gap-1" data-capture>
+      <p className="text-muted-foreground">{t("capture.from")}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span data-capture-state={state}>
+          <ListBadge tone="warning">{t(`capture.${state}`)}</ListBadge>
+        </span>
+        <Button
+          size="xs"
+          variant="outline"
+          className="gap-1"
+          onClick={onReadAgain}
+          data-capture-read
+        >
+          <PluginIcon
+            name="RefreshCw"
+            className="size-3.5 shrink-0"
+            aria-hidden="true"
+          />
+          {t("capture.readAgain")}
+        </Button>
+      </div>
+      {read.drawn && (
+        <p className="text-warning" data-capture-warning="drawn">
+          {t("capture.drawn")}
+        </p>
+      )}
+      {edited && (
+        <p className="text-muted-foreground" data-capture-edited>
+          {t("capture.edited")}
+        </p>
+      )}
+      {read.truncated && (
+        <p className="text-muted-foreground" data-capture-cut>
+          {t("capture.cut")}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -122,12 +145,22 @@ export function RunDetails({
   onComplete,
   step,
   onInput,
+  itemsShown = false,
 }: {
   run: Run;
   onComplete?: StepActions["complete"];
+  /**
+   * 1.4.10: the step card shows this sequence run's items in full, so the
+   * run shows only its summary.
+   */
+  itemsShown?: boolean;
 } & InputProps) {
+  const items = run.items ?? null;
   const { t } = useTranslation();
-  const [pasted, setPasted] = useState("");
+  const awaiting =
+    !!onComplete && run.status === "awaiting-output" && run.mode !== "vm";
+  const box = useCapturedOutput(run.id, awaiting && run.mode === "terminal");
+  const pasted = box.text;
   const [exitCode, setExitCode] = useState("");
   const enteredExit =
     exitCode.trim() !== "" && Number.isInteger(Number(exitCode))
@@ -169,7 +202,8 @@ export function RunDetails({
           </span>
         ) : null}
       </div>
-      {run.mode !== "manual" &&
+      {!items &&
+        run.mode !== "manual" &&
         run.mode !== "agent" &&
         run.mode !== "secret" &&
         run.mode !== "decision" &&
@@ -199,7 +233,10 @@ export function RunDetails({
         </p>
       )}
       {run.error && <p className="mt-1 text-destructive">{run.error}</p>}
-      {run.running ? (
+      {items ? (
+        // A sequence's output is on its items (1.4.10).
+        !itemsShown && <ItemSummary items={items} />
+      ) : run.running ? (
         <LiveRun run={run} step={step} onInput={onInput} />
       ) : (
         <>
@@ -207,7 +244,16 @@ export function RunDetails({
           <Output label={t("run.stderr")} text={run.stderr} />
         </>
       )}
-      <Output label={t("run.pasted")} text={run.pastedOutput} />
+      <Output
+        label={
+          run.outputSource === "captured"
+            ? t("run.source.captured")
+            : run.outputSource === "captured-edited"
+              ? t("run.source.capturedEdited")
+              : t("run.pasted")
+        }
+        text={run.pastedOutput}
+      />
       {(run.inputs?.length ?? 0) > 0 && (
         <p className="mt-1 text-muted-foreground" data-run-inputs>
           {t("run.input.count", { count: run.inputs.length })}
@@ -234,13 +280,22 @@ export function RunDetails({
         </p>
       )}
       {/* A VM step's console ends with its own Done or Failed (1.4.7). */}
-      {onComplete && run.status === "awaiting-output" && run.mode !== "vm" && (
+      {awaiting && (
         <div className="mt-2 flex flex-col gap-2">
+          {box.read && (
+            <CaptureNote
+              read={box.read}
+              edited={box.edited}
+              onReadAgain={box.readAgain}
+            />
+          )}
           <Textarea
             value={pasted}
-            onChange={(event) => setPasted(event.target.value)}
+            onChange={(event) => box.change(event.target.value)}
+            onFocus={box.open}
             placeholder={t("run.pastePlaceholder")}
             className="min-h-24 font-mono text-xs"
+            data-paste-box={box.read ? box.source : "pasted"}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -257,18 +312,36 @@ export function RunDetails({
               // Done needs what the terminal printed: one line at least.
               disabled={pasted.trim() === ""}
               title={pasted.trim() === "" ? t("run.pasteFirst") : undefined}
-              onClick={() => onComplete(run, pasted, "done", enteredExit)}
+              onClick={() =>
+                onComplete!(run, pasted, "done", enteredExit, box.source)
+              }
             >
               {t("run.markDone")}
             </Button>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => onComplete(run, pasted, "failed", enteredExit)}
+              // The read text goes with a failure only once the person
+              // opened or changed the box (BUG-019); otherwise none.
+              onClick={() =>
+                onComplete!(
+                  run,
+                  box.failed.text,
+                  "failed",
+                  enteredExit,
+                  box.failed.source,
+                )
+              }
+              data-mark-failed
             >
               {t("run.markFailed")}
             </Button>
           </div>
+          {box.read && box.failed.text === "" && pasted.trim() !== "" && (
+            <p className="text-muted-foreground" data-capture-failed-hint>
+              {t("capture.failedEmpty")}
+            </p>
+          )}
           {pasted.trim() === "" && <PasteFirstHint />}
         </div>
       )}

@@ -18,6 +18,10 @@ import {
   type AuthorStep,
 } from "../../runbooks/parse.js";
 import { secretReadsProblem } from "../../secrets/secret-view.js";
+import {
+  newCapturedRead,
+  type CapturingStep,
+} from "../../runbooks/captured-reads.js";
 import { StdinPositionError, storeStdin } from "../../running/stdin.js";
 import {
   hiddenValueNames,
@@ -41,6 +45,13 @@ import { fillChecks, type Check } from "../../../shared/checks.js";
 import { parseNotify, type Events } from "../events.js";
 import type { Access, AgentCaller } from "./access.js";
 import type { Reads } from "./reads.js";
+import type { AgentAudit } from "./ops.js";
+import {
+  folderText,
+  parseFolder,
+  spellFolder,
+} from "../../runbooks/folders.js";
+import { runbookResource } from "../../core/audit.js";
 
 /**
  * A step and the step number it has, or will have, with what a when rule
@@ -56,6 +67,7 @@ const known = (step: AuthorStep) => ({
   hideOutputFromAgents: step.hideOutputFromAgents,
   interactive: step.interactive,
   vm: step.vm,
+  sequence: step.sequence ?? null,
 });
 
 /** A step and its amendments: the steps that share its position. */
@@ -77,15 +89,20 @@ export function objectBody(
   return strictObject(input, keys, { notObject: "body must be an object" });
 }
 
-function parseSteps(input: unknown): AuthorStep[] {
+function parseSteps(input: unknown, banSleep: boolean): AuthorStep[] {
   if (input === undefined) return [];
   if (!Array.isArray(input)) throw new InputError("steps must be an array");
   return input.map((raw, index) => {
     try {
-      return completeStep(parseStepInput(raw));
+      return completeStep(parseStepInput(raw, { banSleep }));
     } catch (error) {
       if (error instanceof InputError) {
-        throw new InputError(`steps[${index}]: ${error.message}`);
+        // The code stays (1.4.10: "sleep", "later-item").
+        throw new InputError(
+          `steps[${index}]: ${error.message}`,
+          error.status,
+          error.extra,
+        );
       }
       throw error;
     }
@@ -240,12 +257,47 @@ export function checkSecretReads(
   if (problem) throw new InputError(problem, status);
 }
 
+/**
+ * A captured value in a command needs a pattern on what captures it
+ * (BUG-022 M3): refused for what the change brings, not for what the
+ * runbook held before.
+ */
+export function checkCapturedReads(
+  before: readonly CapturingStep[],
+  after: readonly CapturingStep[],
+): void {
+  const problem = newCapturedRead(before, after);
+  if (problem) {
+    throw new InputError(problem, 400, { code: "captured-value" });
+  }
+}
+
 export function createAuthoring(
   store: Store,
   events: Events,
-  { owner, checkHosts, ownRunbook, ownStep, requireOpen }: Access,
+  {
+    owner,
+    checkHosts,
+    checkPlatforms,
+    ownRunbook,
+    ownStep,
+    requireOpen,
+  }: Access,
   { getRunbook }: Pick<Reads, "getRunbook">,
+  /** 1.4.10: whether a command may not wait a fixed time (no-sleep.ts). */
+  banSleep: () => Promise<boolean> = async () => true,
+  /** 1.4.10: where an agent's folder moves are written down. */
+  audit?: AgentAudit,
 ) {
+  /**
+   * The folder an agent wrote (1.4.10), spelled as one of its own
+   * folders when it is the same in other letters; undefined: not given.
+   */
+  async function agentFolder(caller: AgentCaller, value: unknown) {
+    if (value === undefined) return undefined;
+    return spellFolder(store, parseFolder(value), owner(caller));
+  }
+
   /**
    * Numbers the steps that are not amendments 1, 2, 3 in `order`. Each
    * step's amendments (same position, with a suffix) move with it.
@@ -273,10 +325,16 @@ export function createAuthoring(
     const values = parseValues(raw.values);
     const runbookOwner = parseOwner(raw.owner);
     const notify = parseNotify(raw.notify);
-    const steps = parseSteps(raw.steps);
+    const folder = (await agentFolder(caller, raw.folder)) ?? null;
+    const steps = parseSteps(raw.steps, await banSleep());
     checkStepCount(steps.length);
     await checkHosts(caller, steps);
+    checkPlatforms(caller, steps);
     checkSecretReads(
+      steps.map((step, index) => ({ ...step, position: index + 1 })),
+    );
+    checkCapturedReads(
+      [],
       steps.map((step, index) => ({ ...step, position: index + 1 })),
     );
     const hiddenValues = hiddenValueNames(steps);
@@ -298,6 +356,7 @@ export function createAuthoring(
       createdByUserId: owner(caller),
       owner: runbookOwner,
       notify,
+      folder,
     });
     const made: Numbered[] = [];
     for (const [index, step] of steps.entries()) {
@@ -332,7 +391,9 @@ export function createAuthoring(
       "status",
       "owner",
       "notify",
+      "folder",
     ]);
+    const folder = await agentFolder(caller, raw.folder);
     const patch = {
       title: raw.title === undefined ? undefined : parseTitle(raw.title),
       summary:
@@ -343,12 +404,27 @@ export function createAuthoring(
       notify: raw.notify === undefined ? undefined : parseNotify(raw.notify),
     };
     const before = await ownRunbook(caller, runbookId);
-    await events.changeRunbook(
-      runbookId,
-      before.status,
-      patch,
-      caller.token.name,
-    );
+    // A move (1.4.10) changes the folder only: any status, no new
+    // revision, no event. Agents fill it in for runbooks of any age.
+    if (folder !== undefined && folder !== before.folder) {
+      await store.setFolder([runbookId], folder);
+      await store.persist();
+      await audit?.({
+        action: "runbooks_runbook_folder",
+        ...runbookResource(before),
+        details: `runbook ${runbookId} moved from ${folderText(before.folder)} to ${folderText(folder)} by agent token "${caller.token.name}"`,
+        success: true,
+      });
+    }
+    const changes = Object.values(patch).some((value) => value !== undefined);
+    if (changes || folder === undefined) {
+      await events.changeRunbook(
+        runbookId,
+        before.status,
+        patch,
+        caller.token.name,
+      );
+    }
     return getRunbook(caller, runbookId);
   }
 
@@ -360,7 +436,7 @@ export function createAuthoring(
     const runbook = await ownRunbook(caller, runbookId);
     requireOpen(runbook);
     const raw = objectBody(input);
-    const steps = parseSteps(raw.steps);
+    const steps = parseSteps(raw.steps, await banSleep());
     if (steps.length === 0) throw new InputError("steps must not be empty");
     const existing = await store.listSteps(runbookId);
     checkStepCount(existing.length + steps.length);
@@ -394,6 +470,7 @@ export function createAuthoring(
       );
     }
     await checkHosts(caller, steps);
+    checkPlatforms(caller, steps);
     // Numbers in stdin are those after the insert, as the answer shows.
     const shift = steps.length;
     const added = steps.map((step, index) => ({
@@ -402,6 +479,11 @@ export function createAuthoring(
       suffix: null,
     }));
     checkSecretReads([
+      ...before,
+      ...added,
+      ...after.map((s) => ({ ...s, position: s.position + shift })),
+    ]);
+    checkCapturedReads(existing, [
       ...before,
       ...added,
       ...after.map((s) => ({ ...s, position: s.position + shift })),
@@ -456,7 +538,10 @@ export function createAuthoring(
         { code: "replaced" },
       );
     }
-    const patch = parseStepInput(input, { partial: true });
+    const patch = parseStepInput(input, {
+      partial: true,
+      banSleep: await banSleep(),
+    });
     if (Object.keys(patch).length === 0) {
       throw new InputError("nothing to change");
     }
@@ -496,8 +581,16 @@ export function createAuthoring(
       timeoutMs:
         patch.timeoutMs !== undefined ? patch.timeoutMs : step.timeoutMs,
       vm: patch.vm !== undefined ? patch.vm : step.vm,
+      sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
+      workdir: patch.workdir !== undefined ? patch.workdir : step.workdir,
     });
     await checkHosts(caller, [patch]);
+    checkPlatforms(caller, [
+      {
+        hostId: patch.hostId !== undefined ? patch.hostId : step.hostId,
+        sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
+      },
+    ]);
     checkSecretReads(
       (await store.listSteps(runbook.id)).map((other) =>
         other.id === stepId
@@ -523,9 +616,25 @@ export function createAuthoring(
       hideOutputFromAgents:
         patch.hideOutputFromAgents ?? step.hideOutputFromAgents,
       interactive: patch.interactive ?? step.interactive,
+      sequence: patch.sequence !== undefined ? patch.sequence : step.sequence,
     };
-    const all = (await store.listSteps(runbook.id)).map((other) =>
-      other.id === stepId ? changed : other,
+    const listed = await store.listSteps(runbook.id);
+    const all = listed.map((other) => (other.id === stepId ? changed : other));
+    // A captured value in a command needs a pattern (BUG-022 M3).
+    checkCapturedReads(
+      listed,
+      listed.map((other) =>
+        other.id === stepId
+          ? {
+              ...changed,
+              owner: patch.owner !== undefined ? patch.owner : step.owner,
+              where: patch.where !== undefined ? patch.where : step.where,
+              command:
+                patch.command !== undefined ? patch.command : step.command,
+              checks: patch.checks ?? step.checks,
+            }
+          : other,
+      ),
     );
     if (patch.owner !== undefined || patch.checks !== undefined) {
       checkAgentChecks(
@@ -553,7 +662,8 @@ export function createAuthoring(
       patch.captures !== undefined ||
       patch.decision !== undefined ||
       patch.vm !== undefined ||
-      patch.interactive !== undefined
+      patch.interactive !== undefined ||
+      patch.sequence !== undefined
     ) {
       recheckReaders(
         all,

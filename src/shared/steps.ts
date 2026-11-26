@@ -13,6 +13,7 @@
 
 import type { StepName } from "./api.js";
 import { vmValueNames } from "./vms.js";
+import { sequenceCaptureNames, type SequenceItem } from "./sequence.js";
 
 export interface StepNumber {
   position: number;
@@ -21,15 +22,18 @@ export interface StepNumber {
 
 /**
  * The values a step sets, in one place: its captures, its decision's value
- * and, for a VM step (1.4.7), the VM's state, address, addresses and id.
+ * and, for a VM step (1.4.7), the VM's state, address, addresses and id;
+ * for a sequence step (1.4.10), the captures of its run items.
  */
 export function stepValueNames(step: {
   captures?: ReadonlyArray<{ name: string }>;
   decision?: { value: string | null } | null;
   vm?: { value: string | null } | null;
+  sequence?: ReadonlyArray<SequenceItem> | null;
 }): string[] {
   return [
     ...(step.captures ?? []).map((capture) => capture.name),
+    ...sequenceCaptureNames(step.sequence),
     ...(step.decision?.value ? [step.decision.value] : []),
     ...vmValueNames(step.vm ?? null),
   ];

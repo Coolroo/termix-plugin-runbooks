@@ -130,9 +130,28 @@ export function vmValueNames(spec: Pick<VmSpec, "value"> | null): string[] {
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
+/**
+ * The built-in patterns of a VM step's values (BUG-022 M3): later commands
+ * may use them with no check of the author's, so each has a fixed form.
+ * A VM's addresses come from the guest (its integration services), so an
+ * address that is not only an IPv4 or IPv6 address's characters is left
+ * out; an id or state of another form is not set.
+ */
+export const VM_VALUE_FORMS = {
+  state: /^[a-z][a-z-]{0,31}$/,
+  id: /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,
+  address:
+    /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f:]{2,39}(?:\d{1,3}(?:\.\d{1,3}){3})?)$/,
+} as const;
+
+/** The VM's addresses of the fixed form, in HAW's order. */
+function vmAddresses(vm: Pick<Vm, "addresses">): string[] {
+  return (vm.addresses ?? []).filter((a) => VM_VALUE_FORMS.address.test(a));
+}
+
 /** The address a step gives as `ip`: the first IPv4 one, else the first. */
 export function vmAddress(vm: Pick<Vm, "addresses">): string | null {
-  const addresses = vm.addresses ?? [];
+  const addresses = vmAddresses(vm);
   return addresses.find((a) => IPV4.test(a)) ?? addresses[0] ?? null;
 }
 
@@ -140,20 +159,22 @@ export function vmAddress(vm: Pick<Vm, "addresses">): string | null {
  * The values a VM step sets from the VM: <value>.state and .id always,
  * .ip and .addresses (joined with commas) only when the VM has an address,
  * so a later step that needs one waits for it as for any value not set.
+ * Each only in its fixed form (VM_VALUE_FORMS).
  */
 export function vmValues(
   spec: Pick<VmSpec, "value">,
   vm: Pick<Vm, "state" | "id" | "addresses">,
 ): Record<string, string> {
   if (!spec.value) return {};
-  const out: Record<string, string> = {
-    [`${spec.value}.state`]: vm.state,
-    [`${spec.value}.id`]: vm.id,
-  };
+  const out: Record<string, string> = {};
+  if (VM_VALUE_FORMS.state.test(vm.state)) {
+    out[`${spec.value}.state`] = vm.state;
+  }
+  if (VM_VALUE_FORMS.id.test(vm.id)) out[`${spec.value}.id`] = vm.id;
   const ip = vmAddress(vm);
   if (ip) {
     out[`${spec.value}.ip`] = ip;
-    out[`${spec.value}.addresses`] = vm.addresses.join(",");
+    out[`${spec.value}.addresses`] = vmAddresses(vm).join(",");
   }
   return out;
 }

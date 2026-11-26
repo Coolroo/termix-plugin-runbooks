@@ -2,7 +2,7 @@
 
 import type { Router } from "express";
 import { InputError } from "../core/errors.js";
-import { body, wrap } from "../core/http.js";
+import { body, idParam, wrap } from "../core/http.js";
 import { optionalText, parseOutcome } from "../core/parse.js";
 import { now } from "../runbooks/store/store.js";
 import {
@@ -24,12 +24,29 @@ import { isAgentStep, isOutsideStep, stepLabel } from "../../shared/steps.js";
 import { redact } from "./redact.js";
 import { describeStdin, stepStdin } from "./stdin.js";
 import { createRunner, LINE_END, MAX_OUTPUT_BYTES } from "./runner.js";
-import { MAX_TYPED_BYTES } from "../../shared/limits.js";
+import { MAX_PASTED_CHARS, MAX_TYPED_BYTES } from "../../shared/limits.js";
+import { OUTPUT_SOURCES, type OutputSource } from "../../shared/api.js";
+import { resumeIndex } from "../../shared/sequence.js";
+import { createSequenceRunner } from "./sequence-run.js";
 
 /** How long Stop waits for the run to be written before it answers. */
 const STOP_WAIT_MS = 5000;
 const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
+
+/**
+ * Where Mark done's output came from (1.4.10): the page says so, and the
+ * person saw and could change it. Pasted when left out, as before.
+ */
+function parseOutputSource(value: unknown): OutputSource {
+  if (value === undefined || value === null) return "pasted";
+  if (!OUTPUT_SOURCES.includes(value as OutputSource)) {
+    throw new InputError(
+      `outputSource must be one of ${OUTPUT_SOURCES.join(", ")}`,
+    );
+  }
+  return value as OutputSource;
+}
 
 export function registerRunRoutes(router: Router, kit: PersonKit): void {
   const {
@@ -51,6 +68,35 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
     audit,
   } = kit;
   const { readStdin, madeSecretTexts, finishRun, execute } = createRunner(kit);
+  const sequences = createSequenceRunner(kit);
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/runs/{id}/attempts/{attemptId}:
+   *   get:
+   *     summary: One attempt of a wait or retried item, with its output
+   *     description: >
+   *       1.4.10 (BUG-022 M2). The runbook's views read attempts without
+   *       their output; the page reads one attempt's output here when the
+   *       person opens it. Secrets in it are hidden as in any run output.
+   *       An earlier attempt keeps only the last 4 KB of each stream.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The attempt }
+   *       404: { description: No such attempt in this run }
+   */
+  router.get(
+    "/runs/:id/attempts/:attemptId",
+    ...kit.use,
+    wrap(async (req) => {
+      const runId = pathId(req);
+      const attemptId = idParam(req, "attempt not found", "attemptId");
+      const [attempt] = await store.listRunAttempts({ id: attemptId, runId });
+      if (!attempt) throw new InputError("attempt not found", 404);
+      const { runId: _runId, runbookId: _runbookId, ...shown } = attempt;
+      return shown;
+    }),
+  );
 
   /**
    * @openapi
@@ -86,6 +132,29 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         // whatever key the server shows. Refuse rather than trust it.
         if (!target.host.hostKeyFingerprint) {
           throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
+        }
+        // 1.4.10: a sequence runs its items one after another.
+        if (step.sequence && target.items) {
+          const hidden = await madeSecretTexts(step, bundle);
+          await auditSkippedWait(req, step, target.skippedWait);
+          await auditNotNeeded(req, step, target.overridden);
+          const runId = await sequences.start(
+            req,
+            step,
+            bundle,
+            {
+              by: actor(),
+              hostId: target.hostId,
+              command: target.command,
+              hash: target.hash,
+              items: target.items,
+              skippedWait: target.skippedWait,
+            },
+            hidden,
+            release,
+          );
+          handedOff = true;
+          return shownRun(runId);
         }
         const input = target.stdin
           ? await readStdin(step, bundle, target.stdin)
@@ -144,6 +213,207 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       }
     }),
   );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/continue:
+   *   post:
+   *     summary: Continue a sequence step from the item where it stopped
+   *     description: >
+   *       Body { revision, commandHash, fromItem?, waitAnyway?, outOfOrder?,
+   *       conditionAnyway? } (1.4.10). The step's latest run must be a
+   *       sequence run that failed, was stopped, or was cut off by a
+   *       restart. Makes a new run: the items that passed are carried over
+   *       and do not run again, and the first item that did not pass runs
+   *       next. fromItem, when given, must be that item's number. Refused
+   *       with 409 when the sequence changed since that run.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The new run, still running }
+   *       409: { description: Nothing to continue, changed, stale, wait or order }
+   */
+  router.post(
+    "/steps/:id/continue",
+    ...act,
+    wrap(async (req) => {
+      const stepId = pathId(req);
+      const release = claim(stepId);
+      let handedOff = false;
+      try {
+        const { step, bundle } = await stepContext(stepId);
+        if (!step.sequence) {
+          throw new InputError(
+            "only a sequence step continues from an item: use Run",
+            400,
+            { code: "not-sequence" },
+          );
+        }
+        const latest = bundle.runsByStep.get(step.id)?.[0];
+        const index = latest?.items ? resumeIndex(latest.items) : null;
+        if (
+          !latest ||
+          latest.mode !== "exec" ||
+          latest.status !== "failed" ||
+          index === null
+        ) {
+          throw new InputError(
+            "this step has no stopped or failed sequence run to continue: use Run",
+            409,
+            { code: "nothing-to-continue" },
+          );
+        }
+        const input = body(req);
+        // The person chose to go on from this run: it is not a repeat.
+        const target = await checkRunnable(
+          step,
+          bundle,
+          { ...input, confirmRepeat: true },
+          { via: "run" },
+        );
+        if (!target.host.hostKeyFingerprint) {
+          throw new InputError(NO_HOST_KEY, 409, { code: "no-host-key" });
+        }
+        if (
+          !target.items ||
+          latest.commandHash !== target.hash ||
+          latest.items!.length !== step.sequence.length
+        ) {
+          throw new InputError(
+            "the sequence changed since that run: run it again from item 1",
+            409,
+            { code: "changed" },
+          );
+        }
+        if (
+          input.fromItem !== undefined &&
+          input.fromItem !== null &&
+          input.fromItem !== index + 1
+        ) {
+          throw new InputError(`that run goes on from item ${index + 1}`, 409, {
+            code: "changed",
+          });
+        }
+        const hidden = await madeSecretTexts(step, bundle);
+        await auditSkippedWait(req, step, target.skippedWait);
+        await auditNotNeeded(req, step, target.overridden);
+        const runId = await sequences.start(
+          req,
+          step,
+          bundle,
+          {
+            by: actor(),
+            hostId: target.hostId,
+            command: target.command,
+            hash: target.hash,
+            items: target.items,
+            skippedWait: target.skippedWait,
+          },
+          hidden,
+          release,
+          { run: latest, index },
+        );
+        handedOff = true;
+        await audit(
+          req,
+          "runbooks_step_continue",
+          step,
+          `runbook ${step.runbookId} step ${stepLabel(step)} run ${runId} continues run ${latest.id} from item ${index + 1}`,
+          true,
+        );
+        return shownRun(runId);
+      } finally {
+        if (!handedOff) release();
+      }
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/skip-delay:
+   *   post:
+   *     summary: End the delay item that runs now, and go on
+   *     description: >
+   *       1.4.10. The delay item ends as skipped, which counts as passed,
+   *       and the next item starts. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       409: { description: No delay of this step runs now }
+   */
+  router.post(
+    "/steps/:id/skip-delay",
+    ...act,
+    wrap(async (req) => {
+      const { step } = await stepContext(pathId(req));
+      const record = live.byStep(step.id);
+      if (!record?.skipDelay) {
+        throw new InputError("no delay of this step is running", 409, {
+          code: "no-delay",
+        });
+      }
+      await mayHurry(record.runId);
+      await record.skipDelay(actor());
+      return shownRun(record.runId);
+    }),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/steps/{id}/try-now:
+   *   post:
+   *     summary: Start the next attempt of the item that waits between two
+   *     description: >
+   *       1.4.10, phase 2. A wait item, or a run item with retry, that waits
+   *       for its next attempt starts it now: the rest of the delay is
+   *       skipped. The attempt counts as one of its attempts and keeps the
+   *       item's time limit. Audited. A person only.
+   *     tags: [Runbooks]
+   *     responses:
+   *       200: { description: The run }
+   *       409: { description: No item of this step waits for its next attempt }
+   */
+  router.post(
+    "/steps/:id/try-now",
+    ...act,
+    wrap(async (req) => {
+      const { step } = await stepContext(pathId(req));
+      const record = live.byStep(step.id);
+      if (!record?.tryNow) {
+        throw new InputError(
+          "no item of this step waits for its next attempt",
+          409,
+          { code: "no-wait" },
+        );
+      }
+      await mayHurry(record.runId);
+      await record.tryNow(actor());
+      return shownRun(record.runId);
+    }),
+  );
+
+  /**
+   * Skip and Try now make the next item or attempt start sooner, on the
+   * host, as the person who pressed Run (BUG-022 L2): only that person, or
+   * a person who may connect to the host too, may press them. Stop needs
+   * neither: it only ends work.
+   */
+  async function mayHurry(runId: number): Promise<void> {
+    const run = await store.getRun(runId);
+    if (!run || run.userId === actor()) return;
+    const access =
+      run.hostId === null
+        ? { hasAccess: false }
+        : await kit.ctx.hosts
+            .checkAccess(run.hostId, "connect")
+            .catch(() => ({ hasAccess: false }));
+    if (!access.hasAccess) {
+      throw new InputError(
+        `only ${run.userId}, who started this run, or a person who can connect to its host can do this`,
+        403,
+        { code: "not-your-run" },
+      );
+    }
+  }
 
   /**
    * @openapi
@@ -255,7 +525,10 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
    * /plugin-api/runbooks/runs/{id}/complete:
    *   post:
    *     summary: Finish a terminal run with the pasted output
-   *     description: Body { pastedOutput, exitCode?, outcome done|failed }.
+   *     description: >
+   *       Body { pastedOutput, exitCode?, outcome done|failed, outputSource? }.
+   *       outputSource is pasted (the default), captured (read from the
+   *       terminal by the page, 1.4.10) or captured-edited.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The run }
@@ -272,13 +545,16 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
       const input = body(req);
       const outcome = parseOutcome(input.outcome);
       const pasted =
-        optionalText(input.pastedOutput, "pastedOutput", MAX_OUTPUT_BYTES) ??
+        optionalText(input.pastedOutput, "pastedOutput", MAX_PASTED_CHARS) ??
         "";
       if (outcome === "done" && pasted.trim() === "") {
         throw new InputError(
           "paste at least one line of the output to mark the run done",
         );
       }
+      // Text read from the terminal is kept as the pasted output, so its
+      // secrets are hidden and its checks and captures run as for a paste.
+      const source = parseOutputSource(input.outputSource);
       const exitCode = input.exitCode ?? null;
       if (exitCode !== null && !Number.isInteger(exitCode)) {
         throw new InputError("exitCode must be an integer or null");
@@ -299,7 +575,11 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
         step,
         outcome,
         pasted,
-        { pastedOutput: pasted, exitCode: exitCode as number | null },
+        {
+          pastedOutput: pasted,
+          exitCode: exitCode as number | null,
+          outputSource: pasted === "" ? null : source,
+        },
         {
           // Mark done tests the checks on what was pasted; Mark failed
           // does not.
@@ -550,6 +830,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
               startedAt: at,
               finishedAt: at,
               pastedOutput: pasted,
+              outputSource: pasted === null ? null : "pasted",
               note: note.trim() === "" ? null : note,
               checks: results,
               captured,

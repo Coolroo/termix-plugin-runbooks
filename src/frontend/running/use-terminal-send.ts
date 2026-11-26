@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { hostLabel } from "../ui/format";
 import { openSessionFor } from "./terminal";
+import { endCapture, readerFor, startCapture } from "./terminal-capture";
 import type { Flags, RunbookKit } from "../runbooks/use-runbook";
 import type { Run, Step } from "../api-types";
 
@@ -55,6 +56,16 @@ export function useTerminalSend(
       if (!session) return;
       const run = await attempt("terminal", step, flags);
       if (!run) return;
+      // Notes the prompt before the command is typed, so Mark done can
+      // read what the command prints (1.4.10). Without a terminal handle
+      // the paste box works as before.
+      const reading = startCapture({
+        runId: run.id,
+        sessionId: session.id,
+        command: run.command,
+        reader: () => readerFor(shellRef.current, session.id),
+        timeoutMs: step.timeoutMs,
+      });
       let sent = false;
       try {
         sent =
@@ -69,8 +80,13 @@ export function useTerminalSend(
       }
       if (sent) {
         showTab(session.id);
-        toast.success(t("terminal.sent", { host: hostLabel(t, step) }));
+        toast.success(
+          t(reading ? "terminal.sentRead" : "terminal.sent", {
+            host: hostLabel(t, step),
+          }),
+        );
       } else {
+        endCapture(run.id);
         toast.error(t("terminal.sendFailed"));
       }
       await load();

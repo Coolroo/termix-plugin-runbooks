@@ -5,6 +5,7 @@
  * Two of these would let a step run twice, so nothing else makes one.
  */
 
+import { createPlatforms, type Platforms } from "../events/platforms.js";
 import type { Request } from "express";
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import { InputError } from "../core/errors.js";
@@ -16,6 +17,7 @@ import {
   loadBundle,
   personView,
   typedSizes,
+  withItems,
   type RunbookBundle,
 } from "./view.js";
 import {
@@ -39,6 +41,8 @@ import { isSshHost } from "../../shared/hosts.js";
 import { isOutsideStep, stepLabel } from "../../shared/steps.js";
 import type { RepeatConflict, RunSummary } from "../../shared/api.js";
 import { notNeededIds, type StepCondition } from "../conditions/conditions.js";
+import { BAN_SLEEP_SETTING, filledSleep, itemFilledSleep } from "./no-sleep.js";
+import { withWorkdir } from "../../shared/sequence.js";
 
 const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** How long a failed delete of a closed runbook's secrets waits to retry. */
@@ -69,6 +73,8 @@ export function createPersonKit(
   events: Events,
   notify: { enabled: () => Promise<boolean> },
   haw: Haw,
+  /** Which hosts runs found to be Windows hosts (1.4.10, phase 3). */
+  platforms: Platforms = createPlatforms(),
 ) {
   const actor = () => ctx.currentActor() as string;
 
@@ -158,7 +164,14 @@ export function createPersonKit(
   /** One run as the person view shows it, live output included. */
   async function shownRun(runId: number) {
     const run = await store.getRun(runId);
-    return run ? typedSizes(live.show([run])[0], actor()) : null;
+    if (!run) return null;
+    // A sequence's run shows its items, with their attempts (1.4.10).
+    const [withList] = withItems(
+      [run],
+      await store.listRunItems({ runId }),
+      await store.listRunAttempts({ runId }),
+    );
+    return typedSizes(live.show([withList])[0], actor());
   }
 
   async function hostNamer() {
@@ -229,8 +242,16 @@ export function createPersonKit(
       throw new InputError(OUTSIDE_STEP, 409, { code: "outside" });
     }
     if (step.vm) throw vmStepProblem();
-    if (step.hostId === null || step.command === null) {
+    if (step.hostId === null || (step.command === null && !step.sequence)) {
       throw new InputError("this step has no command to run", 400);
+    }
+    // 1.4.10: a terminal runs one command; a sequence has delays and more.
+    if (step.sequence && options.via === "terminal") {
+      throw new InputError(
+        "this step is a sequence of items: use Run; Send to terminal runs one command",
+        409,
+        { code: "sequence" },
+      );
     }
     // The author said how it starts (1.4.6): before the questions a person
     // could answer, since no answer changes it.
@@ -241,6 +262,21 @@ export function createPersonKit(
     requireRevision(step, input);
     requireValues(resolved.missing);
     if (input.commandHash !== resolved.hash) throw staleProblem();
+    // A value that makes the command wait a fixed time (BUG-022 L6): the
+    // ban reads commands when written, and values only once filled in.
+    if ((await ctx.settings.get<boolean>(BAN_SLEEP_SETTING)) !== false) {
+      const sleep = resolved.items
+        ? step.sequence!.reduce<string | null>(
+            (found, item, index) =>
+              found ?? itemFilledSleep(item, resolved.items![index]),
+            null,
+          )
+        : filledSleep(
+            withWorkdir(step.command!, step.workdir),
+            resolved.command!,
+          );
+      if (sleep) throw new InputError(sleep, 400, { code: "sleep" });
+    }
     // Before the questions about order and repeats: no answer to them makes
     // a remote desktop host run a shell command.
     const host = await sshHostFor(
@@ -299,6 +335,8 @@ export function createPersonKit(
       hash: resolved.runHash!,
       /** The checks with their values filled in (BUG-007). */
       checks: resolved.checks,
+      /** 1.4.10: a sequence's items as approved; null for one command. */
+      items: resolved.items,
       stdin,
       /** Seconds of the wait the person chose to skip, if any. */
       skippedWait: wait.skippedSeconds,
@@ -419,6 +457,7 @@ export function createPersonKit(
     events,
     notify,
     haw,
+    platforms,
     actor,
     use,
     act,

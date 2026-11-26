@@ -253,7 +253,7 @@ describe("running a step live", () => {
 
   it("fails a run that runs past its time limit", async () => {
     const { s, runbook } = await setup([
-      { title: "Hang", hostId: 1, command: "sleep 600", timeoutMs: 1000 },
+      { title: "Hang", hostId: 1, command: "hang-forever", timeoutMs: 1000 },
     ]);
     const { started, channel } = await startHeld(
       s,

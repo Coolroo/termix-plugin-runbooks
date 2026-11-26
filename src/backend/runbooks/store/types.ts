@@ -8,6 +8,11 @@ import type { StoredRule } from "../../conditions/conditions.js";
 import type { DecisionSpec } from "../../../shared/decisions.js";
 import type { VmSpec } from "../../../shared/vms.js";
 import type {
+  RunAttempt,
+  RunItem,
+  SequenceItem,
+} from "../../../shared/sequence.js";
+import type {
   AmendKind,
   RunbookOwner,
   RunbookStatus,
@@ -60,6 +65,8 @@ export interface RunbookRow {
   owner: RunbookOwner | null;
   /** Event types the agent wants delivered (1.4.0); null: the default. */
   notify: string[] | null;
+  /** The folder the list shows it in (1.4.10); null: No folder. */
+  folder: string | null;
 }
 
 /** Something that happened to a runbook (1.4.0). */
@@ -119,6 +126,10 @@ export interface StepRow {
   interactive: boolean;
   /** 1.4.7: a VM step's action through HAW; null if not. */
   vm: VmSpec | null;
+  /** 1.4.10: the items one Run runs in order; null for a one-command step. */
+  sequence: SequenceItem[] | null;
+  /** 1.4.10: the folder the command, or each run item, starts in. */
+  workdir: string | null;
   /** 1.4.0: the letter of an amendment (3a); null for a step that is not one. */
   suffix: string | null;
   /** 1.4.0: the step this one amends, how, why and by which token. */
@@ -175,4 +186,17 @@ export interface NewStep {
   interactive?: boolean;
   /** 1.4.7: a VM step; null or left out for any other step. */
   vm?: VmSpec | null;
+  /** 1.4.10: a sequence step's items; null or left out for any other. */
+  sequence?: SequenceItem[] | null;
+  /** 1.4.10: left out: none. */
+  workdir?: string | null;
 }
+
+/** A run item as stored (1.4.10), without its attempts. */
+export type RunItemRow = Omit<RunItem, "attempts"> & {
+  stepId: number;
+  runbookId: number;
+};
+
+/** An attempt as stored (1.4.10, phase 2). */
+export type RunAttemptRow = RunAttempt & { runId: number; runbookId: number };

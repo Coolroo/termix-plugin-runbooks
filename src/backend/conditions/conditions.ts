@@ -17,6 +17,10 @@
  * Pure functions, shared by the routes, the agent side and the tests.
  */
 
+import {
+  sequenceCaptureNames,
+  type SequenceItem,
+} from "../../shared/sequence.js";
 import crypto from "node:crypto";
 import type { RunRow, StepRow } from "../runbooks/store/types.js";
 import type { Capture, Values } from "../values/values.js";
@@ -185,6 +189,8 @@ export interface KnownStep extends StepNumber {
   interactive?: boolean;
   /** 1.4.7: a VM step sets <value>.state, .ip, .addresses and .id. */
   vm?: VmSpec | null;
+  /** 1.4.10: a sequence step captures in its run items. */
+  sequence?: SequenceItem[] | null;
 }
 
 /** Where a rule is stored: the step with the rule and the steps there. */
@@ -381,7 +387,10 @@ function hiddenNameIn(names: string[], ctx: StoreContext): string | null {
  */
 export function hiddenValueNames(
   steps: ReadonlyArray<
-    Pick<KnownStep, "captures" | "decision" | "vm" | "hideOutputFromAgents">
+    Pick<
+      KnownStep,
+      "captures" | "decision" | "vm" | "hideOutputFromAgents" | "sequence"
+    >
   >,
 ): Set<string> {
   const names = new Set<string>();
@@ -499,7 +508,10 @@ const outputLeaf: LeafKind = {
     }
     if (
       check.type === "value" &&
-      !(step.captures ?? []).some((capture) => capture.name === check.name)
+      ![
+        ...(step.captures ?? []).map((capture) => capture.name),
+        ...sequenceCaptureNames(step.sequence),
+      ].includes(check.name)
     ) {
       throw new RuleError(
         `output: "${check.name}" is not a capture of step ${String(leaf.step)}`,

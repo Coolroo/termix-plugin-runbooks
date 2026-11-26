@@ -46,6 +46,9 @@ export const runbooks = defineTable(
     // JSON array of the event types the agent wants delivered (1.4.0).
     // Null: the default list.
     notify: text(),
+    // The folder the list shows it in (1.4.10), one level: at most 60
+    // characters, no "/". Null: No folder.
+    folder: varchar(60),
   },
   {
     indexes: [
@@ -133,6 +136,13 @@ export const steps = defineTable(
     // step (1.4.7), whose button asks HAW VM Manager to act on one VM as
     // the person who presses it. Null: not such a step.
     vm: text(),
+    // JSON array of items: a sequence step (1.4.10), whose one Run runs
+    // each item in order (src/shared/sequence.ts). Null: a step with one
+    // command, or none, as before.
+    sequence: text(),
+    // The folder each run item, or the one command, starts in (1.4.10).
+    // Null: the login's home, as before.
+    workdir: text(),
     revision: integer().notNull(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
@@ -192,6 +202,10 @@ export const runs = defineTable(
     // JSON { message, secretsMissing, secretNotStored, slowCaptures }: the
     // parts that error was made from, so agents get it built (1.4.6).
     errorPartsJson: text(),
+    // Where a terminal run's pasted output came from (1.4.10): pasted (by
+    // the person), captured (read from the terminal, kept as read) or
+    // captured-edited. Null for no pasted output, and for older runs.
+    outputSource: varchar(16),
   },
   {
     indexes: [
@@ -282,5 +296,122 @@ export const state = defineTable(
   {},
 );
 
+/*
+ * The items of a sequence step's run (1.4.10), one row each: what the item
+ * ran, its output, exit code, check results, captures, start and end. The
+ * run row keeps the whole: its status, and the items' output joined. The
+ * attempts of a wait item, or of a run item with retry, are rows of
+ * run_attempts, by item id.
+ */
+export const runItems = defineTable(
+  "run_items",
+  {
+    id: id(),
+    runId: integer().notNull(),
+    stepId: integer().notNull(),
+    runbookId: integer().notNull(),
+    // 1-based: the item's place in the step's sequence.
+    position: integer().notNull(),
+    // run | delay | wait | port | http | file | container | unit | log | job
+    type: varchar(16).notNull(),
+    label: text(),
+    // A run or wait item's command as it ran, values filled in; null for a
+    // delay.
+    command: text(),
+    // A delay's seconds and reason.
+    seconds: integer(),
+    reason: text(),
+    // stop | continue
+    onFail: varchar(16).notNull(),
+    // waiting | running | passed | failed | skipped
+    status: varchar(16).notNull(),
+    startedAt: timestamp(),
+    finishedAt: timestamp(),
+    // When a running delay ends, unless a person skips it.
+    plannedEndAt: timestamp(),
+    exitCode: integer(),
+    // A wait or retried item's: the last attempt's output.
+    stdout: text(),
+    stderr: text(),
+    truncated: boolean().notNull(),
+    timedOut: boolean().notNull(),
+    error: text(),
+    // JSON array of { label, ok, detail }, one per check of the item.
+    checks: text(),
+    // JSON object, name -> string: kept only when the item passed.
+    captured: text(),
+    // The person who skipped a delay.
+    skippedBy: varchar(255),
+    // Continue from item N: the run this passed item was carried from.
+    fromRunId: integer(),
+    // Phase 2, a wait item or a run item with retry: the most attempts,
+    // when its time limit ends, and when the next attempt starts while it
+    // waits between two. Null on any other item.
+    maxAttempts: integer(),
+    endsBy: timestamp(),
+    nextAttemptAt: timestamp(),
+    // Phase 3, an event item: the state its last check read, in fixed
+    // words ("healthy", "HTTP 503").
+    result: varchar(120),
+  },
+  {
+    indexes: [
+      { name: "idx_p_runbooks_run_items_run", columns: ["runId"] },
+      { name: "idx_p_runbooks_run_items_runbook", columns: ["runbookId"] },
+    ],
+  },
+);
+
+/*
+ * The attempts of a wait item, or of a run item with retry (1.4.10, phase
+ * 2), one row each, by run item id: its output (capped as a run's), exit
+ * code, check and stopIf results, start, end, and why it did not pass.
+ */
+export const runAttempts = defineTable(
+  "run_attempts",
+  {
+    id: id(),
+    itemId: integer().notNull(),
+    runId: integer().notNull(),
+    runbookId: integer().notNull(),
+    // 1-based.
+    attempt: integer().notNull(),
+    // running | passed | failed
+    status: varchar(16).notNull(),
+    startedAt: timestamp().notNull(),
+    finishedAt: timestamp(),
+    exitCode: integer(),
+    stdout: text(),
+    stderr: text(),
+    truncated: boolean().notNull(),
+    timedOut: boolean().notNull(),
+    error: text(),
+    // JSON arrays of { label, ok, detail }: the item's checks, and a wait
+    // item's stopIf checks (ok: it matched).
+    checks: text(),
+    stopIf: text(),
+    // exit | check | timeout | connect | stop-if | stopped | interrupted |
+    // not-yet | fail-state; null while it runs and when it passed.
+    why: varchar(16),
+    // Phase 3, an event's check: the state it read, in fixed words.
+    result: varchar(120),
+  },
+  {
+    indexes: [
+      { name: "idx_p_runbooks_run_attempts_item", columns: ["itemId"] },
+      { name: "idx_p_runbooks_run_attempts_runbook", columns: ["runbookId"] },
+    ],
+  },
+);
+
 // termix-plugin migrations reads this list.
-export const tables = [runbooks, steps, runs, tokens, events, state];
+export const tables = [
+  runbooks,
+  steps,
+  runs,
+  tokens,
+  events,
+  state,
+  runItems,
+  runAttempts,
+];

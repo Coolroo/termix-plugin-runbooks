@@ -4,11 +4,27 @@
  */
 
 import type { RunRow, RunbookRow, StepRow } from "../runbooks/store/types.js";
-import { approvalHash, commandHash, resolve, type Values } from "./values.js";
+import {
+  approvalHash,
+  commandHash,
+  placeholders,
+  resolve,
+  type Values,
+} from "./values.js";
 import { stdinKey, type StdinSource } from "../running/stdin.js";
 import { fillStepText, uniqueNames } from "../../shared/fill.js";
 import { fillChecks, type Check } from "../../shared/checks.js";
 import type { EffectiveValue } from "../../shared/api.js";
+import {
+  isCommandItem,
+  isEventItem,
+  itemChecks,
+  sequenceText,
+  withWorkdir,
+  type ResolvedItem,
+  type SequenceItem,
+} from "../../shared/sequence.js";
+import { EVENT_TEXT_FIELDS } from "../../shared/events.js";
 
 /**
  * Author values, then captured values in step order (each step's runs oldest
@@ -71,6 +87,139 @@ export interface ResolvedStep {
   missing: string[];
   /** The checks with their values filled in (BUG-007). */
   checks: Check[];
+  /**
+   * A sequence step's items (1.4.10) with their values filled in; null
+   * for any other step. `command` is then the whole sequence as one text.
+   */
+  items: ResolvedItem[] | null;
+}
+
+/**
+ * The {{name}}s in what an item runs or reads on the host: a command
+ * item's command, or an event's text fields (EVENT_TEXT_FIELDS), as
+ * resolveItem fills them. Not its checks.
+ */
+export function itemTextNames(item: SequenceItem): string[] {
+  if (item.type === "delay") return [];
+  if (isEventItem(item)) {
+    const fields = item as unknown as Record<string, unknown>;
+    return uniqueNames(
+      ...EVENT_TEXT_FIELDS[item.type].map((field) =>
+        typeof fields[field] === "string"
+          ? placeholders(fields[field] as string)
+          : [],
+      ),
+    );
+  }
+  return placeholders(item.command);
+}
+
+/**
+ * A sequence item with the values it gets (1.4.10): `values` without the
+ * names that an earlier item of the step captures, which the run fills in
+ * once that item ran. Names those items capture are `later`, not missing.
+ */
+export function resolveItem(
+  item: SequenceItem,
+  position: number,
+  values: Values,
+  earlier: ReadonlySet<string>,
+): ResolvedItem & { missing: string[] } {
+  if (item.type === "delay") {
+    return { ...item, position, later: [], missing: [] };
+  }
+  const known = Object.fromEntries(
+    Object.entries(values).filter(([name]) => !earlier.has(name)),
+  );
+  if (isEventItem(item)) {
+    // Phase 3: an event's names, paths and URL may hold values; its
+    // patterns never do (a value would change what the pattern means).
+    const filled: Record<string, unknown> = { ...item };
+    const used: string[][] = [];
+    for (const field of EVENT_TEXT_FIELDS[item.type]) {
+      const text = filled[field];
+      if (typeof text !== "string") continue;
+      const done = resolve(text, known);
+      filled[field] = done.text;
+      used.push(done.missing);
+    }
+    const names = uniqueNames(...used);
+    return {
+      ...(filled as unknown as typeof item),
+      position,
+      later: names.filter((name) => earlier.has(name)),
+      missing: names.filter((name) => !earlier.has(name)),
+    };
+  }
+  const command = resolve(item.command, known);
+  const checks = fillChecks(item.checks, known);
+  if (item.type === "wait") {
+    // Phase 2: a wait's stopIf checks get their values as its checks do.
+    const stopIf = fillChecks(item.stopIf, known);
+    const used = uniqueNames(command.missing, checks.missing, stopIf.missing);
+    return {
+      ...item,
+      command: command.text,
+      checks: checks.checks,
+      stopIf: stopIf.checks,
+      position,
+      later: used.filter((name) => earlier.has(name)),
+      missing: used.filter((name) => !earlier.has(name)),
+    };
+  }
+  const used = uniqueNames(command.missing, checks.missing);
+  return {
+    ...item,
+    command: command.text,
+    checks: checks.checks,
+    position,
+    later: used.filter((name) => earlier.has(name)),
+    missing: used.filter((name) => !earlier.has(name)),
+  };
+}
+
+/**
+ * A sequence step's items as the person approves them (1.4.10): each
+ * filled with the values known now, the whole as one text, and its hash
+ * over the host, every item and the workdir, with the checks when they use
+ * values. Its run is the same text whatever item it continues from.
+ */
+function resolveSequence(
+  step: StepRow,
+  sequence: SequenceItem[],
+  hostId: number,
+  values: Values,
+): ResolvedStep {
+  const earlier = new Set<string>();
+  const missing: string[][] = [];
+  const items = sequence.map((item, index) => {
+    const { missing: lacking, ...resolved } = resolveItem(
+      item,
+      index + 1,
+      values,
+      earlier,
+    );
+    missing.push(lacking);
+    if (isCommandItem(item)) {
+      for (const capture of item.captures) earlier.add(capture.name);
+    }
+    return resolved;
+  });
+  const lacking = uniqueNames(...missing);
+  // The text holds each item's schedule too (phase 2), so the person
+  // approves the attempts and time limits along with the commands.
+  const text = sequenceText(items, step.workdir);
+  const runHash = lacking.length ? null : commandHash(hostId, text, null);
+  const rawChecks = sequence.flatMap(itemChecks);
+  const filledChecks = items.flatMap(itemChecks);
+  return {
+    command: text,
+    hash: runHash && approvalHash(runHash, rawChecks, filledChecks),
+    runHash,
+    missing: lacking,
+    checks: [],
+    items,
+  };
 }
 
 /**
@@ -83,6 +232,9 @@ export function resolveStep(
   values: Values,
   stdin: StdinSource | null = null,
 ): ResolvedStep {
+  if (step.sequence && step.hostId !== null) {
+    return resolveSequence(step, step.sequence, step.hostId, values);
+  }
   if (step.command === null || step.hostId === null) {
     return {
       command: null,
@@ -90,20 +242,24 @@ export function resolveStep(
       runHash: null,
       missing: [],
       checks: step.checks,
+      items: null,
     };
   }
+  // 1.4.10: in the step's workdir, as it runs and as the person sees it.
   const resolved = resolve(step.command, values);
+  const command = withWorkdir(resolved.text, step.workdir);
   const checks = fillChecks(step.checks, values);
   const missing = uniqueNames(resolved.missing, checks.missing);
   const runHash = missing.length
     ? null
-    : commandHash(step.hostId, resolved.text, stdin ? stdinKey(stdin) : null);
+    : commandHash(step.hostId, command, stdin ? stdinKey(stdin) : null);
   return {
-    command: resolved.text,
+    command,
     hash: runHash && approvalHash(runHash, step.checks, checks.checks),
     runHash,
     missing,
     checks: checks.checks,
+    items: null,
   };
 }
 
@@ -152,6 +308,7 @@ export function agentCommand(step: StepRow, values: Values): ResolvedStep {
       runHash: null,
       missing: [],
       checks: step.checks,
+      items: null,
     };
   }
   const resolved = resolve(step.command, values);
@@ -162,5 +319,6 @@ export function agentCommand(step: StepRow, values: Values): ResolvedStep {
     runHash: null,
     missing: uniqueNames(resolved.missing, checks.missing),
     checks: checks.checks,
+    items: null,
   };
 }

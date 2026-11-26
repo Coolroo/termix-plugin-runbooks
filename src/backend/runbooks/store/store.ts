@@ -8,6 +8,7 @@ import {
   asc,
   desc,
   eq,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -20,6 +21,8 @@ import type { PluginDatabase } from "@termix-ssh/plugin-sdk/backend";
 import {
   events as eventsDef,
   runbooks as runbooksDef,
+  runAttempts as runAttemptsDef,
+  runItems as runItemsDef,
   runs as runsDef,
   steps as stepsDef,
   tokens as tokensDef,
@@ -33,6 +36,8 @@ import type {
   RunbookOwner,
   RunbookRow,
   RunbookStatus,
+  RunAttemptRow,
+  RunItemRow,
   RunRow,
   RunStatus,
   StepRow,
@@ -44,6 +49,8 @@ import {
   columns,
   toEvent,
   toRun,
+  toRunAttempt,
+  toRunItem,
   toRunbook,
   toStep,
   toToken,
@@ -83,7 +90,8 @@ type RunDefaults =
   | "pastedOutput"
   | "error"
   | "inputs"
-  | "errorParts";
+  | "errorParts"
+  | "outputSource";
 
 export async function createStore(db: PluginDatabase) {
   const runbooks: Table = await db.define(runbooksDef);
@@ -91,6 +99,8 @@ export async function createStore(db: PluginDatabase) {
   const runs: Table = await db.define(runsDef);
   const tokens: Table = await db.define(tokensDef);
   const events: Table = await db.define(eventsDef);
+  const runItems: Table = await db.define(runItemsDef);
+  const runAttempts: Table = await db.define(runAttemptsDef);
   const client = (): Promise<Drizzle> => db.client<Drizzle>();
 
   /** Inserts one row and returns its id. MySQL has no RETURNING. */
@@ -159,10 +169,12 @@ export async function createStore(db: PluginDatabase) {
     createdByUserId: string;
     owner?: RunbookOwner | null;
     notify?: string[] | null;
+    folder?: string | null;
   }): Promise<number> {
     const at = now();
     return insertId(runbooks, {
       notify: input.notify ? JSON.stringify(input.notify) : null,
+      folder: input.folder ?? null,
       title: input.title,
       summary: input.summary,
       status: "open",
@@ -213,6 +225,42 @@ export async function createStore(db: PluginDatabase) {
       set.notify = patch.notify ? JSON.stringify(patch.notify) : null;
     }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
+  }
+
+  /**
+   * Puts runbooks in a folder, or in none (1.4.10). Nothing else changes:
+   * not the revision, not updatedAt, so a move never reorders the list or
+   * makes a person's open page stale, and works on any status.
+   */
+  async function setFolder(ids: number[], folder: string | null) {
+    if (ids.length === 0) return;
+    await (
+      await client()
+    )
+      .update(runbooks)
+      .set({ folder })
+      .where(inArray(runbooks.id, ids));
+  }
+
+  /**
+   * The folders in use, each spelling once, A to Z: of one person's
+   * runbooks (a token's creator), or of all of them.
+   */
+  async function listFolders(ownerUserId?: string): Promise<string[]> {
+    const rows = await (
+      await client()
+    )
+      .selectDistinct({ folder: runbooks.folder })
+      .from(runbooks)
+      .where(
+        allOf([
+          isNotNull(runbooks.folder),
+          ...(ownerUserId ? [eq(runbooks.createdByUserId, ownerUserId)] : []),
+        ]),
+      );
+    return rows
+      .map((row: { folder: string }) => row.folder)
+      .sort((a: string, b: string) => a.localeCompare(b, "en"));
   }
 
   async function listSteps(runbookId: number): Promise<StepRow[]> {
@@ -274,6 +322,8 @@ export async function createStore(db: PluginDatabase) {
       decision: step.decision ? JSON.stringify(step.decision) : null,
       interactive: step.interactive ?? false,
       vm: step.vm ? JSON.stringify(step.vm) : null,
+      sequence: step.sequence ? JSON.stringify(step.sequence) : null,
+      workdir: step.workdir ?? null,
       endedAt: null,
       revision: 1,
       createdAt: at,
@@ -386,6 +436,7 @@ export async function createStore(db: PluginDatabase) {
       truncated: false,
       timedOut: false,
       pastedOutput: null,
+      outputSource: null,
       error: null,
       ...rest,
       inputsJson: inputs?.length ? JSON.stringify(inputs) : null,
@@ -413,6 +464,123 @@ export async function createStore(db: PluginDatabase) {
         columns(patch, { inputs: "inputsJson", errorParts: "errorPartsJson" }),
       )
       .where(eq(runs.id, id));
+  }
+
+  /** Adds a run item (1.4.10) and returns its id. */
+  async function insertRunItem(item: Omit<RunItemRow, "id">): Promise<number> {
+    return insertId(runItems, {
+      ...item,
+      checks: item.checks ? JSON.stringify(item.checks) : null,
+      captured: JSON.stringify(item.captured ?? {}),
+    });
+  }
+
+  async function updateRunItem(
+    id: number,
+    patch: Partial<Omit<RunItemRow, "id">>,
+  ): Promise<void> {
+    await (
+      await client()
+    )
+      .update(runItems)
+      .set(columns(patch))
+      .where(eq(runItems.id, id));
+  }
+
+  /** Run items of a runbook, a run or in a status, by run then position. */
+  async function listRunItems(filter: {
+    runbookId?: number;
+    runId?: number;
+    status?: RunItemRow["status"];
+  }): Promise<RunItemRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(runItems.runbookId, filter.runbookId));
+    }
+    if (filter.runId !== undefined) {
+      conditions.push(eq(runItems.runId, filter.runId));
+    }
+    if (filter.status !== undefined) {
+      conditions.push(eq(runItems.status, filter.status));
+    }
+    const rows = await (
+      await client()
+    )
+      .select()
+      .from(runItems)
+      .where(allOf(conditions))
+      .orderBy(asc(runItems.runId), asc(runItems.position));
+    return rows.map(toRunItem);
+  }
+
+  /** Adds an attempt (1.4.10, phase 2) and returns its id. */
+  async function insertRunAttempt(
+    attempt: Omit<RunAttemptRow, "id">,
+  ): Promise<number> {
+    return insertId(runAttempts, {
+      ...attempt,
+      checks: attempt.checks ? JSON.stringify(attempt.checks) : null,
+      stopIf: attempt.stopIf ? JSON.stringify(attempt.stopIf) : null,
+    });
+  }
+
+  async function updateRunAttempt(
+    id: number,
+    patch: Partial<Omit<RunAttemptRow, "id">>,
+  ): Promise<void> {
+    await (
+      await client()
+    )
+      .update(runAttempts)
+      .set(columns(patch))
+      .where(eq(runAttempts.id, id));
+  }
+
+  /**
+   * Attempts of a runbook, a run, an item or in a status, by item then
+   * attempt number. With `output: false`, stdout and stderr are not read
+   * (null): the views load an attempt's output only on request (BUG-022
+   * M2).
+   */
+  async function listRunAttempts(
+    filter: {
+      runbookId?: number;
+      runId?: number;
+      itemId?: number;
+      status?: RunAttemptRow["status"];
+      id?: number;
+    },
+    options: { output?: boolean } = {},
+  ): Promise<RunAttemptRow[]> {
+    const conditions: SQL[] = [];
+    if (filter.runbookId !== undefined) {
+      conditions.push(eq(runAttempts.runbookId, filter.runbookId));
+    }
+    if (filter.runId !== undefined) {
+      conditions.push(eq(runAttempts.runId, filter.runId));
+    }
+    if (filter.itemId !== undefined) {
+      conditions.push(eq(runAttempts.itemId, filter.itemId));
+    }
+    if (filter.status !== undefined) {
+      conditions.push(eq(runAttempts.status, filter.status));
+    }
+    if (filter.id !== undefined) {
+      conditions.push(eq(runAttempts.id, filter.id));
+    }
+    const drizzle = await client();
+    const {
+      stdout: _stdout,
+      stderr: _stderr,
+      ...short
+    } = getTableColumns(runAttempts);
+    const rows = await (
+      options.output === false ? drizzle.select(short) : drizzle.select()
+    )
+      .from(runAttempts)
+      .where(allOf(conditions))
+      .orderBy(asc(runAttempts.itemId), asc(runAttempts.attempt));
+    return rows.map(toRunAttempt);
   }
 
   async function listTokens(): Promise<TokenRow[]> {
@@ -579,6 +747,8 @@ export async function createStore(db: PluginDatabase) {
     listRunbooks,
     createRunbook,
     touchRunbook,
+    setFolder,
+    listFolders,
     listSteps,
     getStep,
     insertStep,
@@ -590,6 +760,12 @@ export async function createStore(db: PluginDatabase) {
     lastRunOfHash,
     insertRun,
     updateRun,
+    insertRunItem,
+    updateRunItem,
+    listRunItems,
+    insertRunAttempt,
+    updateRunAttempt,
+    listRunAttempts,
     listTokens,
     activeTokens,
     findTokenByHash,

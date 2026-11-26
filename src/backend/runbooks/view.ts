@@ -4,7 +4,19 @@
  * shows.
  */
 
-import type { EventRow, RunbookRow, StepRow } from "./store/types.js";
+import type {
+  EventRow,
+  RunbookRow,
+  RunAttemptRow,
+  RunItemRow,
+  RunRow,
+  StepRow,
+} from "./store/types.js";
+import {
+  itemSchedule,
+  type RunAttempt,
+  type RunItem,
+} from "../../shared/sequence.js";
 import type { Store } from "./store/store.js";
 import {
   agentCommand,
@@ -73,17 +85,43 @@ function ruleCache(store: Store): RuleCache {
  * A runbook with its steps and runs. With `live`, running runs carry the
  * output that has arrived so far. `budget` is the time its rules' patterns
  * may take, shared when a list reads many runbooks; a new one otherwise.
+ *
+ * Attempts come without their output (stdout and stderr null): a run may
+ * hold hundreds, and every read of the runbook would load them all
+ * (BUG-022 M2). An attempt's item holds its last attempt's output; with
+ * `attemptOutput`, that one attempt comes with its output too, for the
+ * routes that read one attempt.
  */
 export async function loadBundle(
   store: Store,
   runbookId: number,
   live?: LiveRuns,
   budget?: PatternBudget,
+  attemptOutput?: number,
 ): Promise<RunbookBundle | null> {
   const runbook = await store.getRunbook(runbookId);
   if (!runbook) return null;
   const steps = await store.listSteps(runbookId);
-  const rows = await store.listRuns({ runbookId });
+  // Only a runbook with a wait or a retried item has attempts (phase 2).
+  const attempts = steps.some((step) => step.sequence?.some(itemSchedule))
+    ? await store.listRunAttempts({ runbookId }, { output: false })
+    : [];
+  if (attemptOutput !== undefined) {
+    const [full] = await store.listRunAttempts({
+      runbookId,
+      id: attemptOutput,
+    });
+    const at = attempts.findIndex((each) => each.id === attemptOutput);
+    if (full && at !== -1) attempts[at] = full;
+  }
+  const rows = withItems(
+    await store.listRuns({ runbookId }),
+    // Only a runbook with a sequence step has items (1.4.10).
+    steps.some((step) => step.sequence)
+      ? await store.listRunItems({ runbookId })
+      : [],
+    attempts,
+  );
   const runs = live ? live.show(rows) : rows.map(storedRun);
   const runsByStep = new Map<number, ShownRun[]>();
   for (const run of runs) {
@@ -103,6 +141,56 @@ export async function loadBundle(
       cache: ruleCache(store),
     }),
   };
+}
+
+/** A run item as the views show it: without the ids the run has. */
+export function shownItem(item: RunItemRow): RunItem {
+  const { stepId: _stepId, runbookId: _runbookId, ...rest } = item;
+  return rest;
+}
+
+/** An attempt as the views show it: without the ids its item has. */
+function shownAttempt(attempt: RunAttemptRow): RunAttempt {
+  const { runId: _runId, runbookId: _runbookId, ...rest } = attempt;
+  return rest;
+}
+
+/**
+ * Runs with their items (1.4.10), in order; a run that has none (any run
+ * that is not a sequence's) gets no items field. A wait item, or a run
+ * item with retry, gets its attempts (phase 2), oldest first, even none
+ * yet.
+ */
+export function withItems(
+  runs: RunRow[],
+  items: RunItemRow[],
+  attempts: RunAttemptRow[] = [],
+): RunRow[] {
+  if (items.length === 0) return runs;
+  const byItem = new Map<number, RunAttempt[]>();
+  for (const attempt of attempts) {
+    const list = byItem.get(attempt.itemId) ?? [];
+    list.push(shownAttempt(attempt));
+    byItem.set(attempt.itemId, list);
+  }
+  const byRun = new Map<number, RunItem[]>();
+  for (const item of items) {
+    const list = byRun.get(item.runId) ?? [];
+    const shown: RunItem = shownItem(item);
+    if (item.maxAttempts !== null) {
+      shown.attempts = (byItem.get(item.id) ?? []).sort(
+        (a, b) => a.attempt - b.attempt,
+      );
+    }
+    list.push(shown);
+    byRun.set(item.runId, list);
+  }
+  return runs.map((run) => {
+    const list = byRun.get(run.id);
+    return list
+      ? { ...run, items: list.sort((a, b) => a.position - b.position) }
+      : run;
+  });
 }
 
 /**
@@ -175,6 +263,8 @@ export function runbookSummary(
     createdAt: runbook.createdAt,
     updatedAt: runbook.updatedAt,
     revision: runbook.revision,
+    // The folder the list shows it in (1.4.10); null: No folder.
+    folder: runbook.folder,
     progress: progress(steps, notNeeded),
     // Amendments that have not run yet (1.4.0): the list shows "amended".
     amendedPending: steps.filter(
@@ -354,6 +444,8 @@ export function personView(
         hostName: step.hostId === null ? null : hostName(step.hostId),
         resolvedCommand: resolved.command,
         commandHash: resolved.hash,
+        // 1.4.10: a sequence's items as one Run runs them.
+        resolvedSequence: resolved.items,
         missing: vmChecks?.missing ?? resolved.missing,
         resolvedChecks: vmChecks?.checks ?? resolved.checks,
         // 1.4.7: a VM step's host, and why it cannot run without asking HAW.

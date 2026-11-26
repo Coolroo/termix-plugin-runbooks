@@ -37,6 +37,7 @@ import type { Access, AgentCaller } from "./access.js";
 import type { Reads } from "./reads.js";
 import type { AgentAudit } from "./ops.js";
 import {
+  checkCapturedReads,
   checkSecretReads,
   objectBody,
   recheckReaders,
@@ -46,8 +47,8 @@ import {
 export function createComplete(
   store: Store,
   events: Events,
-  options: { audit?: AgentAudit },
-  { checkHosts, ownStep }: Access,
+  options: { audit?: AgentAudit; banSleep?: () => Promise<boolean> },
+  { checkHosts, checkPlatforms, ownStep }: Access,
   { getRunbook }: Pick<Reads, "getRunbook">,
 ) {
   /**
@@ -178,7 +179,7 @@ export function createComplete(
     input: unknown,
   ) {
     const { step, runbook } = await ownStep(caller, stepId);
-    const parsed = parseAmendment(input);
+    const parsed = parseAmendment(input, (await options.banSleep?.()) ?? true);
     if (runbook.status !== "open") {
       throw new InputError(
         `runbook is ${runbook.status}; set status to open before changing steps`,
@@ -225,10 +226,13 @@ export function createComplete(
       fresh = { ...fresh, hideOutputFromAgents: true };
     }
     await checkHosts(caller, [fresh]);
+    checkPlatforms(caller, [fresh]);
     const group = steps.filter((s) => s.position === step.position);
     const last = Math.max(-1, ...group.map((s) => suffixIndex(s.suffix)));
     const own = { position: step.position, suffix: suffixAt(last + 1) };
     checkSecretReads([...steps, { ...fresh, ...own }]);
+    // A captured value in a command needs a pattern (BUG-022 M3).
+    checkCapturedReads(steps, [...steps, { ...fresh, ...own }]);
     const stored = toStored(
       fresh,
       own,
@@ -295,7 +299,10 @@ export function createComplete(
 }
 
 /** { kind, reason, step } as an agent amends a step. */
-function parseAmendment(input: unknown): {
+function parseAmendment(
+  input: unknown,
+  banSleep: boolean,
+): {
   kind: AmendKind;
   reason: string;
   step: AuthorStep;
@@ -318,10 +325,10 @@ function parseAmendment(input: unknown): {
   }
   let step: AuthorStep;
   try {
-    step = completeStep(parseStepInput(raw.step));
+    step = completeStep(parseStepInput(raw.step, { banSleep }));
   } catch (error) {
     if (error instanceof InputError) {
-      throw new InputError(`step: ${error.message}`, error.status);
+      throw new InputError(`step: ${error.message}`, error.status, error.extra);
     }
     throw error;
   }

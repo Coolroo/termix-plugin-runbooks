@@ -128,8 +128,13 @@ export function createAgentRouter(
    *       - in: query
    *         name: status
    *         schema: { type: string, enum: [open, done, abandoned] }
+   *       - in: query
+   *         name: folder
+   *         description: Only runbooks in this folder (1.4.10), any spelling
+   *         schema: { type: string, maxLength: 60 }
    *     responses:
    *       200: { description: The runbooks }
+   *       400: { description: Not a status or a folder name }
    *   post:
    *     summary: Propose a runbook with its steps
    *     tags: [Runbooks agent]
@@ -140,7 +145,10 @@ export function createAgentRouter(
   router.get(
     "/runbooks",
     wrap(async (req, res) =>
-      ops.listRunbooks(caller(res), { status: req.query.status }),
+      ops.listRunbooks(caller(res), {
+        status: req.query.status,
+        folder: req.query.folder,
+      }),
     ),
   );
   router.post(
@@ -162,7 +170,7 @@ export function createAgentRouter(
    *       200: { description: The runbook }
    *       404: { description: Not found }
    *   patch:
-   *     summary: Change title, summary, values or status
+   *     summary: Change title, summary, values, status, owner, notify or folder
    *     tags: [Runbooks agent]
    *     responses:
    *       200: { description: The runbook }
@@ -225,6 +233,31 @@ export function createAgentRouter(
   router.get(
     "/runbooks/:id/values",
     wrap(async (req, res) => ops.getValues(caller(res), pathId(req))),
+  );
+
+  /**
+   * @openapi
+   * /plugin-api/runbooks/agent/runbooks/{id}/runs/{runId}/items/{item}/attempts/{attempt}:
+   *   get:
+   *     summary: One attempt of an item, with its output
+   *     description: >
+   *       1.4.10 (BUG-022 M2). The runbook lists attempts without output;
+   *       this reads one, masked as the runbook is. An earlier attempt
+   *       keeps only the last 4 KB of each stream.
+   *     tags: [Runbooks agent]
+   *     responses:
+   *       200: { description: The attempt }
+   *       404: { description: No such attempt }
+   */
+  router.get(
+    "/runbooks/:id/runs/:runId/items/:item/attempts/:attempt",
+    wrap(async (req, res) =>
+      ops.getAttempt(caller(res), pathId(req), {
+        runId: req.params.runId,
+        item: req.params.item,
+        attempt: req.params.attempt,
+      }),
+    ),
   );
 
   /**

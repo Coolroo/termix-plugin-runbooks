@@ -12,6 +12,7 @@ import type { Check, CheckResult } from "./checks.js";
 import type { StepCondition, WhenRule } from "./conditions.js";
 import type { DecisionChoice, DecisionSpec } from "./decisions.js";
 import type { VmSpec } from "./vms.js";
+import type { ResolvedItem, RunItem, SequenceItem } from "./sequence.js";
 import type { AskField, ByHand, GenerateField } from "./secret-steps.js";
 
 export type {
@@ -21,6 +22,13 @@ export type {
   GenerateField,
 } from "./secret-steps.js";
 export type { Check, CheckResult };
+export type {
+  ItemStatus,
+  ResolvedItem,
+  RunAttempt,
+  RunItem,
+  SequenceItem,
+} from "./sequence.js";
 
 export type RunbookStatus = "open" | "done" | "abandoned";
 /** "replaced" (1.4.0): an amendment replaced it; it counts as ended. */
@@ -185,7 +193,32 @@ export interface RunRecord {
   inputs: RunInput[];
   /** The parts that `error` was made from (1.4.6); null for none or older. */
   errorParts: RunErrorParts | null;
+  /**
+   * Where a terminal run's pasted output came from (1.4.10); null for no
+   * pasted output, and for runs from before.
+   */
+  outputSource: OutputSource | null;
+  /**
+   * 1.4.10: a sequence step's run has one record per item, in order;
+   * absent on any other run. The run's stdout and stderr are the items'
+   * output joined, once it ended.
+   */
+  items?: RunItem[];
 }
+
+/**
+ * Where a terminal run's pasted output came from (1.4.10): `pasted` by the
+ * person, `captured` from the terminal by Send to terminal and kept as
+ * read, or `captured-edited`, read from the terminal and then changed by
+ * the person before Mark done.
+ */
+export type OutputSource = "pasted" | "captured" | "captured-edited";
+
+export const OUTPUT_SOURCES: readonly OutputSource[] = [
+  "pasted",
+  "captured",
+  "captured-edited",
+];
 
 /**
  * Why a run failed, in parts (BUG-014): Termix's own words apart from the
@@ -366,6 +399,15 @@ export interface Step extends AmendmentView {
   decisionRan: StepName[];
   /** 1.4.7: a VM step's action through HAW; null on any other step. */
   vm: VmSpec | null;
+  /** 1.4.10: a sequence step's items as written; null on any other step. */
+  sequence: SequenceItem[] | null;
+  /**
+   * 1.4.10: the items with their values filled in, as one Run runs them; a
+   * name an earlier item captures stays as written until it ran.
+   */
+  resolvedSequence: ResolvedItem[] | null;
+  /** 1.4.10: the folder the command or each run item starts in. */
+  workdir: string | null;
   /** 1.4.7: the VM host's name in Termix; null on any other step. */
   vmHostName: string | null;
   /**
@@ -396,6 +438,8 @@ export interface RunbookSummary {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** The folder the list shows it in (1.4.10); null: No folder. */
+  folder: string | null;
   progress: Progress;
   /** Amendments that have not run yet (1.4.0): the list shows "amended". */
   amendedPending: number;
@@ -456,6 +500,12 @@ export interface TokenHost {
    * on hosts saved before 1.4.7.
    */
   vm?: TokenHostVm;
+  /**
+   * The host's Termix tags named it a Windows host when the token's hosts
+   * were saved (1.4.10, phase 3): steps for it may not hold the Linux-only
+   * events. Absent when not known.
+   */
+  windows?: boolean;
 }
 
 /** A VM on a token host, as HAW listed it when the hosts were saved. */

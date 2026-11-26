@@ -35,23 +35,24 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 
 ## REST
 
-| Method and path                 | What it does                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------------ |
-| `GET /hosts`                    | Hosts ticked for the token: `id`, `name`, `address`, `folder`                        |
-| `GET /vms?host=4`               | Read only: the token's VM hosts in HAW, or the VMs on one; see [VM steps](#vm-steps) |
-| `GET /runbooks?status=open`     | Runbooks with progress; `status` is `open`, `done` or `abandoned`                    |
-| `POST /runbooks`                | Propose a runbook with steps (201)                                                   |
-| `GET /runbooks/{id}`            | One runbook: steps, notes, every run and its output, newest first                    |
-| `PATCH /runbooks/{id}`          | Change `title`, `summary`, `values` (the whole set), `status`, `owner` or `notify`   |
-| `POST /runbooks/{id}/steps`     | Add `steps`, at the end or at a 1-based `position` (201)                             |
-| `POST /runbooks/{id}/reorder`   | `{ "stepIds": [...] }` with every step once, without amendments                      |
-| `GET /runbooks/{id}/values`     | Effective values and where each came from                                            |
-| `PATCH /steps/{id}`             | Change a step that has not run; only the given fields change                         |
-| `DELETE /steps/{id}`            | Remove a step that has not run                                                       |
-| `POST /steps/{id}/complete`     | End an agent step: `{ outcome, note?, output? }`                                     |
-| `POST /steps/{id}/amend`        | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)       |
-| `GET /events?since=0&limit=100` | Events of the token's runbooks, oldest first; see [Events](#events)                  |
-| `POST /mcp`                     | MCP (below)                                                                          |
+| Method and path                                             | What it does                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /hosts`                                                | Hosts ticked for the token: `id`, `name`, `address`, `folder`                                |
+| `GET /vms?host=4`                                           | Read only: the token's VM hosts in HAW, or the VMs on one; see [VM steps](#vm-steps)         |
+| `GET /runbooks?status=open&folder=termix`                   | Runbooks with progress; `status` is `open`, `done` or `abandoned`; see [Folders](#folders)   |
+| `POST /runbooks`                                            | Propose a runbook with steps (201)                                                           |
+| `GET /runbooks/{id}`                                        | One runbook: steps, notes, every run and its output, newest first                            |
+| `PATCH /runbooks/{id}`                                      | Change `title`, `summary`, `values` (the whole set), `status`, `owner`, `notify` or `folder` |
+| `POST /runbooks/{id}/steps`                                 | Add `steps`, at the end or at a 1-based `position` (201)                                     |
+| `POST /runbooks/{id}/reorder`                               | `{ "stepIds": [...] }` with every step once, without amendments                              |
+| `GET /runbooks/{id}/values`                                 | Effective values and where each came from                                                    |
+| `GET /runbooks/{id}/runs/{runId}/items/{item}/attempts/{n}` | One attempt of an item, with its output; see [Waits and retries](#waits-and-retries)         |
+| `PATCH /steps/{id}`                                         | Change a step that has not run; only the given fields change                                 |
+| `DELETE /steps/{id}`                                        | Remove a step that has not run                                                               |
+| `POST /steps/{id}/complete`                                 | End an agent step: `{ outcome, note?, output? }`                                             |
+| `POST /steps/{id}/amend`                                    | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)               |
+| `GET /events?since=0&limit=100`                             | Events of the token's runbooks, oldest first; see [Events](#events)                          |
+| `POST /mcp`                                                 | MCP (below)                                                                                  |
 
 ### A link for the person
 
@@ -85,6 +86,8 @@ Every change answers with the whole runbook, as `GET /runbooks/{id}` does. Error
 | `when`                     | object or null  | When the step is needed, as a rule on earlier steps (1.4.6). See [Conditional steps](#conditional-steps).           |
 | `decision`                 | object or null  | A Decision step: options the person chooses from (1.4.6). See [Decision steps](#decision-steps).                    |
 | `interactive`              | boolean         | Run opens a terminal (pty), for sudo, ssh and other prompts (1.4.6). See [Typed input](#typed-input).               |
+| `sequence`                 | array or null   | Items one Run runs in order, instead of `command` (1.4.10). See [Sequences](#sequences).                            |
+| `workdir`                  | string or null  | An absolute folder the command, or each run item, starts in (1.4.10). See [Sequences](#sequences).                  |
 
 A step that has run is history: changing it, removing it, or putting a step before it is refused with 409. Amend it instead (see [Amendments](#amendments)).
 
@@ -151,6 +154,24 @@ Set `owner` on a runbook when you create it (`POST /runbooks`, `create_runbook`)
 
 All three are optional; `null` clears the owner. The person sees "Agent: <label> · task <task>" under the runbook's title, with the token's name when there is no label. Notifications carry the owner, so a receiver knows which session to wake (see [Notifications](notifications.md)).
 
+### Folders
+
+The person's Runbooks list (1.4.10) has a section per state (Open, Done, Abandoned) and, inside each, a collapsible group per folder, with the runbooks in no folder last. Set `folder` on a runbook when you create it (`POST /runbooks`, `create_runbook`) or later (`PATCH`, `update_runbook`). Use your task's board or project name, such as `home-server`, `gbtvg-coop` or `termix`, so one project's runbooks sit together.
+
+- **One level.** A folder holds runbooks, never folders: a name is trimmed, 1 to 60 characters, with no `/` and no control characters. Anything else is refused with 400 and nothing changes.
+- **One spelling.** A name that is one of your runbooks' folders in other letters gets that folder's spelling: `Home-Server` joins `home-server`. The answer's `folder` is what was stored.
+- **No folder.** `null` (or leaving `folder` out on create) puts the runbook in no folder. A folder exists only while a runbook is in it; there is nothing to make or remove.
+- **Any status, nothing else.** A `PATCH` with only `folder` works on an open, done or abandoned runbook and changes only its folder: not its status, `revision` or `updatedAt`, and it makes no event. With other fields too, those change as they always do. Each move is in Termix's audit log (`runbooks_runbook_folder`), with the token's name.
+- **Reading.** Every runbook in a list or a read has `folder` (`null`: no folder). `GET /runbooks?folder=termix` (MCP: `list_runbooks` with `folder`) lists one folder, any spelling of it; on MCP, `folder: null` lists the runbooks in no folder.
+- **People move them too.** The person can move a runbook to another folder or rename a folder (every runbook in it moves). Read `folder` again before you rely on it.
+
+To file runbooks that exist already, list them and send one `PATCH` per runbook with only `folder`:
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"folder": "home-server"}' "$BASE/runbooks/42"
+```
+
 ### Agent steps
 
 Some steps are work for the agent between the person's steps: read a dashboard, change a file in a repository, wait for a pipeline. Give such a step `"owner": "agent"`.
@@ -211,6 +232,20 @@ Creating or changing a runbook or its steps is not an event, and neither is a no
 ### Values and placeholders
 
 `{{name}}` in a command is replaced by the value of `name`, as plain text, with no shell quoting. Values come from the runbook's `values` object first, then from captures of earlier steps in step order; a later value wins. Names match `[A-Za-z_][A-Za-z0-9_.-]*`. A step whose placeholders, in its command or its checks (see "Checks"), have no value cannot run, and its `missing` field names them.
+
+**A captured value goes into a command only through a pattern** (1.4.10). A value a step or a sequence item captures comes from a host's output, so it may go into a command Termix runs (a step's `command`; a run, wait or job item's `command`; an event's `name`, `unit`, `container`, `path`, `url`, `contains` or `servername`) only when the step or item that captures it checks it with a `value` check that has `matches`:
+
+```json
+{
+  "title": "Read the version",
+  "hostId": 1,
+  "command": "app --version",
+  "captures": [{ "name": "ver", "pattern": "version: (\\S+)" }],
+  "checks": [{ "type": "value", "name": "ver", "matches": "^[0-9.]+$" }]
+}
+```
+
+Without it, create, add steps, update step and amend (REST and MCP) answer 400 with `code` `captured-value`, naming the step or item that uses the value and the one that captures it. Write a pattern that fits only the form you expect (anchored with `^` and `$`): a value that does not match it fails the capturing step or item, so it never reaches a later command, and a later item of the same run takes the value only when it matches the pattern as a whole. Your runbook's own `values` (shown to the person on the card) and a VM step's values (a fixed form) need no pattern; nor does text Termix does not run (an agent step's, or a step run outside Termix).
 
 Since 1.4.3, `{{name}}` works in `body`, `expect` and `where` too, with the same values. A click step can say "Open the admin console and find `{{ts_ip}}`". `GET /runbooks/{id}` (MCP `get_runbook`) returns each step's text as written and as the person sees it:
 
@@ -279,6 +314,324 @@ Each run has the results in the same order, as `checks: [{ "label", "ok", "detai
 ```
 
 A detail never repeats the output itself, so it is the same for a hidden step. A step that ran cannot change its checks: add a new step with the checks you want.
+
+### Sequences
+
+A step that Termix runs on a host may be a **sequence** of items instead of one command (1.4.10). One **Run** runs the items in order, as the person who pressed it, and the step card shows each item with its label, its type, the exact command (or the wait), its state (waiting, running, passed, failed, skipped) and the time it took. Use it instead of chaining commands with `&&` or `;`, and instead of `sleep` (see [No sleep in commands](#no-sleep-in-commands)).
+
+```json
+{
+  "title": "Deploy enforcarr",
+  "hostId": 3,
+  "workdir": "/mnt/sdd/services/media-server",
+  "sequence": [
+    {
+      "type": "run",
+      "label": "Deploy",
+      "command": "sudo paseo-deploy up media enforcarr"
+    },
+    { "type": "delay", "seconds": 10, "reason": "let the old container stop" },
+    {
+      "type": "wait",
+      "label": "Healthy",
+      "command": "docker inspect -f {{.State.Health.Status}} enforcarr",
+      "checks": [{ "type": "contains", "text": "healthy" }],
+      "stopIf": [{ "type": "contains", "text": "unhealthy" }],
+      "within": 180,
+      "every": 5
+    },
+    {
+      "type": "run",
+      "label": "Report",
+      "command": "docker ps --filter name=enforcarr",
+      "onFail": "continue"
+    }
+  ]
+}
+```
+
+| Item    | Fields                                                                                                                                                                                                                              |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`   | `command` (required), `label`, `checks`, `captures`, `timeoutMs` (1000 to 600000), `onFail` (`"stop"`, the default, or `"continue"`) and `interactive`, each as for a one-command step.                                             |
+| `delay` | `seconds` (1 to 3600), `label` and `reason`. A timer in Termix: nothing runs on the host. The person sees a countdown and may **Skip** it.                                                                                          |
+| `wait`  | `command`, `checks` (at least one) and `within` (required), `stopIf`, `attempts`, the schedule, `label`, `captures`, `timeoutMs` and `onFail`. Runs the command until its checks pass. See [Waits and retries](#waits-and-retries). |
+
+A `run` item may also have `retry`, for a flaky command: see [Waits and retries](#waits-and-retries).
+
+- A sequence has 1 to 20 items and at least one item that is not a `delay`. The [wait events](#wait-events) (`container`, `unit`, `log`, `http`, `port`, `file`, `job`) are items too.
+- Each run item is a new shell on a connection of its own: `cd` and variables do not carry over. Set `workdir` on the step (an absolute path) and every run item runs as `cd -- '<workdir>' && <command>`; leave the `cd` out of the commands. `workdir` also works on a one-command step, whose command then shows and runs with the `cd` in front. It is for a POSIX shell (Linux, macOS); on a Windows host keep the `cd` in the command.
+- An item's `captures` fill `{{name}}` in the items after it, and in later steps once the step is done. Capture names are unique in a sequence. Before the run, the person sees such a name as written, with a line that it is filled from an earlier item. A command or an event's text may use such a value only when the item that captures it checks it with a `value` check that has `matches` (see [Values and placeholders](#values-and-placeholders)); at run time the value must match that pattern as a whole, or the item that uses it fails before it runs.
+- An item fails when its command exits non-zero, times out, or a check fails. A failed item stops the sequence and fails the step, unless it has `"onFail": "continue"` (for a read-only report after the main work): then the failure is recorded and the next item runs. A step whose only failures were such items ends done.
+- **Stop** ends the item that runs, and the rest do not run. After a stop, a failure, or a Termix restart in the middle, the person can **Continue from item N**: a new run that carries the items that passed (they do not run again) and starts at the first item that did not. **Run** again starts from item 1, with the usual repeat question. Continue is refused with 409 `changed` when the sequence or its values changed since that run.
+- Before each item after the first, Runbooks checks that the person may still connect to the host; if not, the item fails and the sequence stops.
+- Not on a sequence step: `command`, `checks`, `captures`, `timeoutMs`, `interactive` (put them on the run items), `stdin`, `secretCaptures`, `where`, `owner: "agent"`, and `runIn: "terminal"` (a terminal runs one command; Send to terminal is refused for a sequence).
+- To make a one-command step a sequence with `update_step`, send `sequence` and `"command": null`.
+
+Each run of a sequence step has `items`, one record per item, in order:
+
+```json
+{
+  "position": 3,
+  "type": "run",
+  "label": "Health",
+  "command": "docker inspect -f ...",
+  "status": "failed",
+  "startedAt": "...",
+  "finishedAt": "...",
+  "plannedEndAt": null,
+  "exitCode": 0,
+  "stdout": "starting\n",
+  "stderr": "",
+  "checks": [
+    { "label": "the output contains 'healthy'", "ok": false, "detail": "..." }
+  ],
+  "captured": {},
+  "error": null,
+  "onFail": "stop",
+  "seconds": null,
+  "reason": null,
+  "skippedBy": null,
+  "fromRunId": null
+}
+```
+
+`status` is `waiting`, `running`, `passed`, `failed` or `skipped` (a delay the person skipped). A delay that runs has `plannedEndAt`. An item carried over by Continue has `fromRunId`, the run it passed in. The run itself has the items' output joined in `stdout` and `stderr` (what a later step's `stdin` or a `when` output rule reads), the captures of the items that passed, and an `error` such as `item 3 failed`. A step hidden from agents hides each item's output, captures and error as it hides a run's. You get one `step-done` or `step-failed` event when the step ends, not one per item. Every item also has `maxAttempts`, `endsBy` and `nextAttemptAt` (null except on a wait or a retried item), and a wait or retried item has `attempts`: see [Waits and retries](#waits-and-retries).
+
+### Waits and retries
+
+A **wait** item runs a command until its checks pass (1.4.10): the general poll, instead of a loop with `sleep`. Each attempt runs the command on its own connection, in the step's `workdir`; an attempt passes when the command exits 0 and every check passes. A failed attempt means "not yet": Runbooks waits the schedule's delay and tries again. The item fails when a `stopIf` check matches (at once: no point waiting, the job failed), or when the attempts or the time run out. A **run** item with `retry` runs a flaky command again on the same schedule when it fails.
+
+Instead of this loop, which the [sleep ban](#no-sleep-in-commands) refuses:
+
+```sh
+for i in $(seq 1 120); do
+  sudo bash setup-deptrack.sh status | grep -q 'mirror osv: COMPLETED' && break
+  sleep 30
+done
+```
+
+write a wait item:
+
+```json
+{
+  "type": "wait",
+  "label": "OSV mirror synced",
+  "command": "sudo bash setup-deptrack.sh status",
+  "checks": [{ "type": "contains", "text": "mirror osv: COMPLETED" }],
+  "stopIf": [{ "type": "contains", "text": "mirror osv: FAILED" }],
+  "attempts": 120,
+  "every": 30,
+  "within": 3600,
+  "timeoutMs": 30000
+}
+```
+
+and a flaky download as a run item with retry:
+
+```json
+{
+  "type": "run",
+  "label": "Fetch the image",
+  "command": "docker pull registry.example.test/app:1.2",
+  "retry": {
+    "attempts": 5,
+    "backoff": "exponential",
+    "every": 2,
+    "jitter": "equal",
+    "retryOn": ["exit", "timeout"]
+  }
+}
+```
+
+| Field       | On                     | Meaning                                                                                                                                                                                                             | Default         | Limits                        |
+| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------------------------- |
+| `checks`    | wait                   | What "ready" looks like, as for a step. At least one.                                                                                                                                                               | (required)      | 20                            |
+| `stopIf`    | wait                   | Checks on each attempt's output; when one **matches** (passes), the item fails at once. It wins over checks that pass. Output checks only (no `value` checks).                                                      | none            | 20                            |
+| `within`    | wait (required), retry | Seconds for all attempts and delays together. No attempt starts after it, and an attempt's time limit is cut to the time left.                                                                                      | retry: 7200     | 1 to 7200 (2 hours)           |
+| `attempts`  | wait, retry (required) | The most attempts, the first one included.                                                                                                                                                                          | wait: 500       | wait 1 to 500, retry 2 to 500 |
+| `every`     | both                   | Seconds: the first delay, and the step of a linear backoff.                                                                                                                                                         | 5               | 1 to 3600                     |
+| `backoff`   | both                   | `fixed`: every delay is `every`; `linear`: `every × n`; `exponential`: `every × factor^(n−1)`, where n is the attempt that failed.                                                                                  | `fixed`         |                               |
+| `factor`    | both                   | Exponential only (400 with any other backoff).                                                                                                                                                                      | 2               | 1.1 to 10                     |
+| `maxDelay`  | both                   | Seconds: the longest one delay may get. At least `every`.                                                                                                                                                           | 300, or `every` | 1 to 3600                     |
+| `jitter`    | both                   | After the cap: `none`; `full`: a random delay from 0 to the delay; `equal`: half the delay plus a random part of the other half.                                                                                    | `none`          |                               |
+| `retryOn`   | retry                  | Which failures get another attempt: `exit` (non-zero exit code), `check` (exit 0, a check failed), `timeout`, `connect` (no connection or an error before the command ran). Another failure fails the item at once. | all four        | at least one                  |
+| `timeoutMs` | both                   | The time limit of one attempt.                                                                                                                                                                                      | 120000          | 1000 to 600000                |
+
+- Bad values are refused with 400 and a message that names the field, such as `sequence[1].within must be an integer from 1 to 7200`, on create, add-steps, update-step, amend and through MCP. `retry` is refused on an `interactive` item.
+- The page and your view show the planned schedule before Run: the step's `schedules` lists `{item, attempts, maxSeconds, text}` for each wait or retried item, such as `"up to 120 attempts, every 30 s, at most 1 h"`. The person approves it with the commands: the schedule is part of the sequence's text and hash.
+- The server runs the attempts after the Run answer, also with the page closed, as the person who pressed Run. Before each attempt after the first it checks that the person may still connect to the host; if not, the item fails and the sequence stops, whatever `onFail` says. One Run press covers all its attempts: they never ask the repeat question.
+- While a wait or retried item waits for its next attempt, the person may press **Try now** (the delay ends and the next attempt starts) or **Stop**. A Termix restart fails the item and its attempt as interrupted; the person continues from that item, and the wait starts again at attempt 1.
+- Captures come only from the attempt that passed; the item's `stdout`, `stderr`, `exitCode` and `checks` are the last attempt's.
+- You get **one** event when the step ends, never one per attempt (the fleet limit is 10 messages an hour).
+
+Each wait or retried item in a run has `attempts`, oldest first:
+
+```json
+{
+  "attempt": 3,
+  "status": "failed",
+  "startedAt": "...",
+  "finishedAt": "...",
+  "exitCode": 0,
+  "stdout": "mirror osv: RUNNING\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "error": null,
+  "checks": [
+    {
+      "label": "the output contains 'mirror osv: COMPLETED'",
+      "ok": false,
+      "detail": "..."
+    }
+  ],
+  "stopIf": [
+    {
+      "label": "the output contains 'mirror osv: FAILED'",
+      "ok": false,
+      "detail": "..."
+    }
+  ],
+  "why": "check"
+}
+```
+
+`status` is `running`, `passed` or `failed`. `why` says why an attempt did not pass: `exit`, `check`, `timeout`, `connect`, `stop-if`, `stopped` or `interrupted` (null when it passed). A `stopIf` result with `ok: true` matched. While an item runs, the step has `attempt`: `{item, attempt, of, nextAt, endsBy}` (the item's number, the attempts made so far, the most it may make, when the next one starts or null while one runs, and when its time limit ends); otherwise `attempt` is null. On a step hidden from agents, each attempt's `stdout`, `stderr` and `error` read `[hidden by owner]` and `truncated` is false; the attempt count, times, exit codes, check and stopIf results and `why` stay visible, as an item's do.
+
+**An attempt's output is read on its own.** `GET /runbooks/{id}` and `get_runbook` list each item's attempts **without output** (`stdout` and `stderr` null): a run may hold hundreds of them. The item itself carries its last attempt's output. Read one attempt with `GET /plugin-api/runbooks/agent/runbooks/{id}/runs/{runId}/items/{item}/attempts/{attempt}` (MCP `get_attempt` with `runbookId`, `runId`, `item`, `attempt`), hidden on a hidden step as above. What is kept: the last attempt of an item keeps its whole output (256 KB per stream); an earlier attempt keeps the last 4 KB of each stream (`truncated: true`), and the earlier attempts of one item keep 256 KB together (none after that); one run keeps 8 MB of output, past which an attempt or item keeps the last 4 KB of each stream.
+
+**Try now and Skip** start the next attempt or item sooner, as the person who pressed Run: only that person, or a person who may connect to the step's host, may press them (403 `not-your-run` otherwise).
+
+### Wait events
+
+The **wait events** (1.4.10) are items that wait until a state holds, checked by Termix itself: no loop, `grep` or `test` runs on the host. Each polls on the [wait item's schedule](#waits-and-retries) (`within` is required, up to 7200 seconds; `every`, `backoff`, `factor`, `maxDelay`, `jitter`, `attempts`; `timeoutMs` is one check's limit, default 30000), and each check is an attempt in the item. Use them instead of a wait item that runs `docker inspect`, `systemctl`, `curl` or `test -f`.
+
+| Type        | Waits until                                                          | Fields                                                                       | How Termix checks it                                                                                                                                                  | Hosts             |
+| ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `container` | a container is `healthy`, `running`, `exited` or `gone`              | `name`, `state` (required)                                                   | one fixed `docker container inspect --format '{"State":…,"RestartCount":…}' -- '<name>'` as the SSH user, read as JSON                                                | Linux             |
+| `unit`      | a systemd unit is `active`, or `finished` with `Result=success`      | `name`, `state` (required)                                                   | one fixed `systemctl show --timestamp=unix -p LoadState,ActiveState,SubState,Result,… -- '<unit>'`, read as `key=value`                                               | Linux             |
+| `log`       | a line written after the step started matches `pattern`              | `container` or `unit`, `pattern`, optional `failPattern`, `sudo` (unit only) | `docker logs --timestamps --since <start> -- '<name>'`, or `[sudo -n] journalctl -u '<unit>' --since @<start> -o json --output-fields=MESSAGE`; matched in JavaScript | Linux             |
+| `http`      | an address answers with `status` (default 200) and `contains`        | `url`, `status`, `contains`, `servername`                                    | a loopback URL: a GET over a TCP channel from the host to its own loopback; any other https URL: from Termix itself                                                   | all               |
+| `port`      | a TCP port on the host's loopback is `open` (default) or `closed`    | `port`, `state`, `host` (`127.0.0.1` default or `localhost`; never `::1`)    | a TCP channel from the host to that port, through the SSH connection (`forwardOut`)                                                                                   | all               |
+| `file`      | a path `exists` (default), is `nonEmpty` or is `gone`                | `path`, `state`, `sudo`                                                      | SFTP `stat` as the SSH user; `sudo: true` runs one fixed `sudo -n stat -L -c '%s %F' -- '<path>'` instead                                                             | all (sudo: Linux) |
+| `job`       | a long command started in the background ended with `Result=success` | `command`, `unit` (default `runbooks-job-<run>-<item>`), `within` up to 7200 | `sudo -n systemd-run --unit=… --property=RemainAfterExit=yes -- /bin/sh -c '<command>'`, then the unit check and its journal each check                               | Linux             |
+
+**The real loops these replace:**
+
+A deploy, then "wait until the container is healthy", the most common wait:
+
+```json
+{
+  "title": "home-server: Enforcarr on the farm image",
+  "hostId": 1,
+  "workdir": "/mnt/sdd/services/media-server",
+  "sequence": [
+    {
+      "type": "run",
+      "label": "Deploy",
+      "command": "sudo paseo-deploy up media enforcarr"
+    },
+    {
+      "type": "container",
+      "name": "enforcarr",
+      "state": "healthy",
+      "within": 180
+    },
+    {
+      "type": "http",
+      "url": "https://127.0.0.1:8443/health",
+      "servername": "enforcarr.example.com",
+      "contains": "ok",
+      "within": 60
+    }
+  ]
+}
+```
+
+instead of `sudo paseo-deploy up media enforcarr && for i in $(seq 1 36); do docker inspect -f '{{.State.Health.Status}}' enforcarr | grep -q healthy && break; sleep 5; done`.
+
+A backup that runs longer than the 10-minute limit of one command, followed to its end, then its log checked:
+
+```json
+{
+  "sequence": [
+    {
+      "type": "job",
+      "label": "Nightly backup",
+      "command": "restic backup /srv --tag nightly",
+      "unit": "restic-nightly",
+      "within": 7200,
+      "every": 30
+    },
+    {
+      "type": "log",
+      "unit": "restic-nightly.service",
+      "sudo": true,
+      "pattern": "snapshot [0-9a-f]+ saved",
+      "failPattern": "Fatal:",
+      "within": 60
+    }
+  ]
+}
+```
+
+instead of `sudo systemd-run --unit=restic-nightly restic backup /srv` in one step and `until ! systemctl is-active -q restic-nightly; do sleep 30; done` in the next.
+
+A unit started without waiting, then "until it finished", and a file it writes:
+
+```json
+{
+  "sequence": [
+    {
+      "type": "run",
+      "command": "sudo systemctl start --no-block enforcarr-migrate.service"
+    },
+    {
+      "type": "unit",
+      "name": "enforcarr-migrate.service",
+      "state": "finished",
+      "within": 600,
+      "every": 10
+    },
+    {
+      "type": "file",
+      "path": "/srv/enforcarr/migrated.ok",
+      "sudo": true,
+      "within": 30
+    }
+  ]
+}
+```
+
+A port that must close after a stop: `{ "type": "port", "port": 5432, "state": "closed", "within": 60 }`.
+
+**What each reads, and when it fails at once:**
+
+- `container`: a container that is not there yet is "not yet" for `healthy`, `running` and `exited`, and passes `gone`. While it waits for `healthy` or `running`, a container that **exited** or whose **restart count grew** since the first check fails the item at once. `healthy` on a container with no `HEALTHCHECK` fails at once (wait for `running` instead). Permission denied on the Docker socket fails at once.
+- `unit`: an end (`ExecMainExitTimestamp`) before the step started belongs to an earlier run and does not count. `finished` passes on a unit that ran to its end with `Result=success` since then; a unit that **failed** since then fails at once, for `active` too. A unit that is not loaded fails at once: its name is wrong, or it was a transient unit that ended and systemd removed (use a `job`). It needs systemd 248 or later (`--timestamp=unix`).
+- `log`: reads only lines written after the step started (after Continue, after the first item's start in the first run), each line once: the next check reads after the last time (Docker) or the last journal cursor. Each line is cut to 4096 characters. `pattern` and `failPattern` are JavaScript regular expressions of up to 200 characters, one line, with no repeated group that holds a repeat or alternatives, at any depth (such as `(a+)+`, `((a+))+` or `(a|aa)+`); patterns never take `{{name}}` values. They run with a time limit (250 ms for all the new lines of one check): a pattern that takes longer fails the item with `result` `pattern too slow`. The first new line that matches `failPattern` fails the item; the first that matches `pattern` passes it. A unit's journal without `sudo` needs an SSH user in the `adm` or `systemd-journal` group.
+- `http`: a URL on `127.0.0.1` or `localhost` goes through the SSH connection to the **host's own** loopback, always opened to the literal `127.0.0.1` (the URL keeps `localhost` for the `Host` header and the certificate check). A URL on `[::1]`, and a `port` item with `host: "::1"`, are refused when written (400, "write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only"): the key's `permitopen="127.0.0.1:*"` lets sshd forward to that address as written, and it refuses `localhost` and `::1`. Any other URL must be `https://` and goes from Termix itself (core's `ctx.fetch`), never to Termix's own loopback, its own addresses, `0.0.0.0`, `::` or a link-local address, in any spelling (`[::ffff:127.0.0.1]`, `[64:ff9b::7f00:1]`); such an address in the URL is refused when written (400), and a name that resolves to one fails the item (`address refused`). The certificate is **always** checked: against `servername` (loopback URLs only) or the URL's host name, with the public roots plus the admin's **Extra trusted CAs**. Plain `http://` is allowed only to the host's loopback (the bytes stay inside the SSH connection). Redirects are not followed: a `301` is a status like any other. The first 64 KB of the body are read; the item shows the status line and the first 2 KB. A certificate that fails the check, a closed port, a `503` are all "not yet", so a proxy that shows its default certificate while it starts does not fail the item; the words say what the last check read.
+- `port`, and `http` to a loopback URL: a channel the host's SSH server refuses as **administratively prohibited** (the SSH key Termix uses has `no-port-forwarding`, or its `permitopen` does not allow the port) fails the item at once with words that say so; it is never read as "closed". The key needs `permitopen="127.0.0.1:*"` and `permitlisten="127.0.0.1:1"` instead of `no-port-forwarding`: the host's own ports, and no reverse forwards.
+- `file`: SFTP works with the key as it is. "Permission denied" fails at once (set `sudo: true` on Linux). `nonEmpty` on a directory fails at once.
+- `job`: the first check starts the unit; each check reads its state, then the journal lines since the last check, which stream into the item. It passes when the unit ended with `Result=success`, fails at once when it failed, and then stops and unloads the unit (`systemctl stop`, `reset-failed`). **Stop**, or running out of `within`, stops the unit too. A unit of that name that is already loaded fails at once. The command runs as root (`sudo -n`), in the step's `workdir` (`--working-directory`), with systemd's environment, not a login shell's. The [sleep ban](#no-sleep-in-commands) reads it. A Stop while `systemd-run` starts it stops the unit too. The journal is shown with secrets, and hidden input typed into an earlier item, replaced. A Termix restart, or Runbooks being stopped, leaves the unit running; Continue starts the job again (a new run gets a new default unit name; with your own `unit` name, stop the old one first).
+
+**Names and values.** Names, paths, units, URLs and `servername` are checked when the step is written (400 with the field's name, on create, add-steps, update-step, amend and MCP), and go into the fixed commands in single quotes after `--`, so they are never read as an option or as shell text. They may hold `{{name}}` values, also from an earlier item's capture; the filled value is checked again before the item runs, and a value that is not a valid name fails the item.
+
+**Windows hosts.** `container`, `unit`, `log`, `job` and a `file` with `sudo` need a Linux host. They are refused when written (400, `code` `linux-only`) for a host whose Termix tags include `windows` (`list_hosts` shows `"windows": true`, kept when a person saves the token's hosts), and for a host a run found to be Windows. Termix tells plugins nothing about a host's system, so Runbooks reads the SSH server's version string from the handshake (`OpenSSH_for_Windows_9.5`): a Linux-only event on such a host fails at once with words that say so, and Runbooks remembers the host until Termix restarts. `port`, `http` and `file` without `sudo` work on Windows hosts (SFTP paths look like `/C:/Users/...`).
+
+**What you read.** An event item's `command` is what it checks: the fixed command with `# until ...`, or the channel it opens (`"TCP 127.0.0.1:8443 on home-server, through the SSH connection: until open"`). Each attempt has `result`, the state it read in fixed words (`healthy`, `exited (1)`, `restarting (restart 3)`, `active (running)`, `failed (exit-code, status 3)`, `finished (success)`, `HTTP 503`, `HTTP 200, text not found`, `certificate not trusted`, `port closed`, `forwarding refused`, `file exists`, `file exists, empty`, `not there`, `no match yet (12 new lines)`, `matched`, `Windows host`); the item's `result` is the last one. `why` is `not-yet` (not the state yet), `fail-state` (a state that fails at once), `timeout`, `connect`, `stopped` or `interrupted`. The attempt's `stdout` and `stderr` are what the check read (the command's output, the HTTP status and body, the journal messages); a job's item keeps its whole journal. On a step hidden from agents, `stdout`, `stderr` and `error` read `[hidden by owner]`; `result` stays visible, as an exit code does: it is built from fixed words and numbers only, never text from the host.
+
+### No sleep in commands
+
+Runbooks refuses a command that waits a fixed time (1.4.10), in `command` and in every run and wait item, when you create a runbook, add steps, change a step or amend one: 400 with `code` `sleep` and a message that points to the `delay` and `wait` items. What counts as a wait:
+
+- `sleep` as a word followed by a duration, a variable, a quote or a parenthesis, past options and `--`: `sleep 5`, `/usr/bin/sleep 0.5`, `sleep "$DELAY"`, `sleep infinity`, `sleep -- 5`, `sleep${IFS}5`, `bash -c 'sleep 5'`, `time.sleep(5)`, `await sleep(100)`. The word is read as the shell reads it, so `s''leep 5`, `s\leep 5` and `"sl"eep 5` are `sleep 5`.
+- `Start-Sleep`, with any arguments; `timeout /t <n>`; `read -t <n>`; `timeout <n>` right before a command that never ends by itself (`tail -f`, `journalctl -f`, `docker logs -f`, `cat` with no file, `read`, `yes`, `wait`, a `ping` with no count); `ping -n <n>` or `ping -c <n>` to the host itself (127.0.0.1, localhost, ::1) or with its output thrown away (`>nul`, `> $null`).
+- Values are read once filled in: a Run whose values make a command wait is refused (400 `sleep`), and a sequence item whose value, captured by an earlier item, makes it wait fails before it runs.
+
+Not a wait: `sleep` inside a longer word (`sleeping`, `--no-sleep`, `sleep.target`), `sleep` followed by other words (`echo "time to sleep now"`), `timeout 30 curl ...` (a time limit), `docker compose up --wait`, and a `ping` that tests a network address. The text is read as it is, inside quotes too, so `echo "sleep 5 minutes"` is refused: reword it.
+
+Make the step a sequence instead, with the commands before and after the wait as run items and a `delay` item between them. A loop that polls (`until curl ...; do sleep 5; done`) is refused too: use a [wait event](#wait-events) (container, unit, log, http, port, file, job), or a [wait item](#waits-and-retries) that runs the check until it passes. A `job` item's command is read too. The ban reads a wait item's command as well. Steps stored before keep running. An admin can turn the ban off in the plugin's settings (**Refuse sleep in commands**); it is on by default.
 
 ### Wait timers
 
@@ -513,6 +866,17 @@ A step that Termix runs has two buttons: **Run** starts the command over a conne
 }
 ```
 
+### Output read from the terminal
+
+Since 1.4.10, Send to terminal reads what the command prints into the **Mark done** box, so the person does not copy it from the terminal (on a phone they cannot). It only fills the box: the person checks the text, can change it, and presses **Mark done** or **Mark failed** as before. The box always says "Check the text before you save it" (or "The terminal waits for a password"); it never says the command finished. **Read again** reads the terminal again.
+
+- The text is the run's `pastedOutput`, so checks, `captures`, `secretCaptures` and secret masking read it as they read a paste. The exit code stays empty: the person may enter one.
+- The run's `outputSource` says where it came from: `"captured"` (read from the terminal, kept as read), `"captured-edited"` (read from the terminal, then changed by the person) or `"pasted"` (by the person). It is `null` on a run with no pasted output, on runs from before 1.4.10, and on a step hidden from agents. A step run outside Termix with output has `"pasted"`. It is what the person's page reported, not proof that the text was not typed by hand.
+- The reading lives in the browser that pressed Send to terminal. After a reload, on another device, or with a Termix whose terminal does not offer it (such as plugin API 2), the box is empty and the person pastes, as before.
+- The text starts only after the command's echo: the line the shell ends on Enter must be the prompt noted before the send, with the command. When the person changed the command first, or the echo cannot be followed, nothing is read and the person pastes. It ends at the next prompt (where bash 5.1+, zsh or fish turn line editing on again, or the noted prompt at the start of a line), at a cursor move to another row (`clear`, a progress display, tmux: a note says the end may be missing), at 256 K characters, or after an hour or the step's longer time limit. Commands the person types after it are not in the text. A terminal whose last line is not a prompt (a tmux status line, a message still printing) gets no reading: the person pastes.
+- **Mark failed** sends the read text only if the person opened or changed the box; otherwise the run has no output, as before 1.4.10.
+- Write such a step as before; do not tell the person to paste the output. For a command that only asks for a password, a Run with [Typed input](#typed-input) still keeps more: the exit code and the output as it arrives.
+
 ### Typed input
 
 While a Run runs, the person who started it can type into the command from the runbook page (1.4.6): a line under the live output with **Send** (Enter) and **End input**, and an eye to hide what they type. This works on every Run without `stdin`, for programs that read standard input: `read`, `sudo -S`, many scripts. Write the step as a Run; do not tell the person to use Send to terminal and paste the output back.
@@ -687,7 +1051,7 @@ A run in the answer looks like this:
 }
 ```
 
-`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
+`mode` is `exec` (run over SSH), `terminal` (sent to a terminal; `pastedOutput` holds what the person pasted or checked, and `outputSource` whether it was `pasted`, `captured` from the terminal or `captured-edited`, see [Output read from the terminal](#output-read-from-the-terminal)), `manual` (a step with no command that the person marked **Done** or **Failed**; `hostId` is `null`, `command` is empty and `note` holds the person's note) or `agent` (an agent step the agent ended; `userId` is the token's name, `hostId` is `null`, `note` and `stdout` are what the agent handed in). `status` is `running`, `awaiting-output`, `done` or `failed`. `stdin` is the source and size of the standard input the run got, `secrets` the secrets it read and stored, by name, and `startedEarlySeconds` how much of the step's wait timer was left when the person started it anyway (`null` when it was not early).
 
 While a command runs, its run has `status: "running"` and `running: true`, `stdout` and `stderr` hold the output that has arrived so far, and `lastOutputAt` is when it last printed anything (`null` before the first output). Read the runbook again to follow it; once a second is plenty. Output of a hidden step still reads `[hidden by owner]`. A run the person stopped ends `failed` with `error: "stopped by <user id>"`; a run cut short by a Termix restart ends `failed` with `error: "interrupted: Termix restarted while it ran"` and the output that had been saved. A failed run of a hidden step has `error: "[hidden by owner]"` whatever the reason, and its run that ended done has `error: null`. Agents cannot stop a run.
 
@@ -699,15 +1063,16 @@ While a command runs, its run has `status: "running"` and `running: true`, `stdo
 | ---------------- | ---------------------------------------------------------- |
 | `list_hosts`     | Hosts the token can use                                    |
 | `list_vms`       | The token's VM hosts in HAW, or the VMs on one (read only) |
-| `list_runbooks`  | Runbooks with progress                                     |
+| `list_runbooks`  | Runbooks with progress; `folder` lists one folder          |
 | `get_runbook`    | One runbook with steps, notes, runs and outputs            |
 | `create_runbook` | Propose a runbook with steps                               |
-| `update_runbook` | Change title, summary, values or status                    |
+| `update_runbook` | Change title, summary, values, status, owner or folder     |
 | `add_steps`      | Add steps at the end or at a position                      |
 | `update_step`    | Change a step that has not run                             |
 | `remove_step`    | Remove a step that has not run                             |
 | `reorder_steps`  | New step order                                             |
 | `get_values`     | Effective values                                           |
+| `get_attempt`    | One attempt of an item, with its output                    |
 | `complete_step`  | End an agent step when it is the agent's turn              |
 | `amend_step`     | Amend a step with a fixed version or a sub-step            |
 | `list_events`    | Events of the token's runbooks after an id                 |
@@ -746,7 +1111,7 @@ Connect the agent with the MCP config above, then ask for a runbook instead of a
 
 Good habits for the prompt:
 
-- Ask for one command per step, with an `expect` line, so each approval is small.
+- Ask for one command per step, with an `expect` line, so each approval is small. Where commands belong together, ask for a sequence (one run item each) instead of a chain with `&&`, a `delay` item instead of a fixed `sleep`, and a `wait` item instead of a loop that waits for something to be ready.
 - Ask for checks on each step that has an expected result, so a wrong result marks the step failed instead of passing unnoticed.
 - Ask for a wait timer where a step must wait after the one before it, instead of "wait two minutes" in the text.
 - Ask for checks before changes, and a check after each change.

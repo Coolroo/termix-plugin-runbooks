@@ -360,7 +360,7 @@ describe("amend refusals", () => {
   it("refuses replace of a done step, a running step, a closed runbook and another token's runbook", async () => {
     const { s, token, runbook } = await setup([
       { title: "Done", hostId: 1, command: "ok" },
-      { title: "Long", hostId: 1, command: "sleep 100" },
+      { title: "Long", hostId: 1, command: "long-job" },
     ]);
     const fixed = { kind: "replace", reason: "fix", step: FIX };
     s.setExec(async () => execResult());

@@ -77,3 +77,52 @@ export function ChecksList({
     </div>
   );
 }
+
+/**
+ * The patterns a run applies to the output (BUG-014): each capture and
+ * secret capture with its pattern, so the person sees what reads the
+ * output before it runs; for a step, and for each item of a sequence
+ * (BUG-022 L3). No hooks, as ChecksList.
+ */
+export function CapturesList({
+  t,
+  captures,
+  secretCaptures = [],
+}: {
+  t: (key: string, options?: Record<string, unknown>) => string;
+  captures: ReadonlyArray<{ name: string; pattern: string }>;
+  secretCaptures?: ReadonlyArray<{ name: string; pattern: string }>;
+}) {
+  const rows = [
+    ...captures.map((capture) => ({
+      kind: "value",
+      label: t("captures.value", { name: capture.name }),
+      pattern: capture.pattern,
+    })),
+    ...secretCaptures.map((capture) => ({
+      kind: "secret",
+      label: t("captures.secret", { name: capture.name }),
+      pattern: capture.pattern,
+    })),
+  ];
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2" data-confirm-captures>
+      <SectionLabel>{t("captures.title")}</SectionLabel>
+      <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+        {rows.map((row, index) => (
+          <li
+            key={index}
+            data-confirm-capture={row.kind}
+            className="flex items-baseline gap-2"
+          >
+            <span className="shrink-0">{row.label}</span>
+            <code className="font-mono break-all text-muted-foreground">
+              {row.pattern}
+            </code>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

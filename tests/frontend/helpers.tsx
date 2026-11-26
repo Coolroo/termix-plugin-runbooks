@@ -6,7 +6,13 @@
  */
 
 import { afterEach, vi } from "vitest";
-import { act, fireEvent, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   renderWithApp,
   type RenderedPluginApp,
@@ -91,17 +97,39 @@ export async function openRunbook(
   app.renderTab("runbooks", { isVisible: true });
   if (fakeTimers) {
     await flush();
-    fireEvent.click(screen.getByText(title));
+    fireEvent.click(listRow(title));
     await flush();
     return app;
   }
-  fireEvent.click(await screen.findByText(title));
+  fireEvent.click(await waitFor(() => listRow(title)));
   if (typeof shows === "string") {
     await screen.findByRole("heading", { name: shows });
   } else if (shows) {
     await shows();
   }
   return app;
+}
+
+/**
+ * The list's row of the runbook called `title`, its section opened first
+ * as a person would (1.4.10: Done and Abandoned start collapsed).
+ */
+export function listRow(title: string): HTMLElement {
+  expandSections();
+  const row = [
+    ...document.querySelectorAll<HTMLElement>("[data-runbook-row]"),
+  ].find((each) => within(each).queryByText(title));
+  if (!row) throw new Error(`no row "${title}" in the list`);
+  return row;
+}
+
+/** Opens the list's collapsed sections, as a person does. */
+export function expandSections(): void {
+  for (const toggle of document.querySelectorAll(
+    '[data-section-toggle][aria-expanded="false"]',
+  )) {
+    fireEvent.click(toggle);
+  }
 }
 
 /** Lets promises and due timers run under fake timers. */
@@ -128,6 +156,7 @@ const SUMMARY: RunbookSummary = {
   createdAt: "2026-11-07T10:00:00.000Z",
   updatedAt: "2026-11-07T10:05:00.000Z",
   revision: 4,
+  folder: null,
   progress: { done: 1, failed: 0, total: 3, notNeeded: 0 },
   amendedPending: 0,
 };
@@ -181,6 +210,9 @@ export function makeStep(overrides: Partial<Step> & { id: number }): Step {
     vm: null,
     vmHostName: null,
     vmProblem: null,
+    sequence: null,
+    resolvedSequence: null,
+    workdir: null,
     hideOutputFromAgents: false,
     status: "pending",
     skipReason: null,
@@ -244,6 +276,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     startedEarlySeconds: null,
     inputs: [],
     errorParts: null,
+    outputSource: null,
     running: false,
     lastOutputAt: null,
     elapsedMs: null,
@@ -292,6 +325,7 @@ export function summaryOf(
     createdAt,
     updatedAt,
     revision,
+    folder,
     progress,
     amendedPending,
   } = runbook;
@@ -303,6 +337,7 @@ export function summaryOf(
     createdAt,
     updatedAt,
     revision,
+    folder,
     progress,
     amendedPending,
     nextKind,
@@ -313,13 +348,17 @@ type Reply = Promise<{ data: unknown }>;
 
 /**
  * The plugin's routes, faked: GET /runbooks answers `list` (default: the
- * detail's list fields), GET /colors answers `colors` (default none) and
- * any other GET the runbook. POST answers `post`, or the runbook.
+ * detail's list fields), GET /colors answers `colors` (default none),
+ * GET /list-state `listState` (default none: 1.4.10), GET /folders the
+ * list's folders, and any other GET the runbook. POST answers `post`, or
+ * the runbook; PUT answers what it was given.
  */
 export function fakeApi(options: {
   list?: RunbookListEntry[];
   detail: Runbook | (() => Runbook);
   colors?: unknown;
+  /** What GET /list-state answers (1.4.10). */
+  listState?: unknown;
   post?: (url: string, body?: unknown) => Promise<unknown>;
   /** Answers other GETs, such as a VM step's /steps/:id/vm (1.4.7). */
   get?: (url: string) => unknown;
@@ -336,16 +375,29 @@ export function fakeApi(options: {
           ? (options.list ?? [summaryOf(detail())])
           : url === "/colors"
             ? (options.colors ?? {})
-            : detail()),
+            : url === "/list-state"
+              ? (options.listState ?? {})
+              : url === "/folders"
+                ? folderNames(options.list ?? [summaryOf(detail())])
+                : detail()),
     })),
     post: vi.fn(
       (options.post as (url: string, body?: unknown) => Reply) ??
         (async (): Reply => ({ data: detail() })),
     ),
-    put: vi.fn(),
+    put: vi.fn(async (_url: string, body?: unknown): Reply => ({
+      data: body,
+    })),
     patch: vi.fn(),
     delete: vi.fn(),
   };
 }
 
 export type FakeApi = ReturnType<typeof fakeApi>;
+
+/** The folders of these runbooks, A to Z, as GET /folders sends them. */
+export function folderNames(list: RunbookListEntry[]): string[] {
+  return [
+    ...new Set(list.flatMap((row) => (row.folder ? [row.folder] : []))),
+  ].sort((a, b) => a.localeCompare(b, "en"));
+}

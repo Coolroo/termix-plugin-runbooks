@@ -15,6 +15,7 @@ import { createReads } from "./reads.js";
 import { createAuthoring } from "./authoring.js";
 import { createComplete } from "./complete.js";
 import { listVms, vmHostIds } from "./vms.js";
+import type { Platforms } from "../../events/platforms.js";
 
 export type AgentOps = ReturnType<typeof createAgentOps>;
 
@@ -31,14 +32,38 @@ export type AgentAudit = (line: {
 export function createAgentOps(
   store: Store,
   live?: LiveRuns,
-  options: { audit?: AgentAudit; events?: Events } = {},
+  options: {
+    audit?: AgentAudit;
+    events?: Events;
+    /**
+     * 1.4.10: whether commands that wait a fixed time are refused (the
+     * admin setting banSleep). Left out: refused.
+     */
+    banSleep?: () => Promise<boolean>;
+    /** 1.4.10, phase 3: hosts runs found to be Windows hosts. */
+    platforms?: Platforms;
+  } = {},
 ) {
   const events = options.events ?? createEvents(store);
   // VM steps (1.4.7): HAW's hosts, from the copy the token keeps (H3).
-  const access = createAccess(store, vmHostIds);
+  const access = createAccess(store, vmHostIds, options.platforms);
   const reads = createReads(store, live, access);
-  const authoring = createAuthoring(store, events, access, reads);
-  const complete = createComplete(store, events, options, access, reads);
+  const banSleep = options.banSleep ?? (async () => true);
+  const authoring = createAuthoring(
+    store,
+    events,
+    access,
+    reads,
+    banSleep,
+    options.audit,
+  );
+  const complete = createComplete(
+    store,
+    events,
+    { ...options, banSleep },
+    access,
+    reads,
+  );
 
   return {
     listHosts: access.listHosts,
@@ -52,6 +77,7 @@ export function createAgentOps(
     removeStep: authoring.removeStep,
     reorderSteps: authoring.reorderSteps,
     getValues: reads.getValues,
+    getAttempt: reads.getAttempt,
     completeAgentStep: complete.completeAgentStep,
     amendStep: complete.amendStep,
     listEvents: reads.listEvents,

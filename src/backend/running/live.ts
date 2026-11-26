@@ -47,6 +47,20 @@ export interface LiveRun {
   inputs: RunInput[];
   /** Settles when the run is finished and written. */
   done: Promise<void>;
+  /**
+   * 1.4.10: a sequence run. Its output streams into the item that runs
+   * (itemId), and stdout and stderr above are that item's output.
+   */
+  sequence: boolean;
+  /** The run item that runs now; null between items and for a plain run. */
+  itemId: number | null;
+  /** Skips the delay that runs now (1.4.10); null when none runs. */
+  skipDelay: ((by: string) => Promise<void>) | null;
+  /**
+   * Starts the next attempt of the item that waits between two attempts
+   * now (1.4.10, phase 2); null when none waits.
+   */
+  tryNow: ((by: string) => Promise<void>) | null;
 }
 
 /** A running command's standard input, as the input route uses it. */
@@ -99,15 +113,24 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
     if (!entry.dirty) return entry.flushing;
     entry.dirty = false;
     entry.lastFlushAt = Date.now();
-    const patch = {
+    const output = {
       stdout: entry.stdout,
       stderr: entry.stderr,
       truncated: entry.truncated,
-      ...(entry.inputs.length ? { inputs: [...entry.inputs] } : {}),
     };
+    const inputs = entry.inputs.length ? { inputs: [...entry.inputs] } : {};
+    // A sequence's output belongs to the item that printed it (1.4.10).
+    const itemId = entry.sequence ? entry.itemId : null;
     entry.flushing = entry.flushing
       .then(async () => {
-        await store.updateRun(entry.runId, patch);
+        if (itemId !== null) {
+          await store.updateRunItem(itemId, output);
+          if (entry.inputs.length) await store.updateRun(entry.runId, inputs);
+        } else if (!entry.sequence) {
+          await store.updateRun(entry.runId, { ...output, ...inputs });
+        } else if (entry.inputs.length) {
+          await store.updateRun(entry.runId, inputs);
+        }
         await store.persist(true);
       })
       .catch(() => {
@@ -147,6 +170,10 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
         input: null,
         inputs: [],
         done: Promise.resolve(),
+        sequence: false,
+        itemId: null,
+        skipDelay: null,
+        tryNow: null,
         dirty: false,
         lastFlushAt: Date.now(),
         timer: null,
@@ -188,6 +215,39 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
     },
 
     get: (runId: number): LiveRun | undefined => runs.get(runId),
+
+    /**
+     * A sequence's next item starts (1.4.10): its output starts empty, and
+     * Stop and typing act on it.
+     */
+    beginItem(runId: number, itemId: number): void {
+      const entry = runs.get(runId);
+      if (!entry) return;
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.timer = null;
+      entry.dirty = false;
+      entry.itemId = itemId;
+      entry.stdout = "";
+      entry.stderr = "";
+      entry.bytes = 0;
+      entry.truncated = false;
+      entry.lastOutputAt = null;
+      entry.stop = null;
+      entry.input = null;
+      entry.skipDelay = null;
+      entry.tryNow = null;
+    },
+
+    /** The item ended: nothing of it is live any more (1.4.10). */
+    endItem(runId: number): void {
+      const entry = runs.get(runId);
+      if (!entry) return;
+      entry.itemId = null;
+      entry.stop = null;
+      entry.input = null;
+      entry.skipDelay = null;
+      entry.tryNow = null;
+    },
 
     byStep(stepId: number): LiveRun | undefined {
       for (const entry of runs.values()) {
@@ -235,6 +295,31 @@ export function createLiveRuns(store: Store, flushMs = FLUSH_MS) {
         const last = entry.lastOutputAt
           ? Date.parse(entry.lastOutputAt)
           : started;
+        if (entry.sequence) {
+          // 1.4.10: the run keeps its stored output; the item that runs
+          // carries what it printed so far.
+          return {
+            ...run,
+            items: run.items?.map((item) =>
+              item.id === entry.itemId
+                ? {
+                    ...item,
+                    stdout: entry.stdout,
+                    stderr: entry.stderr,
+                    truncated: entry.truncated,
+                    lastOutputAt: entry.lastOutputAt,
+                  }
+                : item,
+            ),
+            inputs: [...entry.inputs],
+            running: true,
+            outputHeld: false,
+            acceptsInput: entry.input?.open() ?? false,
+            lastOutputAt: entry.lastOutputAt,
+            elapsedMs: Math.max(0, at - started),
+            silentMs: Math.max(0, at - last),
+          };
+        }
         return {
           ...run,
           stdout: entry.stdout,
@@ -272,6 +357,31 @@ export async function sweepInterrupted(
       error: INTERRUPTED,
       errorParts: noErrorParts(INTERRUPTED),
     });
+    // 1.4.10: a sequence's item that ran fails with it; items not reached
+    // stay waiting, so Continue starts at the item that was cut off.
+    for (const item of await store.listRunItems({ runId: run.id })) {
+      if (item.status !== "running") continue;
+      await store.updateRunItem(item.id, {
+        status: "failed",
+        finishedAt: now(),
+        error: INTERRUPTED,
+        nextAttemptAt: null,
+      });
+    }
+    // Phase 2: a wait's attempt that ran fails as interrupted. The owner
+    // (2026-11-23): the person continues from that item; it starts again
+    // at attempt 1.
+    for (const attempt of await store.listRunAttempts({
+      runId: run.id,
+      status: "running",
+    })) {
+      await store.updateRunAttempt(attempt.id, {
+        status: "failed",
+        finishedAt: now(),
+        error: INTERRUPTED,
+        why: "interrupted",
+      });
+    }
     const step = await store.getStep(run.stepId);
     if (step) {
       // Each runbook is touched once, after the sweep.

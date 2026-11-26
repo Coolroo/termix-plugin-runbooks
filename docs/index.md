@@ -18,6 +18,15 @@ The agent can never run anything. It only proposes and reads.
 
 Open **Runbooks** from the sidebar. Open runbooks come first, with their progress, their author and the kind of their next step (a colored dot, an icon and a name).
 
+### Sections and folders
+
+The list has three sections, **Open**, **Done** and **Abandoned**, each with its count (1.4.10). Open starts expanded; Done and Abandoned start collapsed. Inside each section, runbooks are grouped by folder, A to Z, with **No folder** last; each folder shows how many of the section's runbooks are in it. Press a section or a folder (or focus it and press Enter or Space) to collapse or expand it. Termix keeps your choices for you, on the server, so they follow you to another browser; other people keep their own.
+
+- **Search.** Type in the box above the list to keep only the runbooks whose title has every word you typed. Sections and folders with a match open while you search, and your saved choices come back when you clear the box (Esc).
+- **Move to folder.** Hover a runbook (or focus it; on a touch screen it is always there) and press the folder button, or press **Move to folder** on the runbook's page. Pick a folder, type a new name, or press **No folder**. A folder name is one level: up to 60 characters, no `/`. A name that is an existing folder in other letters joins it. A done or abandoned runbook moves without reopening.
+- **Rename a folder.** Hover a folder and press its pencil button. Every runbook in it moves to the new name, in all three sections. A name that is another folder in other letters merges the two.
+- A folder exists only while a runbook is in it. Agents usually set it when they make a runbook, from their task's board; you can always move it. Moves and renames are in Termix's audit log.
+
 An agent can also give you a link to a runbook, like `https://<your Termix address>/?view=runbook&id=12`. It opens Termix with the Runbooks tab on that runbook, after you sign in if you were signed out.
 
 A runbook shows its summary, its values and its steps in order. Each step shows its kind, so you see at a glance who does it and how (1.4.1):

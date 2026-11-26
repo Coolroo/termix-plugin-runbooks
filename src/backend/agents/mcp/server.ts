@@ -38,7 +38,10 @@ async function callTool(
     case "list_vms":
       return ops.listVms(caller, { host: args.host });
     case "list_runbooks":
-      return ops.listRunbooks(caller, { status: args.status });
+      return ops.listRunbooks(caller, {
+        status: args.status,
+        folder: args.folder,
+      });
     case "get_runbook":
       return ops.getRunbook(caller, int(args, "runbookId"));
     case "create_runbook":
@@ -68,6 +71,12 @@ async function callTool(
       });
     case "get_values":
       return ops.getValues(caller, int(args, "runbookId"));
+    case "get_attempt":
+      return ops.getAttempt(caller, int(args, "runbookId"), {
+        runId: args.runId,
+        item: args.item,
+        attempt: args.attempt,
+      });
     case "list_events":
       return ops.listEvents(caller, { since: args.since, limit: args.limit });
     case "amend_step":

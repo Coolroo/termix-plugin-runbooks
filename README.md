@@ -23,7 +23,7 @@ Read the [docs](docs/index.md) to set it up and use it.
 - Agents propose runbooks through a REST API or an MCP endpoint, with their own revocable tokens
 - Each token is limited to the hosts you tick for it
 - A person runs each step after a confirm that shows the host and the exact command
-- Run over SSH with the host's stored login, or send to an open terminal and paste the output back
+- Run over SSH with the host's stored login, or send to an open terminal, whose output comes back to the step for you to check
 - Every run is kept with who ran it, when, the exit code and the output
 - A repeat of a step, or of the same command on the same host within 24 hours, asks first
 - `{{name}}` values, set by the agent or captured from earlier output, in commands and in a step's text

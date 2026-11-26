@@ -103,8 +103,9 @@ export function createRunbooksTab(app: TermixApp) {
         title={view.kind === "tokens" ? t("tokens.title") : t("tab.title")}
         leading={leading}
         docs={docs ?? undefined}
-        // A runbook scrolls itself, beside its rail and above its bar.
-        scroll={view.kind !== "runbook"}
+        // A runbook scrolls itself, beside its rail and above its bar; the
+        // list (1.4.10) below its search box, beside its prompts.
+        scroll={view.kind === "tokens"}
         actions={
           canManageTokens && view.kind === "list" ? (
             <Button

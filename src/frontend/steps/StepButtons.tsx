@@ -8,13 +8,24 @@ import { useState } from "react";
 import { useTranslation } from "@termix-ssh/plugin-sdk/frontend";
 import { Button, Textarea, cn } from "@termix-ssh/plugin-sdk/ui";
 import { isAgentStep } from "../../shared/steps";
+import { resumeIndex } from "../../shared/sequence";
 import { OutcomeButtons } from "../ui/ui";
 import type { Run, Step } from "../api-types";
 import type { VmStepState } from "../../shared/vms";
+import type { OutputSource } from "../../shared/api";
 
 export interface StepActions {
   /** `waitLeftMs`: the step's wait timer still runs, this long. */
   run: (step: Step, waitLeftMs?: number) => void;
+  /**
+   * 1.4.10: runs a sequence again from the first item that did not pass
+   * in its latest run (1-based `fromItem`).
+   */
+  continueFrom: (step: Step, fromItem: number, waitLeftMs?: number) => void;
+  /** 1.4.10: ends the delay item that runs now. */
+  skipDelay: (step: Step) => void;
+  /** 1.4.10, phase 2: starts the next attempt of a waiting item now. */
+  tryNow: (step: Step) => void;
   stop: (step: Step) => void;
   send: (step: Step, waitLeftMs?: number) => void;
   skip: (step: Step, reason: string) => void;
@@ -48,11 +59,13 @@ export interface StepActions {
    * step (1.4.2). Resolves true when the server stored it.
    */
   secret: (step: Step, value?: string) => Promise<boolean>;
+  /** `source`: pasted, or read from the terminal and maybe changed (1.4.10). */
   complete: (
     run: Run,
     pasted: string,
     outcome: "done" | "failed",
     exitCode: number | null,
+    source: OutputSource,
   ) => void;
   /**
    * Types into a running command (1.4.6), then ends its input when `end`.
@@ -109,6 +122,17 @@ export function StepButtons({
   const replaced = step.status === "replaced";
   // The author may allow only one of them (1.4.6): the other is not shown.
   const runIn = step.runIn ?? "either";
+  // 1.4.10: a sequence runs with Run only, and may go on where it stopped.
+  const sequence = Boolean(step.sequence);
+  const latest = step.runs[0];
+  const resume =
+    sequence &&
+    latest?.items &&
+    latest.status === "failed" &&
+    !running &&
+    !replaced
+      ? resumeIndex(latest.items)
+      : null;
   const runInLine =
     runIn === "either"
       ? null
@@ -141,21 +165,39 @@ export function StepButtons({
             !agentStep &&
             !replaced &&
             step.hostId !== null &&
-            step.command !== null && (
+            (step.command !== null || sequence) && (
               <>
-                {runIn !== "terminal" && (
+                {resume !== null && (
                   <Button
                     size="sm"
                     variant={notYet ? "outline" : "default"}
+                    className={cn(notYet && "opacity-60")}
+                    data-continue={resume + 1}
+                    disabled={!runnable || busy || blocked}
+                    onClick={() =>
+                      actions.continueFrom(
+                        step,
+                        resume + 1,
+                        notYet ? waitLeft : 0,
+                      )
+                    }
+                  >
+                    {t("step.continueFrom", { position: resume + 1 })}
+                  </Button>
+                )}
+                {runIn !== "terminal" && (
+                  <Button
+                    size="sm"
+                    variant={notYet || resume !== null ? "outline" : "default"}
                     className={cn(notYet && "opacity-60")}
                     data-not-yet={notYet || undefined}
                     disabled={!runnable || busy || blocked}
                     onClick={() => actions.run(step, notYet ? waitLeft : 0)}
                   >
-                    {t("step.run")}
+                    {resume !== null ? t("step.runFromStart") : t("step.run")}
                   </Button>
                 )}
-                {runIn !== "run" && (
+                {runIn !== "run" && !sequence && (
                   <Button
                     size="sm"
                     variant={

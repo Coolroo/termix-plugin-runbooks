@@ -41,6 +41,9 @@ import {
   RuleError,
   type WhenRule,
 } from "../conditions/conditions.js";
+import type { SequenceItem } from "../../shared/sequence.js";
+import { sleepProblem } from "./no-sleep.js";
+import { parseSequence, parseWorkdir } from "./sequence-parse.js";
 
 /**
  * A step as an author writes it: stdin and when name earlier steps by
@@ -188,16 +191,21 @@ const STEP_FIELDS = [
   "decision",
   "interactive",
   "vm",
+  "sequence",
+  "workdir",
 ];
 
 /**
  * A step as an author writes it. `partial` allows leaving fields out (an
- * edit); the result then holds only the fields that were given.
+ * edit); the result then holds only the fields that were given. `banSleep`
+ * (1.4.10, on unless the admin turned it off) refuses a command that waits
+ * a fixed time (no-sleep.ts).
  */
 export function parseStepInput(
   input: unknown,
-  options: { partial?: boolean } = {},
+  options: { partial?: boolean; banSleep?: boolean } = {},
 ): Partial<AuthorStep> {
+  const banSleep = options.banSleep ?? true;
   const raw = strictObject(input, STEP_FIELDS, {
     notObject: "a step must be an object",
     field: "step",
@@ -232,7 +240,11 @@ export function parseStepInput(
       if (value.trim() === "") out.command = null;
       else if (value.includes("\0")) {
         throw new InputError("command must not contain NUL characters");
-      } else out.command = value;
+      } else {
+        const problem = banSleep ? sleepProblem(value, "command") : null;
+        if (problem) throw new InputError(problem, 400, { code: "sleep" });
+        out.command = value;
+      }
     }
   }
   if (has("where")) {
@@ -383,6 +395,15 @@ export function parseStepInput(
     }
     out.interactive = interactive;
   }
+  if (has("sequence")) {
+    out.sequence = parseSequence(raw.sequence, {
+      banSleep,
+      commandMax: LIMITS.command,
+      timeoutMin: LIMITS.timeoutMin,
+      timeoutMax: LIMITS.timeoutMax,
+    });
+  }
+  if (has("workdir")) out.workdir = parseWorkdir(raw.workdir);
   if (has("hideOutputFromAgents")) {
     const hide = raw.hideOutputFromAgents ?? false;
     if (typeof hide !== "boolean") {
@@ -434,6 +455,8 @@ export function completeStep(parsed: Partial<AuthorStep>): AuthorStep {
     decision: parsed.decision ?? null,
     interactive: parsed.interactive ?? false,
     vm: parsed.vm ?? null,
+    sequence: parsed.sequence ?? null,
+    workdir: parsed.workdir ?? null,
   };
   checkStepShape(step);
   return step;
@@ -465,7 +488,14 @@ export function checkStepShape(step: {
   hideOutputFromAgents?: boolean;
   timeoutMs?: number | null;
   vm?: VmSpec | null;
+  sequence?: SequenceItem[] | null;
+  workdir?: string | null;
 }): void {
+  if (step.sequence) {
+    checkSequenceShape(step);
+    return;
+  }
+  checkWorkdirShape(step);
   checkRunInShape(step);
   checkInteractiveShape(step);
   if (step.vm) {
@@ -521,6 +551,85 @@ export function checkStepShape(step: {
     step.captures.map((capture) => capture.name),
   );
   if (problem) throw new InputError(problem);
+}
+
+/**
+ * A sequence step (1.4.10): a person's step Termix runs on a host, item
+ * after item. What a step-level field did for one command belongs to the
+ * run items now (checks, captures, timeoutMs, interactive), and what one
+ * Run cannot give a list of commands is refused: standard input, secret
+ * captures and Send to terminal.
+ */
+function checkSequenceShape(step: Parameters<typeof checkStepShape>[0]): void {
+  if (step.owner === "agent") {
+    throw new InputError(
+      "a sequence is for a person's step that Termix runs: an agent step has one command, the one you run",
+    );
+  }
+  const extra: Array<[boolean, string]> = [
+    [
+      step.command !== null,
+      "command (a sequence step has its commands in run items)",
+    ],
+    [Boolean(step.where), "where"],
+    [Boolean(step.vm), "vm"],
+    [Boolean(step.decision), "decision"],
+    [Boolean(step.generate || step.ask), "generate or ask"],
+    [Boolean(step.stdin), "stdin (give it to a step with one command)"],
+    [
+      (step.secretCaptures ?? []).length > 0,
+      "secretCaptures (give them to a step with one command)",
+    ],
+    [
+      step.captures.length > 0,
+      "captures (put them on the run item whose output they read)",
+    ],
+    [
+      (step.checks ?? []).length > 0,
+      "checks (put them on the run item whose output they read)",
+    ],
+    [step.timeoutMs != null, "timeoutMs (put it on the run items)"],
+    [
+      Boolean(step.interactive),
+      "interactive (put it on the run item that asks)",
+    ],
+  ];
+  const found = extra.find(([present]) => present);
+  if (found) throw new InputError(`a sequence step cannot have ${found[1]}`);
+  if (step.hostId === null) {
+    throw new InputError(
+      "a sequence needs a hostId: the host its run items run on",
+    );
+  }
+  if (step.runIn === "terminal") {
+    throw new InputError(
+      'runIn "terminal" needs a step with one command: Send to terminal cannot run delays or several items',
+    );
+  }
+  if (step.runInReason && (step.runIn ?? "either") === "either") {
+    throw new InputError('runInReason needs runIn "terminal" or "run"');
+  }
+  if (step.waitReason && !step.waitAfterPreviousSeconds) {
+    throw new InputError("waitReason needs waitAfterPreviousSeconds");
+  }
+}
+
+/**
+ * A workdir (1.4.10) is where a command Termix runs on a host starts: a
+ * step with a host and a command, or a sequence.
+ */
+function checkWorkdirShape(step: Parameters<typeof checkStepShape>[0]): void {
+  if (!step.workdir) return;
+  if (
+    step.owner === "agent" ||
+    step.where ||
+    step.hostId === null ||
+    step.command === null
+  ) {
+    throw new InputError(
+      "workdir needs a command Termix runs on a host: a step with hostId and command, or a sequence",
+    );
+  }
 }
 
 /**

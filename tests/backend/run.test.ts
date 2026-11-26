@@ -365,6 +365,8 @@ describe("captures", () => {
         hostId: 1,
         command: "app --version",
         captures: [{ name: "ver", pattern: "^version: (\\S+)$" }],
+        // BUG-022 M3: a captured value goes into a command with a pattern.
+        checks: [{ type: "value", name: "ver", matches: "^[0-9.]+$" }],
       },
       { title: "Fetch", hostId: 1, command: "fetch app-{{ver}}.tgz" },
     ]);

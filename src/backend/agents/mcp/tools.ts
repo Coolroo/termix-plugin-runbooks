@@ -3,9 +3,22 @@
  * The schemas' patterns come from the server's own rules.
  */
 
+import {
+  EVENT_LIMITS,
+  EVENT_TYPES,
+  FORWARD_HOSTS,
+} from "../../../shared/events.js";
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
 import { OPTION_ID } from "../../../shared/decisions.js";
+import { MAX_FOLDER } from "../../../shared/folders.js";
+import { SEQUENCE_LIMITS } from "../../../shared/sequence.js";
+import {
+  BACKOFFS,
+  JITTERS,
+  RETRY_ON,
+  SCHEDULE_LIMITS,
+} from "../../../shared/schedule.js";
 import {
   MAX_VM_VALUE,
   MAX_WAIT_SECONDS,
@@ -15,7 +28,8 @@ import {
 } from "../../../shared/vms.js";
 
 const VALUE_SYNTAX =
-  'Commands and checks may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook\'s value of that name: the author\'s values first, then values captured from earlier steps\' output (a later capture wins). In a check, contains and notContains text and a value check\'s equals get the value as it is, and a pattern (matches, notMatches, a value check\'s matches) gets it as literal text, escaped, so {"type":"contains","text":"image:{{ver}}@sha256:"} works. The person sees the resolved command before running it; a step whose placeholders, in its command or its checks, have no value cannot run.';
+  'Commands and checks may use {{name}} placeholders. Each is replaced, as plain text and without shell quoting, by the runbook\'s value of that name: the author\'s values first, then values captured from earlier steps\' output (a later capture wins). In a check, contains and notContains text and a value check\'s equals get the value as it is, and a pattern (matches, notMatches, a value check\'s matches) gets it as literal text, escaped, so {"type":"contains","text":"image:{{ver}}@sha256:"} works. The person sees the resolved command before running it; a step whose placeholders, in its command or its checks, have no value cannot run. ' +
+  'A value a step or an item captures from a host\'s output may go into a command (a step\'s or item\'s command, an event\'s name, path or URL) only when the step or item that captures it checks it with a pattern: {"type":"value","name":"ver","matches":"^[0-9.]+$"}; otherwise the runbook is refused (400, code captured-value). A value that does not match fails the capturing step, and a later item takes it only when it matches as a whole. Your own values, and a VM step\'s values, need no pattern.';
 
 const TEXT_VALUES =
   "{{name}} values work here too, with the command's values: get_runbook returns the text as written and resolved (resolvedBody, resolvedExpect, resolvedWhere; textMissing names values not set yet, which show to the person as not set and do not stop the step). In Markdown a value shows as text (its Markdown is escaped), and inside a code span or code block as it is. Secrets are never values.";
@@ -106,6 +120,31 @@ const STORE_SCHEMA = {
   ],
 };
 
+const SEQUENCE_HELP =
+  "A step Termix runs on a host may be a sequence (1.4.10) instead of one command: sequence is a list of 1 to 20 items that one Run runs in order, as the person who pressed it, each shown on the step card with its own state, time, output and checks. Use it instead of chaining commands with && or ; and instead of sleep. Item types: " +
+  '{"type":"run","label":"Deploy","command":"sudo paseo-deploy up media enforcarr"} (optional checks, captures, timeoutMs and interactive as for a step, and onFail "stop" (default) or "continue" for a read-only report after the main work); ' +
+  '{"type":"delay","seconds":30,"reason":"let the service start"} (1 to 3600 seconds: a countdown on the page, run by Termix itself; the person may skip it); ' +
+  '{"type":"wait","label":"Healthy","command":"curl -fsS https://127.0.0.1:8443/health","checks":[{"type":"contains","text":"ok"}],"within":180,"every":5} (runs the command until it exits 0 with every check passing: write it instead of a for or until loop with sleep; see WAIT ITEMS). ' +
+  "Each run item is a new shell on its own connection: cd and variables do not carry over; set workdir on the step (an absolute path) and every run item starts there. A capture of an item fills {{name}} in later items and later steps (in a command or an event's text only with a value check that has matches on the item that captures it). An item that fails stops the sequence and fails the step, unless it says onFail continue; the person can then continue from that item, and the items that passed do not run again. " +
+  "A sequence step has hostId and sequence, and no command, checks, captures, timeoutMs, interactive, stdin or secretCaptures of its own (put them on the run items), and cannot be an agent step or runIn terminal. get_runbook lists each run's items with their own output, exit code, checks and captures. See EVENTS for the waits built into Termix. " +
+  "WAIT ITEMS: checks (at least one) say what ready looks like; stopIf (optional checks) fails the item at once when one matches, such as a job that reports FAILED; within (required, 1 to 7200 seconds) is the time limit for all attempts and delays together; attempts (1 to 500, default 500) the most attempts; timeoutMs the limit of one attempt. The schedule: every (seconds before the next attempt, default 5), backoff fixed (default: every each time), linear (every × n) or exponential (every × factor^(n-1), factor 1.1 to 10, default 2), maxDelay (cap on one delay, default 300, at most 3600) and jitter none (default), full or equal. A failed attempt means not yet; captures come from the attempt that passes only. " +
+  'RETRY: a run item may have retry for a flaky command: {"attempts":5,"backoff":"exponential","every":2} (attempts 2 to 500 required; every, backoff, factor, maxDelay, jitter as for a wait; within optional, up to 7200; retryOn: a list of "exit", "check", "timeout", "connect", default all four: the failures that get another attempt). Not on an interactive item. ' +
+  "Each attempt is a record inside its item: items[].attempts lists {attempt, status, startedAt, finishedAt, exitCode, stdout, stderr, checks, stopIf, why (exit, check, timeout, connect, stop-if, stopped, interrupted, or null when it passed)}, without output (stdout and stderr null): the item carries its last attempt's output, and get_attempt reads one attempt's (an earlier attempt keeps the last 4 KB of each stream). While one waits, the step has attempt {item, attempt, of, nextAt, endsBy}; schedules on the step lists each wait's planned attempts before Run. The server runs the attempts as the person who pressed Run, also with the page closed; the person who pressed Run, or a person who may connect to the host, may press Try now; anyone may press Stop. You get one event when the step ends, never one per attempt.";
+
+const WAIT_EVENTS_HELP =
+  "EVENTS (1.4.10): items that wait until a state holds, checked by Termix itself (no shell loop on the host), each with a wait's schedule: within (required, 1 to 7200 s), every, backoff, factor, maxDelay, jitter, attempts, timeoutMs (one check, default 30000), label, onFail. Use them instead of a wait item with docker inspect, systemctl, curl or test -f. " +
+  '{"type":"container","name":"enforcarr","state":"healthy","within":180} (state healthy, running, exited or gone; one fixed docker container inspect, read by Termix; healthy and running fail at once when the container exits or restarts; healthy needs a HEALTHCHECK). ' +
+  '{"type":"unit","name":"restic-backup.service","state":"finished","within":3600} (active, or finished: ran to its end with Result=success since the step started; fails at once when it failed; one fixed systemctl show). ' +
+  '{"type":"http","url":"https://127.0.0.1:8443/health","servername":"termix.example.com","status":200,"contains":"ok","within":60} (a URL on 127.0.0.1 or localhost goes through the SSH connection to the host\'s own 127.0.0.1 ([::1] is refused: Termix\'s SSH key allows forwarding to 127.0.0.1 only); any other https URL goes from Termix itself, never to Termix\'s own loopback, its own addresses, 0.0.0.0 or a link-local address in any spelling; the certificate is always checked, against the URL\'s host name or servername (loopback only), with public roots plus the admin\'s extra CAs; plain http:// only to the loopback; redirects are not followed). ' +
+  '{"type":"port","port":5432,"state":"open","within":60} (open or closed, on the host\'s own 127.0.0.1 (host may be localhost; ::1 is refused: Termix\'s SSH key allows forwarding to 127.0.0.1 only), through the SSH connection; fails at once when the host\'s SSH key does not allow forwarding). ' +
+  '{"type":"file","path":"/srv/app/ready","state":"exists","within":300} (exists, nonEmpty or gone; SFTP stat as the SSH user, also on Windows; sudo true reads a root-only path with one fixed sudo -n stat, Linux only). ' +
+  '{"type":"log","container":"enforcarr","pattern":"listening on","failPattern":"FATAL","within":120} (or unit instead of container, with sudo true to read the system journal with sudo -n; lines written after the step started; pattern and failPattern are JavaScript regular expressions up to 200 characters, with no repeated group that holds a repeat or alternatives, such as (a+)+ or (a|aa)+; a pattern that takes longer than 250 ms on the new lines fails the item). ' +
+  '{"type":"job","command":"sudo restic-nightly.sh","unit":"restic-nightly","within":7200,"every":30} (starts the command as a transient root systemd unit with sudo -n systemd-run, streams its journal into the item, passes when it ended with Result=success; for work longer than the 10-minute limit of one command; Stop or running out of time stops the unit; the sleep ban applies to its command). ' +
+  "container, unit, log and job (and file with sudo) need a Linux host: they are refused for a host list_hosts marks windows, and fail at once on a host whose SSH server is Windows. Names, paths and URLs may hold {{name}} values; patterns may not. Each item's command in get_runbook is what it checks (the fixed command, or the channel it opens); each check is an attempt with result, the state it read in words (healthy, exited (1), HTTP 503, port closed), visible also on a hidden step; why is not-yet (wait) or fail-state (failed at once).";
+
+const NO_SLEEP_HELP =
+  "Runbooks refuses a command that waits a fixed time: sleep in any spelling the shell reads as the word (also sleep -- 5, sleep${IFS}5, s''leep, in bash -c or time.sleep), Start-Sleep, timeout /t, read -t, timeout N around a command that never ends (tail -f, cat, read), or ping -n or -c to the host itself; values are read once filled in too. Make the step a sequence: put a delay item where a fixed wait was, and a wait item where a loop waited for something to be ready.";
+
 const AGENT_STEP_HELP =
   'A step may be yours: owner "agent" (default "person"). The person sees "Waiting for the agent" on it and can only skip or reopen it; Termix never runs it. Its command, if any, only says what you will run (no hostId needed). When every earlier step ended (done, failed or skipped), do the work yourself, then call complete_step with outcome done or failed, a short note and the output you got; its checks (contains, notContains, matches, notMatches) test that output. An agent step cannot have captures, secretCaptures, stdin, a wait timer or exitCode checks. Use it for work you do between the person\'s steps, such as reading a dashboard or changing a file in a repository.';
 
@@ -125,6 +164,15 @@ const OWNER_SCHEMA = {
     agent: { type: "string", maxLength: 200 },
     label: { type: "string", maxLength: 80 },
   },
+};
+
+/** 1.4.10: the folder the person's list files the runbook under. */
+const FOLDER_SCHEMA = {
+  type: ["string", "null"],
+  minLength: 1,
+  maxLength: MAX_FOLDER,
+  pattern: "^[^/]+$",
+  description: `The folder the person's Runbooks list shows the runbook in: one level, 1 to ${MAX_FOLDER} characters (trimmed), no "/". Use your task's board name (gbtvg-coop, home-server, termix). The same folder in other letters keeps its existing spelling. Null: no folder. The person can move it.`,
 };
 
 const EVENTS_HELP =
@@ -209,6 +257,255 @@ const CHECK_SCHEMA = {
   },
 };
 
+/** The schedule of a wait item and of a run item's retry (phase 2). */
+const SCHEDULE_PROPERTIES = {
+  every: {
+    type: "integer",
+    minimum: SCHEDULE_LIMITS.everyMin,
+    maximum: SCHEDULE_LIMITS.everyMax,
+    description:
+      "Seconds before the next attempt (the first delay). Default 5.",
+  },
+  backoff: {
+    type: "string",
+    enum: [...BACKOFFS],
+    description:
+      "How the delays grow: fixed (default, every each time), linear (every × n) or exponential (every × factor^(n-1)).",
+  },
+  factor: {
+    type: "number",
+    minimum: SCHEDULE_LIMITS.factorMin,
+    maximum: SCHEDULE_LIMITS.factorMax,
+    description: "exponential only: how much each delay grows. Default 2.",
+  },
+  maxDelay: {
+    type: "integer",
+    minimum: 1,
+    maximum: SCHEDULE_LIMITS.maxDelayMax,
+    description:
+      "Seconds: the longest one delay may get, at least every. Default 300.",
+  },
+  jitter: {
+    type: "string",
+    enum: [...JITTERS],
+    description:
+      "none (default); full: a random delay from 0 to the delay; equal: half the delay plus a random part of the other half.",
+  },
+};
+
+/** The fields of the events (1.4.10, phase 3); see EVENTS_HELP. */
+const EVENT_PROPERTIES = {
+  state: {
+    type: "string",
+    enum: [
+      "open",
+      "closed",
+      "exists",
+      "nonEmpty",
+      "gone",
+      "healthy",
+      "running",
+      "exited",
+      "active",
+      "finished",
+    ],
+    description:
+      "port: open (default) or closed. file: exists (default), nonEmpty or gone. container (required): healthy, running, exited or gone. unit (required): active or finished.",
+  },
+  port: {
+    type: "integer",
+    minimum: 1,
+    maximum: 65535,
+    description: "port: the TCP port on the host's loopback.",
+  },
+  host: {
+    type: "string",
+    enum: [...FORWARD_HOSTS],
+    description:
+      "port: 127.0.0.1 (default) or localhost; both open to 127.0.0.1. Never another address (::1 is refused: the key forwards to 127.0.0.1 only).",
+  },
+  url: {
+    type: "string",
+    maxLength: EVENT_LIMITS.url,
+    description:
+      "http: https://... (or http:// to the host's own 127.0.0.1 or localhost).",
+  },
+  status: {
+    type: "integer",
+    minimum: 100,
+    maximum: 599,
+    description: "http: the status it waits for, default 200.",
+  },
+  contains: {
+    type: ["string", "null"],
+    maxLength: EVENT_LIMITS.contains,
+    description: "http: text the body must hold (the first 64 KB are read).",
+  },
+  servername: {
+    type: ["string", "null"],
+    description:
+      "http, loopback https URL only: the host name the certificate must hold, such as termix.example.com.",
+  },
+  path: {
+    type: "string",
+    maxLength: EVENT_LIMITS.path,
+    description: "file: an absolute path on the host.",
+  },
+  sudo: {
+    type: "boolean",
+    description:
+      "file: read with sudo -n stat (Linux). log of a unit: read the journal with sudo -n journalctl.",
+  },
+  name: {
+    type: "string",
+    description:
+      "container: a container name or id. unit: a systemd unit name.",
+  },
+  container: {
+    type: ["string", "null"],
+    description: "log: the container whose log to read.",
+  },
+  unit: {
+    type: ["string", "null"],
+    description:
+      "log: the systemd unit whose journal to read. job: the transient unit's name (default runbooks-job-<run>-<item>).",
+  },
+  pattern: {
+    type: "string",
+    maxLength: EVENT_LIMITS.pattern,
+    description: "log: a JavaScript regular expression a new line must match.",
+  },
+  failPattern: {
+    type: ["string", "null"],
+    maxLength: EVENT_LIMITS.pattern,
+    description: "log: a new line that matches it fails the item at once.",
+  },
+};
+
+const ITEM_SCHEMA = {
+  type: "object",
+  required: ["type"],
+  description:
+    'A sequence item: {"type":"run","command":...}, {"type":"wait","command":...,"checks":[...],"within":...}, {"type":"delay","seconds":...}, or an event (EVENTS): port, http, file, container, unit, log, job.',
+  properties: {
+    type: {
+      type: "string",
+      enum: ["run", "wait", "delay", ...EVENT_TYPES],
+    },
+    label: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.label,
+      description: "Short name shown to the person.",
+    },
+    command: {
+      type: "string",
+      description:
+        "run, wait, job: the shell command, in the step's workdir. {{name}} values work, also from earlier items' captures.",
+    },
+    checks: {
+      type: "array",
+      maxItems: 20,
+      description:
+        "run: checks on this item's output, as for a step. wait: at least one; the wait passes on the first attempt that exits 0 with every check passing.",
+      items: CHECK_SCHEMA,
+    },
+    stopIf: {
+      type: "array",
+      maxItems: 20,
+      description:
+        "wait: checks on each attempt's output that, when one matches (passes), fail the item at once, such as a job that reports FAILED. Output checks only, no value checks.",
+      items: CHECK_SCHEMA,
+    },
+    within: {
+      type: "integer",
+      minimum: 1,
+      maximum: SCHEDULE_LIMITS.within,
+      description:
+        "wait and events (required): the most seconds for all attempts and delays together, up to 7200 (2 hours).",
+    },
+    attempts: {
+      type: ["integer", "null"],
+      minimum: 1,
+      maximum: SCHEDULE_LIMITS.attempts,
+      description: "wait: the most attempts, up to 500 (the default).",
+    },
+    ...SCHEDULE_PROPERTIES,
+    retry: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["attempts"],
+      description:
+        'run: run the command again when it fails, for a flaky command, such as {"attempts":5,"backoff":"exponential","every":2}. Not on an interactive item.',
+      properties: {
+        attempts: {
+          type: "integer",
+          minimum: SCHEDULE_LIMITS.retryAttemptsMin,
+          maximum: SCHEDULE_LIMITS.attempts,
+          description: "The most attempts, the first one included: 2 to 500.",
+        },
+        within: {
+          type: ["integer", "null"],
+          minimum: 1,
+          maximum: SCHEDULE_LIMITS.within,
+          description:
+            "The most seconds for all attempts and delays; default 7200.",
+        },
+        retryOn: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: [...RETRY_ON] },
+          description:
+            "The failures that get another attempt: exit (non-zero exit code), check (a check failed), timeout, connect (no connection). Default all four.",
+        },
+        ...SCHEDULE_PROPERTIES,
+      },
+    },
+    captures: {
+      type: "array",
+      description:
+        "run, wait: values to take from this item's stdout, as for a step; the names are unique in the sequence. A wait takes them from the attempt that passes.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "pattern"],
+        properties: {
+          name: { type: "string", pattern: NAME.source },
+          pattern: { type: "string" },
+        },
+      },
+    },
+    timeoutMs: {
+      type: ["integer", "null"],
+      minimum: 1000,
+      maximum: 600000,
+      description: "run: time limit for the command. Default 120000.",
+    },
+    onFail: {
+      type: "string",
+      enum: ["stop", "continue"],
+      description:
+        "run, wait: stop (default) ends the sequence and fails the step; continue records the failure and goes on.",
+    },
+    interactive: {
+      type: "boolean",
+      description:
+        "run: open a terminal (pty) for this item, for prompts such as sudo's.",
+    },
+    seconds: {
+      type: "integer",
+      minimum: SEQUENCE_LIMITS.delayMin,
+      maximum: SEQUENCE_LIMITS.delayMax,
+      description: "delay: how long to wait, in seconds.",
+    },
+    reason: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.reason,
+      description: "delay: why, shown with the countdown.",
+    },
+    ...EVENT_PROPERTIES,
+  },
+};
+
 const STEP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -236,7 +533,20 @@ const STEP_SCHEMA = {
     },
     command: {
       type: ["string", "null"],
-      description: `Shell command, run with the host's stored login. ${VALUE_SYNTAX}`,
+      description: `Shell command, run with the host's stored login. ${VALUE_SYNTAX} ${NO_SLEEP_HELP}`,
+    },
+    sequence: {
+      type: ["array", "null"],
+      minItems: 1,
+      maxItems: SEQUENCE_LIMITS.items,
+      description: SEQUENCE_HELP,
+      items: ITEM_SCHEMA,
+    },
+    workdir: {
+      type: ["string", "null"],
+      maxLength: SEQUENCE_LIMITS.workdir,
+      description:
+        "An absolute folder on the host where the command, or each run item of a sequence, starts (1.4.10): Termix runs cd -- '<workdir>' && <command>, so leave the cd out of the command. For a POSIX shell (Linux, macOS); on a Windows host keep the cd in the command.",
     },
     expect: {
       type: "string",
@@ -469,7 +779,7 @@ export const TOOLS = [
   },
   {
     name: "list_runbooks",
-    description: `List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps). ${OPEN_LINK}`,
+    description: `List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps) and folder. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -479,12 +789,18 @@ export const TOOLS = [
           enum: ["open", "done", "abandoned"],
           description: "Only runbooks with this status.",
         },
+        folder: {
+          type: ["string", "null"],
+          maxLength: MAX_FOLDER,
+          description:
+            "Only runbooks in this folder (any spelling of it); null: only runbooks in no folder.",
+        },
       },
     },
   },
   {
     name: "get_runbook",
-    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
+    description: `Read one runbook: its steps in order with their status, the owner's notes, and every run of each step (newest first) with who ran it, when, the exact command, exit code, stdout and stderr (or pasted terminal output), and the result of each check ({label, ok, detail}). A sequence step (1.4.10) has sequence and workdir, and each of its runs has items: one record per item {position, type, label, command, seconds, reason, onFail, status (waiting, running, passed, failed, skipped), startedAt, finishedAt, plannedEndAt, exitCode, stdout, stderr, checks, captured, error, fromRunId (set on an item carried from an earlier run by Continue); a wait item or a run item with retry also has maxAttempts, endsBy, nextAttemptAt and attempts, one record per attempt}, and the run's own stdout and stderr are the items' output joined. You get one event when the step ends, not one per item or attempt. A step has schedules (the planned attempts of each wait or retried item) and attempt ({item, attempt, of, nextAt, endsBy} while one waits, else null). A run still in progress has running: true, the stdout and stderr that arrived so far, and lastOutputAt (when it last printed); read again to follow it. Output of steps the owner hid reads '[hidden by owner]'. A secret value reads [secret:<name>]; secrets lists each secret the steps capture, make or ask for into the runbook as {name, step, set, expiresAt}, and a run's stdin and secrets say where its input came from and which secrets it read or stored, by name only. Each step has a label (3, or 3a for an amendment), amendment ({kind, reason, by, stepId, stepLabel, oldCommand} or null) and replacedBy ({id, label} on a replaced step). Use it to see what happened after the owner ran steps. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -494,7 +810,7 @@ export const TOOLS = [
   },
   {
     name: "create_runbook",
-    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${SECRET_STEPS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
+    description: `Propose a new runbook. Steps are proposals: you never run them. The owner reads each step in Termix, sees the host and the exact resolved command, and runs it or skips it; the output is stored on the step. ${VALUE_SYNTAX} Prefer checks over only describing the expected output in expect. ${SEQUENCE_HELP} ${WAIT_EVENTS_HELP} ${NO_SLEEP_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP} ${SECRET_STEPS_HELP} ${AGENT_STEP_HELP} Set owner so the person knows who to talk to. Returns the runbook as get_runbook does. ${OPEN_LINK} Give the person that link when you are done.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -503,6 +819,7 @@ export const TOOLS = [
         title: { type: "string" },
         owner: OWNER_SCHEMA,
         notify: NOTIFY_SCHEMA,
+        folder: FOLDER_SCHEMA,
         summary: {
           type: "string",
           description: "Markdown: what the runbook does and why.",
@@ -518,7 +835,7 @@ export const TOOLS = [
   },
   {
     name: "update_runbook",
-    description: `Change a runbook's title, summary, values, status (open, done, abandoned) or owner. Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. ${OPEN_LINK}`,
+    description: `Change a runbook's title, summary, values, status (open, done, abandoned), owner, notify or folder. Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. A folder works on any status and changes nothing else: send only folder to file a done or abandoned runbook without reopening it. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -527,6 +844,7 @@ export const TOOLS = [
         runbookId: ID("The runbook id."),
         owner: OWNER_SCHEMA,
         notify: NOTIFY_SCHEMA,
+        folder: FOLDER_SCHEMA,
         title: { type: "string" },
         summary: { type: "string" },
         values: { type: "object", additionalProperties: { type: "string" } },
@@ -536,7 +854,7 @@ export const TOOLS = [
   },
   {
     name: "add_steps",
-    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX} ${CHECKS_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP}`,
+    description: `Add steps to an open runbook, at the end or at a 1-based position. Steps cannot go before a step that already ran. ${VALUE_SYNTAX} ${SEQUENCE_HELP} ${WAIT_EVENTS_HELP} ${NO_SLEEP_HELP} ${CHECKS_HELP} ${WAIT_HELP} ${STDIN_HELP} ${SECRETS_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -554,7 +872,7 @@ export const TOOLS = [
   },
   {
     name: "update_step",
-    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): amend it with amend_step instead, also to change its checks. Only the given fields change; checks replaces the whole list. ${CHECKS_HELP} ${WAIT_HELP}`,
+    description: `Change a step that has not run yet. A step that already ran is history and cannot change (error 409): amend it with amend_step instead, also to change its checks. Only the given fields change; checks and sequence replace the whole list (to make a one-command step a sequence, send sequence with command null). ${NO_SLEEP_HELP} ${CHECKS_HELP} ${WAIT_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -567,7 +885,7 @@ export const TOOLS = [
   },
   {
     name: "amend_step",
-    description: `${AMEND_HELP} Returns the runbook as get_runbook does. ${CHECKS_HELP} ${STDIN_HELP}`,
+    description: `${AMEND_HELP} Returns the runbook as get_runbook does. ${NO_SLEEP_HELP} ${CHECKS_HELP} ${STDIN_HELP}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -652,6 +970,22 @@ export const TOOLS = [
       additionalProperties: false,
       required: ["runbookId"],
       properties: { runbookId: ID("The runbook id.") },
+    },
+  },
+  {
+    name: "get_attempt",
+    description:
+      "Read one attempt of a wait or retried item, or one check of an event item, with its output. get_runbook lists each item's attempts without output (stdout and stderr null) and the item itself carries its last attempt's output; read an earlier attempt's output here. An earlier attempt keeps only the last 4 KB of each stream. On a step hidden from agents, its output reads '[hidden by owner]', as in get_runbook.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["runbookId", "runId", "item", "attempt"],
+      properties: {
+        runbookId: ID("The runbook id."),
+        runId: ID("The run's id (steps[].runs[].id)."),
+        item: ID("The item's number in the sequence, from 1."),
+        attempt: ID("The attempt's number, from 1."),
+      },
     },
   },
 ];

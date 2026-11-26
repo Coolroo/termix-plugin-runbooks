@@ -7,7 +7,7 @@ import {
 import {
   cleanTerminalText,
   createTerminalCleaner,
-} from "../../src/backend/running/terminal-text";
+} from "../../src/shared/terminal-text";
 import { createRedactor } from "../../src/backend/running/redact";
 import {
   auditText,

@@ -118,12 +118,17 @@ describe("the third review of dev-1.4.6 (BUG-011)", () => {
 
   it("shows a run's command filled from the step with the values agents saw then (item 2)", async () => {
     const { s, token, runbook } = await setupRunbook([
-      makeToken,
+      // BUG-022 M3: a captured value goes into a command with a pattern.
+      {
+        ...makeToken,
+        checks: [{ type: "value", name: "tok", matches: "^\\S+$" }],
+      },
       {
         title: "Build",
         hostId: 1,
         command: "build",
         captures: [{ name: "build", pattern: "build=(\\S+)" }],
+        checks: [{ type: "value", name: "build", matches: "^\\S+$" }],
       },
       // An agent's literal guess stays as written: no mask shows whether
       // it equals the hidden value.

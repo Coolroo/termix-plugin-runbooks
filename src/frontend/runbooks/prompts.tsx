@@ -5,6 +5,7 @@
  * shows of a step.
  */
 
+import { eventWhat } from "../../shared/events";
 import {
   useCallback,
   useEffect,
@@ -18,9 +19,17 @@ import { Button, PanePrompt, Textarea } from "@termix-ssh/plugin-sdk/ui";
 import { MAX_SENT_NOTE } from "../../shared/limits";
 import { stepLabel } from "../../shared/steps";
 import type { Translate } from "../../shared/step-kinds";
-import { CodeBlock, SectionLabel } from "../ui/ui";
-import { describeStdin, formatTime, hostLabel } from "../ui/format";
-import { ChecksList, checksWords } from "../steps/ChecksList";
+import { CodeBlock } from "../ui/ui";
+import { describeStdin, formatTime, formatWait, hostLabel } from "../ui/format";
+import { CapturesList, ChecksList, checksWords } from "../steps/ChecksList";
+import { scheduleText } from "../steps/Attempts";
+import {
+  isCommandItem,
+  isEventItem,
+  itemPlan,
+  itemSchedule,
+  type ResolvedItem,
+} from "../../shared/sequence";
 import type { ConflictBody, Step } from "../api-types";
 
 /** A question on screen: what it asks, and how it answers. */
@@ -56,7 +65,7 @@ export function usePromptRequest<Req, Res>(): [
  * `onEscape` before anything else sees the key. With `restoreFocus`, the
  * focus goes back where it was when the prompt closes.
  */
-function usePaneEscape(
+export function usePaneEscape(
   onEscape: () => void,
   {
     focus,
@@ -116,6 +125,130 @@ function CommandPreview({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the person approves of an item besides its command (BUG-022 L3), as
+ * the one-command confirm shows it: its checks, a wait's stopIf checks,
+ * its captures with their patterns, on failure go on, and interactive.
+ */
+function ItemRules({ t, item }: { t: Translate; item: ResolvedItem }) {
+  const command = isCommandItem(item) ? item : null;
+  return (
+    <div data-confirm-item-rules={item.position}>
+      {command && <ChecksList checks={command.checks} words={checksWords(t)} />}
+      {command?.type === "wait" && command.stopIf.length > 0 && (
+        <div data-confirm-stop-if>
+          <ChecksList
+            checks={command.stopIf}
+            words={{ ...checksWords(t), title: t("attempts.stopIfTitle") }}
+          />
+        </div>
+      )}
+      {command && <CapturesList t={t} captures={command.captures} />}
+      {item.type !== "delay" && item.onFail === "continue" && (
+        <span
+          className="block text-muted-foreground"
+          data-confirm-on-fail={item.position}
+        >
+          {t("item.onFailContinue")}
+        </span>
+      )}
+      {item.type === "run" && item.interactive && (
+        <span
+          className="block text-muted-foreground"
+          data-confirm-interactive={item.position}
+        >
+          {t("kind.mark.interactive")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A sequence's items for a question (1.4.10): number, label, and the exact
+ * command or the wait, with its checks, captures and rules (ItemRules),
+ * from item `from` on. No hooks: a confirm dialog renders outside the
+ * plugin.
+ */
+function SequencePreview({
+  t,
+  step,
+  from = 1,
+}: {
+  t: Translate;
+  step: Step;
+  from?: number;
+}) {
+  const items = (step.resolvedSequence ?? []).filter(
+    (item) => item.position >= from,
+  );
+  return (
+    <div className="flex flex-col gap-1 text-xs" data-confirm-sequence>
+      <span>
+        {hostLabel(t, step)}
+        {step.workdir ? ` · ${t("item.in", { dir: step.workdir })}` : ""}
+      </span>
+      <ol className="flex max-h-72 flex-col gap-1 overflow-auto">
+        {items.map((item) => (
+          <li key={item.position} data-confirm-item={item.position}>
+            <span className="font-mono text-muted-foreground">
+              {item.position}.
+            </span>{" "}
+            {item.label ?? t(`item.type.${item.type}`)}
+            {item.type === "delay" ? (
+              <span className="text-muted-foreground">
+                {" "}
+                ·{" "}
+                {item.reason
+                  ? t("item.delayReason", {
+                      time: formatWait(item.seconds),
+                      reason: item.reason,
+                    })
+                  : t("item.delay", { time: formatWait(item.seconds) })}
+              </span>
+            ) : (
+              <>
+                <CodeBlock
+                  className="mt-0.5 overflow-x-auto whitespace-pre-wrap"
+                  small={false}
+                >
+                  {isEventItem(item)
+                    ? eventWhat(item, step.hostName)
+                    : item.command}
+                </CodeBlock>
+                {/* Phase 2: the attempts the person approves with Run. */}
+                {itemPlan(item) && (
+                  <span
+                    className="text-muted-foreground"
+                    data-confirm-schedule={item.position}
+                  >
+                    {scheduleText(t, itemSchedule(item)!, itemPlan(item)!)}
+                  </span>
+                )}
+                <ItemRules t={t} item={item} />
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** "Continue from item 3?": the items that run, and those that do not. */
+export function continueDetails(t: Translate, step: Step, from: number) {
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      {from > 1 && (
+        <span data-confirm-carried>
+          {t("continue.carried", { count: from - 1 })}
+        </span>
+      )}
+      <SequencePreview t={t} step={step} from={from} />
     </div>
   );
 }
@@ -258,37 +391,12 @@ function stdinPreview(t: Translate, step: Step) {
  * what reads the output before it runs.
  */
 function capturesList(t: Translate, step: Step) {
-  const rows = [
-    ...(step.captures ?? []).map((capture) => ({
-      kind: "value",
-      label: t("captures.value", { name: capture.name }),
-      pattern: capture.pattern,
-    })),
-    ...(step.secretCaptures ?? []).map((capture) => ({
-      kind: "secret",
-      label: t("captures.secret", { name: capture.name }),
-      pattern: capture.pattern,
-    })),
-  ];
-  if (rows.length === 0) return null;
   return (
-    <div className="mt-2" data-confirm-captures>
-      <SectionLabel>{t("captures.title")}</SectionLabel>
-      <ul className="mt-1 flex flex-col gap-0.5 text-xs">
-        {rows.map((row, index) => (
-          <li
-            key={index}
-            data-confirm-capture={row.kind}
-            className="flex items-baseline gap-2"
-          >
-            <span className="shrink-0">{row.label}</span>
-            <code className="font-mono break-all text-muted-foreground">
-              {row.pattern}
-            </code>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <CapturesList
+      t={t}
+      captures={step.captures ?? []}
+      secretCaptures={step.secretCaptures ?? []}
+    />
   );
 }
 
@@ -297,6 +405,7 @@ function capturesList(t: Translate, step: Step) {
  * confirm. No hooks: a confirm renders outside the plugin.
  */
 export function runDetails(t: Translate, step: Step) {
+  if (step.resolvedSequence) return <SequencePreview t={t} step={step} />;
   return (
     <div className="flex flex-col gap-2">
       <CommandPreview
@@ -324,6 +433,7 @@ export function runDetails(t: Translate, step: Step) {
 
 /** The host and the command only, for a question. */
 export function commandDetails(t: Translate, step: Step) {
+  if (step.resolvedSequence) return <SequencePreview t={t} step={step} />;
   return (
     <CommandPreview
       host={hostLabel(t, step)}

@@ -1,0 +1,302 @@
+{
+  "_about": "Real output captured 2026-11-23 on home-server (Ubuntu, systemd 259, rootless Docker 29.9.0, as the sandbox user) and from Termix 26.11.3's ssh2 against a throwaway OpenSSH 10.0 server (Debian 13). Machine, boot and invocation ids are replaced with fakes. T-038.",
+  "dockerInspect": {
+    "starting": {
+      "stdout": "{\"State\":{\"Status\":\"running\",\"Running\":true,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":1948217,\"ExitCode\":0,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:02.131968625Z\",\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"Health\":{\"Status\":\"starting\",\"FailingStreak\":0,\"Log\":[]}},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "healthy": {
+      "stdout": "{\"State\":{\"Status\":\"running\",\"Running\":true,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":1948217,\"ExitCode\":0,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:02.131968625Z\",\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"Health\":{\"Status\":\"healthy\",\"FailingStreak\":0,\"Log\":[{\"Start\":\"2026-11-23T22:11:04.432815115Z\",\"End\":\"2026-11-23T22:11:04.524146688Z\",\"ExitCode\":1,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:06.525303466Z\",\"End\":\"2026-11-23T22:11:06.581056921Z\",\"ExitCode\":1,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:08.582107701Z\",\"End\":\"2026-11-23T22:11:08.628149479Z\",\"ExitCode\":0,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:10.629350658Z\",\"End\":\"2026-11-23T22:11:10.711674568Z\",\"ExitCode\":0,\"Output\":\"\"}]}},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "unhealthy": {
+      "stdout": "{\"State\":{\"Status\":\"running\",\"Running\":true,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":1948217,\"ExitCode\":0,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:02.131968625Z\",\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"Health\":{\"Status\":\"unhealthy\",\"FailingStreak\":3,\"Log\":[{\"Start\":\"2026-11-23T22:11:08.582107701Z\",\"End\":\"2026-11-23T22:11:08.628149479Z\",\"ExitCode\":0,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:10.629350658Z\",\"End\":\"2026-11-23T22:11:10.711674568Z\",\"ExitCode\":0,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:12.712548269Z\",\"End\":\"2026-11-23T22:11:12.772460037Z\",\"ExitCode\":1,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:14.77349356Z\",\"End\":\"2026-11-23T22:11:14.815568199Z\",\"ExitCode\":1,\"Output\":\"\"},{\"Start\":\"2026-11-23T22:11:16.816202375Z\",\"End\":\"2026-11-23T22:11:16.905863363Z\",\"ExitCode\":1,\"Output\":\"\"}]}},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "exited-3": {
+      "stdout": "{\"State\":{\"Status\":\"exited\",\"Running\":false,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":0,\"ExitCode\":3,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:18.928656382Z\",\"FinishedAt\":\"2026-11-23T22:11:19.142191136Z\"},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "restarting": {
+      "stdout": "{\"State\":{\"Status\":\"restarting\",\"Running\":true,\"Paused\":false,\"Restarting\":true,\"OOMKilled\":false,\"Dead\":false,\"Pid\":0,\"ExitCode\":1,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:24.318427804Z\",\"FinishedAt\":\"2026-11-23T22:11:24.524475854Z\"},\"RestartCount\":5}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "running-no-health": {
+      "stdout": "{\"State\":{\"Status\":\"running\",\"Running\":true,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":1950503,\"ExitCode\":0,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:24.972494269Z\",\"FinishedAt\":\"0001-01-01T00:00:00Z\"},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "missing": {
+      "stdout": "",
+      "stderr": "Error response from daemon: No such container: t038-nosuch\n",
+      "code": 1
+    },
+    "stopped": {
+      "stdout": "{\"State\":{\"Status\":\"exited\",\"Running\":false,\"Paused\":false,\"Restarting\":false,\"OOMKilled\":false,\"Dead\":false,\"Pid\":0,\"ExitCode\":137,\"Error\":\"\",\"StartedAt\":\"2026-11-23T22:11:24.972494269Z\",\"FinishedAt\":\"2026-11-23T22:11:27.368290683Z\"},\"RestartCount\":0}\n",
+      "stderr": "",
+      "code": 0
+    }
+  },
+  "dockerLogs": {
+    "since": {
+      "stdout": "since=1795471889\nserver listening on :8443\nwarn: slow disk\n",
+      "stderr": "",
+      "code": 0
+    },
+    "all": {
+      "stdout": "early line\nserver listening on :8443\nwarn: slow disk\n",
+      "stderr": "",
+      "code": 0
+    },
+    "missing": {
+      "stdout": "",
+      "stderr": "Error response from daemon: No such container: t038-nosuch\n",
+      "code": 1
+    },
+    "timestamps": {
+      "stdout": "2026-11-23T22:14:47.601210357Z error: config invalid\n2026-11-23T22:14:47.601241598Z first line\n2026-11-23T22:14:49.602996781Z ready to serve\n",
+      "stderr": "",
+      "code": 0
+    }
+  },
+  "stat": {
+    "file": {
+      "stdout": "6 regular file\n",
+      "stderr": "",
+      "code": 0
+    },
+    "empty": {
+      "stdout": "0 regular empty file\n",
+      "stderr": "",
+      "code": 0
+    },
+    "dir": {
+      "stdout": "40 directory\n",
+      "stderr": "",
+      "code": 0
+    },
+    "link": {
+      "stdout": "4 symbolic link\n",
+      "stderr": "",
+      "code": 0
+    },
+    "nosuch": {
+      "stdout": "",
+      "stderr": "stat: cannot statx '/tmp/t038cap/nosuch': No such file or directory\n",
+      "code": 1
+    },
+    "denied": {
+      "stdout": "",
+      "stderr": "stat: cannot statx '/root/x': Permission denied\n",
+      "code": 1
+    }
+  },
+  "sudoRefused": {
+    "stdout": "",
+    "stderr": "sudo: I'm sorry paseo. I'm afraid I can't do that\n",
+    "code": 1
+  },
+  "systemdRun": {
+    "ok": {
+      "stdout": "Running as unit: t038-ok.service; invocation ID: 01010101010101010101010101010101\n",
+      "stderr": "",
+      "code": 0
+    },
+    "fail": {
+      "stdout": "Running as unit: t038-fail.service; invocation ID: 02020202020202020202020202020202\n",
+      "stderr": "",
+      "code": 0
+    },
+    "running": {
+      "stdout": "Running as unit: t038-run.service; invocation ID: 03030303030303030303030303030303\n",
+      "stderr": "",
+      "code": 0
+    },
+    "exists": {
+      "stdout": "",
+      "stderr": "Failed to start transient service unit: Unit t038-run.service was already loaded or has a fragment file.\n",
+      "code": 1
+    }
+  },
+  "systemctlShow": {
+    "t038-ok": {
+      "stdout": "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nNRestarts=0\nExecMainExitTimestamp=@1795471893\nExecMainCode=1\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "t038-fail": {
+      "stdout": "LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nNRestarts=0\nExecMainExitTimestamp=@1795471893\nExecMainCode=1\nExecMainStatus=3\n",
+      "stderr": "",
+      "code": 0
+    },
+    "t038-run": {
+      "stdout": "LoadState=loaded\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "nosuch-t038": {
+      "stdout": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "after-stop": {
+      "stdout": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "ok-after-cleanup": {
+      "stdout": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "activating": {
+      "stdout": "LoadState=loaded\nActiveState=activating\nSubState=start\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "oneshot-done": {
+      "stdout": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nNRestarts=0\nExecMainExitTimestamp=\nExecMainCode=0\nExecMainStatus=0\n",
+      "stderr": "",
+      "code": 0
+    },
+    "auto-restart": {
+      "stdout": "LoadState=loaded\nActiveState=activating\nSubState=auto-restart\nResult=exit-code\nNRestarts=1\nExecMainExitTimestamp=@1795472099\nExecMainCode=1\nExecMainStatus=2\n",
+      "stderr": "",
+      "code": 0
+    }
+  },
+  "journal": {
+    "ok": {
+      "stdout": "{\"_SYSTEMD_USER_SLICE\":\"-.slice\",\"USER_UNIT\":\"t038-ok.service\",\"CODE_FUNC\":\"job_emit_done_message\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/init.scope\",\"JOB_ID\":\"41511\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"PRIORITY\":\"6\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"__REALTIME_TIMESTAMP\":\"1795471893715082\",\"_COMM\":\"systemd\",\"__SEQNUM\":\"14645579\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"_RUNTIME_SCOPE\":\"system\",\"_CMDLINE\":\"/usr/lib/systemd/systemd --user\",\"CODE_FILE\":\"src/core/job.c\",\"MESSAGE_ID\":\"07070707070707070707070707070707\",\"TID\":\"2103\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_CAP_EFFECTIVE\":\"800000000\",\"__MONOTONIC_TIMESTAMP\":\"484326925958\",\"JOB_TYPE\":\"start\",\"_GID\":\"1009\",\"CODE_LINE\":\"815\",\"_AUDIT_LOGINUID\":\"1004\",\"_TRANSPORT\":\"journal\",\"JOB_RESULT\":\"done\",\"SYSLOG_FACILITY\":\"3\",\"_UID\":\"1004\",\"_SOURCE_REALTIME_TIMESTAMP\":\"1795471893715049\",\"SYSLOG_IDENTIFIER\":\"systemd\",\"_AUDIT_SESSION\":\"2\",\"_HOSTNAME\":\"home-server\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df794b;b=05050505050505050505050505050505;m=70c4226686;t=660f8e06dd88a;x=0123456789abcdef\",\"_SYSTEMD_USER_UNIT\":\"init.scope\",\"_EXE\":\"/usr/lib/systemd/systemd\",\"USER_INVOCATION_ID\":\"01010101010101010101010101010101\",\"_PID\":\"2103\",\"MESSAGE\":\"Started t038-ok.service - [systemd-run] /usr/bin/sh -c \\\"echo job says hello; echo job warns >&2; exit 0\\\".\"}\n{\"_SYSTEMD_OWNER_UID\":\"1004\",\"_RUNTIME_SCOPE\":\"system\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df794d;b=05050505050505050505050505050505;m=70c42297c3;t=660f8e06e09c7;x=0123456789abcdef\",\"_STREAM_ID\":\"08080808080808080808080808080808\",\"_HOSTNAME\":\"home-server\",\"_EXE\":\"/usr/bin/dash\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/app.slice/t038-ok.service\",\"_CAP_EFFECTIVE\":\"0\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"MESSAGE\":\"job says hello\",\"SYSLOG_IDENTIFIER\":\"sh\",\"__SEQNUM\":\"14645581\",\"__MONOTONIC_TIMESTAMP\":\"484326938563\",\"__REALTIME_TIMESTAMP\":\"1795471893727687\",\"_SYSTEMD_USER_UNIT\":\"t038-ok.service\",\"_SYSTEMD_INVOCATION_ID\":\"01010101010101010101010101010101\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"_AUDIT_LOGINUID\":\"1004\",\"_SYSTEMD_USER_SLICE\":\"app.slice\",\"_CMDLINE\":\"/usr/bin/sh -c \\\"echo job says hello; echo job warns >&2; exit 0\\\"\",\"_AUDIT_SESSION\":\"2\",\"_PID\":\"1951514\",\"_TRANSPORT\":\"stdout\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_GID\":\"1009\",\"PRIORITY\":\"6\",\"_UID\":\"1004\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"SYSLOG_FACILITY\":\"3\",\"_COMM\":\"sh\"}\n{\"_CMDLINE\":\"/usr/bin/sh -c \\\"echo job says hello; echo job warns >&2; exit 0\\\"\",\"SYSLOG_FACILITY\":\"3\",\"__SEQNUM\":\"14645582\",\"PRIORITY\":\"6\",\"_RUNTIME_SCOPE\":\"system\",\"SYSLOG_IDENTIFIER\":\"sh\",\"_AUDIT_LOGINUID\":\"1004\",\"_UID\":\"1004\",\"_COMM\":\"sh\",\"_SYSTEMD_USER_SLICE\":\"app.slice\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"MESSAGE\":\"job warns\",\"_CAP_EFFECTIVE\":\"0\",\"__MONOTONIC_TIMESTAMP\":\"484326939229\",\"_EXE\":\"/usr/bin/dash\",\"_SYSTEMD_USER_UNIT\":\"t038-ok.service\",\"_TRANSPORT\":\"stdout\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df794e;b=05050505050505050505050505050505;m=70c4229a5d;t=660f8e06e0c62;x=0123456789abcdef\",\"__REALTIME_TIMESTAMP\":\"1795471893728354\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"_SYSTEMD_INVOCATION_ID\":\"01010101010101010101010101010101\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/app.slice/t038-ok.service\",\"_PID\":\"1951514\",\"_AUDIT_SESSION\":\"2\",\"_HOSTNAME\":\"home-server\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_GID\":\"1009\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"_STREAM_ID\":\"08080808080808080808080808080808\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\"}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "fail": {
+      "stdout": "{\"CODE_LINE\":\"815\",\"__REALTIME_TIMESTAMP\":\"1795471893726295\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"_SOURCE_REALTIME_TIMESTAMP\":\"1795471893726252\",\"PRIORITY\":\"6\",\"_TRANSPORT\":\"journal\",\"_AUDIT_SESSION\":\"2\",\"SYSLOG_FACILITY\":\"3\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_CMDLINE\":\"/usr/lib/systemd/systemd --user\",\"_HOSTNAME\":\"home-server\",\"_CAP_EFFECTIVE\":\"800000000\",\"_UID\":\"1004\",\"__MONOTONIC_TIMESTAMP\":\"484326937171\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"_RUNTIME_SCOPE\":\"system\",\"SYSLOG_IDENTIFIER\":\"systemd\",\"JOB_TYPE\":\"start\",\"TID\":\"2103\",\"_EXE\":\"/usr/lib/systemd/systemd\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/init.scope\",\"_GID\":\"1009\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df794c;b=05050505050505050505050505050505;m=70c4229253;t=660f8e06e0457;x=0123456789abcdef\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"USER_INVOCATION_ID\":\"02020202020202020202020202020202\",\"JOB_RESULT\":\"done\",\"USER_UNIT\":\"t038-fail.service\",\"_COMM\":\"systemd\",\"MESSAGE\":\"Started t038-fail.service - [systemd-run] /usr/bin/sh -c \\\"echo about to fail; exit 3\\\".\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"CODE_FILE\":\"src/core/job.c\",\"MESSAGE_ID\":\"07070707070707070707070707070707\",\"JOB_ID\":\"41533\",\"_PID\":\"2103\",\"_SYSTEMD_USER_SLICE\":\"-.slice\",\"__SEQNUM\":\"14645580\",\"CODE_FUNC\":\"job_emit_done_message\",\"_AUDIT_LOGINUID\":\"1004\",\"_SYSTEMD_USER_UNIT\":\"init.scope\"}\n{\"__SEQNUM\":\"14645584\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"SYSLOG_FACILITY\":\"3\",\"_COMM\":\"sh\",\"_RUNTIME_SCOPE\":\"system\",\"_STREAM_ID\":\"09090909090909090909090909090909\",\"__REALTIME_TIMESTAMP\":\"1795471893739697\",\"_AUDIT_SESSION\":\"2\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"_CAP_EFFECTIVE\":\"0\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7950;b=05050505050505050505050505050505;m=70c422c6ad;t=660f8e06e38b1;x=0123456789abcdef\",\"_PID\":\"1951518\",\"PRIORITY\":\"6\",\"SYSLOG_IDENTIFIER\":\"sh\",\"__MONOTONIC_TIMESTAMP\":\"484326950573\",\"_GID\":\"1009\",\"_SYSTEMD_USER_SLICE\":\"app.slice\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"MESSAGE\":\"about to fail\",\"_UID\":\"1004\",\"_SYSTEMD_INVOCATION_ID\":\"02020202020202020202020202020202\",\"_HOSTNAME\":\"home-server\",\"_AUDIT_LOGINUID\":\"1004\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/app.slice/t038-fail.service\",\"_TRANSPORT\":\"stdout\",\"_SYSTEMD_USER_UNIT\":\"t038-fail.service\"}\n{\"_AUDIT_SESSION\":\"2\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"PRIORITY\":\"5\",\"__MONOTONIC_TIMESTAMP\":\"484326951053\",\"_AUDIT_LOGINUID\":\"1004\",\"MESSAGE\":\"t038-fail.service: Main process exited, code=exited, status=3/NOTIMPLEMENTED\",\"_CMDLINE\":\"/usr/lib/systemd/systemd --user\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_CAP_EFFECTIVE\":\"800000000\",\"USER_INVOCATION_ID\":\"02020202020202020202020202020202\",\"_RUNTIME_SCOPE\":\"system\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7951;b=05050505050505050505050505050505;m=70c422c88d;t=660f8e06e3a92;x=0123456789abcdef\",\"TID\":\"2103\",\"__SEQNUM\":\"14645585\",\"COMMAND\":\"ExecStart\",\"_UID\":\"1004\",\"CODE_LINE\":\"6221\",\"_GID\":\"1009\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/init.scope\",\"_EXE\":\"/usr/lib/systemd/systemd\",\"MESSAGE_ID\":\"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"__REALTIME_TIMESTAMP\":\"1795471893740178\",\"_COMM\":\"systemd\",\"_SYSTEMD_USER_UNIT\":\"init.scope\",\"USER_UNIT\":\"t038-fail.service\",\"_HOSTNAME\":\"home-server\",\"_PID\":\"2103\",\"SYSLOG_FACILITY\":\"3\",\"CODE_FILE\":\"src/core/unit.c\",\"CODE_FUNC\":\"unit_log_process_exit\",\"SYSLOG_IDENTIFIER\":\"systemd\",\"_TRANSPORT\":\"journal\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"_SYSTEMD_USER_SLICE\":\"-.slice\",\"EXIT_STATUS\":\"3\",\"EXIT_CODE\":\"exited\",\"_SOURCE_REALTIME_TIMESTAMP\":\"1795471893740026\",\"_MACHINE_ID\":\"06060606060606060606060606060606\"}\n{\"_CMDLINE\":\"/usr/lib/systemd/systemd --user\",\"_RUNTIME_SCOPE\":\"system\",\"_AUDIT_SESSION\":\"2\",\"SYSLOG_FACILITY\":\"3\",\"_AUDIT_LOGINUID\":\"1004\",\"PRIORITY\":\"4\",\"CODE_LINE\":\"6179\",\"__SEQNUM\":\"14645586\",\"_SOURCE_REALTIME_TIMESTAMP\":\"1795471893740240\",\"__MONOTONIC_TIMESTAMP\":\"484326951182\",\"_HOSTNAME\":\"home-server\",\"_SYSTEMD_USER_UNIT\":\"init.scope\",\"_EXE\":\"/usr/lib/systemd/systemd\",\"UNIT_RESULT\":\"exit-code\",\"CODE_FUNC\":\"unit_log_failure\",\"_UID\":\"1004\",\"__REALTIME_TIMESTAMP\":\"1795471893740306\",\"_SYSTEMD_UNIT\":\"user@1004.service\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7952;b=05050505050505050505050505050505;m=70c422c90e;t=660f8e06e3b12;x=0123456789abcdef\",\"_TRANSPORT\":\"journal\",\"_SYSTEMD_CGROUP\":\"/user.slice/user-1004.slice/user@1004.service/init.scope\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"USER_UNIT\":\"t038-fail.service\",\"_PID\":\"2103\",\"USER_INVOCATION_ID\":\"02020202020202020202020202020202\",\"_COMM\":\"systemd\",\"CODE_FILE\":\"src/core/unit.c\",\"MESSAGE\":\"t038-fail.service: Failed with result 'exit-code'.\",\"_SYSTEMD_OWNER_UID\":\"1004\",\"_GID\":\"1009\",\"_SYSTEMD_USER_SLICE\":\"-.slice\",\"MESSAGE_ID\":\"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"_CAP_EFFECTIVE\":\"800000000\",\"SYSLOG_IDENTIFIER\":\"systemd\",\"_SYSTEMD_SLICE\":\"user-1004.slice\",\"_MACHINE_ID\":\"06060606060606060606060606060606\",\"TID\":\"2103\"}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "none": {
+      "stdout": "",
+      "stderr": "",
+      "code": 0
+    },
+    "after-cursor": {
+      "stdout": "",
+      "stderr": "",
+      "code": 0
+    },
+    "fields-cursor": {
+      "stdout": "{\"__MONOTONIC_TIMESTAMP\":\"484525197883\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7a50;b=05050505050505050505050505050505;m=70cff3ca3b;t=660f8ec3f3c3f;x=0123456789abcdef\",\"__REALTIME_TIMESTAMP\":\"1795472091987007\",\"__SEQNUM\":\"14645840\",\"MESSAGE\":\"Starting t038-one.service - [systemd-run] /usr/bin/sh -c \\\"echo oneshot runs; sleep 4; echo oneshot ends\\\"...\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\"}\n{\"__MONOTONIC_TIMESTAMP\":\"484525208522\",\"__SEQNUM\":\"14645841\",\"__REALTIME_TIMESTAMP\":\"1795472091997646\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"MESSAGE\":\"oneshot runs\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7a51;b=05050505050505050505050505050505;m=70cff3f3ca;t=660f8ec3f65ce;x=0123456789abcdef\",\"_BOOT_ID\":\"05050505050505050505050505050505\"}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "after-cursor-new": {
+      "stdout": "{\"MESSAGE\":\"oneshot ends\",\"__MONOTONIC_TIMESTAMP\":\"484529212312\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"__SEQNUM\":\"14645846\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7a56;b=05050505050505050505050505050505;m=70d0310b98;t=660f8ec7c7d9c;x=0123456789abcdef\",\"__REALTIME_TIMESTAMP\":\"1795472096001436\"}\n{\"MESSAGE\":\"Finished t038-one.service - [systemd-run] /usr/bin/sh -c \\\"echo oneshot runs; sleep 4; echo oneshot ends\\\".\",\"__SEQNUM_ID\":\"04040404040404040404040404040404\",\"_BOOT_ID\":\"05050505050505050505050505050505\",\"__CURSOR\":\"s=04040404040404040404040404040404;i=df7a57;b=05050505050505050505050505050505;m=70d03113f6;t=660f8ec7c85fa;x=0123456789abcdef\",\"__MONOTONIC_TIMESTAMP\":\"484529214454\",\"__SEQNUM\":\"14645847\",\"__REALTIME_TIMESTAMP\":\"1795472096003578\"}\n",
+      "stderr": "",
+      "code": 0
+    },
+    "bad-unit-name": {
+      "stdout": "",
+      "stderr": "",
+      "code": 0
+    }
+  },
+  "ssh2": {
+    "remoteVer": "OpenSSH_10.0p2",
+    "forward": {
+      "noPortForwardingKey": {
+        "error": {
+          "message": "(SSH) Channel open failure: open failed",
+          "reason": 1
+        }
+      },
+      "open": {
+        "ok": true,
+        "data": "SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u4\r\n"
+      },
+      "closed": {
+        "error": {
+          "message": "(SSH) Channel open failure: Connection refused",
+          "reason": 2
+        }
+      },
+      "otherAddress": {
+        "error": {
+          "message": "(SSH) Channel open failure: open failed",
+          "reason": 1
+        }
+      }
+    },
+    "tls": {
+      "ok": {
+        "ok": true,
+        "head": "HTTP/1.0 200 OK"
+      },
+      "publicRootsOnly": {
+        "error": {
+          "message": "unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca",
+          "code": "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+        }
+      },
+      "wrongName": {
+        "error": {
+          "message": "Hostname/IP does not match certificate's altnames: Host: other.test. is not in the cert's altnames: DNS:svc.test, IP Address:127.0.0.1",
+          "reason": "Host: other.test. is not in the cert's altnames: DNS:svc.test, IP Address:127.0.0.1",
+          "code": "ERR_TLS_CERT_ALTNAME_INVALID"
+        }
+      }
+    },
+    "sftp": {
+      "file": {
+        "mode": 33188,
+        "size": 13,
+        "uid": 0,
+        "gid": 0,
+        "isFile": true,
+        "isDirectory": false
+      },
+      "empty": {
+        "mode": 33188,
+        "size": 0,
+        "uid": 0,
+        "gid": 0,
+        "isFile": true,
+        "isDirectory": false
+      },
+      "dir": {
+        "mode": 16877,
+        "size": 4096,
+        "uid": 0,
+        "gid": 0,
+        "isFile": false,
+        "isDirectory": true
+      },
+      "missing": {
+        "error": {
+          "message": "No such file",
+          "code": 2
+        }
+      },
+      "denied": {
+        "error": {
+          "message": "Permission denied",
+          "code": 3
+        }
+      },
+      "withNoPortForwardingKey": {
+        "mode": 33188,
+        "size": 13,
+        "uid": 0,
+        "gid": 0,
+        "isFile": true,
+        "isDirectory": false
+      }
+    }
+  }
+}

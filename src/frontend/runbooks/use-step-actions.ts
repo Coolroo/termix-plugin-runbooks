@@ -17,9 +17,11 @@ import { isOutsideStep, stepLabel } from "../../shared/steps";
 import type { StepActions } from "../steps/StepButtons";
 import { blockingText, earlyTitle } from "../ui/format";
 import { useTerminalSend } from "../running/use-terminal-send";
+import { endCapture } from "../running/terminal-capture";
 import { useSecretAttempt } from "../secrets/use-secret-attempt";
 import {
   commandDetails,
+  continueDetails,
   repeatDetails,
   runDetails,
   usePromptRequest,
@@ -90,9 +92,11 @@ export function useStepActions(
 
   /** Posts a run or a send, asking about a repeat, a wait or the order. */
   const attempt = (
-    mode: "run" | "terminal",
+    mode: "run" | "terminal" | "continue",
     step: Step,
     flags: Flags = {},
+    /** 1.4.10: Continue names the item it goes on from. */
+    extra: Record<string, unknown> = {},
   ): Promise<Run | null> =>
     sendAsking(
       async (more) =>
@@ -100,6 +104,7 @@ export function useStepActions(
           await api.post<Run>(`/steps/${step.id}/${mode}`, {
             revision: step.revision,
             commandHash: step.commandHash,
+            ...extra,
             ...more,
           })
         ).data,
@@ -123,7 +128,7 @@ export function useStepActions(
               return askEarly(
                 step,
                 conflict.remainingSeconds * 1000,
-                mode === "run",
+                mode !== "terminal",
                 conflict.reason ?? "",
               );
             case "order":
@@ -178,6 +183,39 @@ export function useStepActions(
         }
         await load();
       }),
+
+    continueFrom: (step, fromItem, waitLeftMs = 0) =>
+      void withBusy(async () => {
+        let flags: Flags = {};
+        if (waitLeftMs > 0) {
+          if (!(await askEarly(step, waitLeftMs, true))) return;
+          flags = { waitAnyway: true };
+        } else {
+          const ok = await confirm({
+            title: t("continue.title", {
+              position: stepLabel(step),
+              item: fromItem,
+            }),
+            description: continueDetails(t, step, fromItem),
+            confirmLabel: t("continue.confirm"),
+            destructive: false,
+          });
+          if (!ok) return;
+        }
+        const run = await attempt("continue", step, flags, { fromItem });
+        if (run && (run.running || run.status === "running")) {
+          watched.current.add(run.id);
+        }
+        await load();
+      }),
+
+    // No question: a delay waits for nothing on the host.
+    skipDelay: (step) =>
+      void withBusy(() => postThenLoad(`/steps/${step.id}/skip-delay`)),
+
+    // No question either: the attempt was approved with the Run.
+    tryNow: (step) =>
+      void withBusy(() => postThenLoad(`/steps/${step.id}/try-now`)),
 
     stop: (step) =>
       void withBusy(async () => {
@@ -369,16 +407,19 @@ export function useStepActions(
     setHidden: (step, hidden) =>
       postRunbook(`/steps/${step.id}/hide`, { hidden }),
 
-    complete: (run, pasted, outcome, exitCode) =>
+    complete: (run, pasted, outcome, exitCode, source) =>
       void withBusy(() =>
         postThenLoad<Run>(
           `/runs/${run.id}/complete`,
           {
             pastedOutput: pasted,
             outcome,
+            outputSource: source,
             ...(exitCode !== null ? { exitCode } : {}),
           },
           (data) => {
+            // The run has its output: the terminal is no longer read for it.
+            endCapture(run.id);
             if (outcome === "done" && data?.status === "failed") {
               toast.error(t("checks.failedToast"));
             }
