@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.11
+
+### Fixed
+
+- **Send to terminal fills the Mark done box with bash 5.3** (BUG-024). On Enter, bash 5.3 draws a pasted command of one row again by a carriage return and a move right past the prompt. The reading started its copy of the row at the left edge, so the command did not match there, and the box stayed the empty paste box. This happened whenever the prompt and the command fit on one row: on a PC always, on a phone when the screen is wide enough. The reading now starts after the noted prompt and a space, as the terminal shows it. A command that wraps worked before and still works. Tests replay bash 5.3.9 recorded on home-server at 80, 54 and 40 columns.
+
 ## 1.4.10
 
 One release for the work planned as 1.4.9 (output read from the terminal), sequences with waits and wait events, and folders in the list. 1.4.9 was never released.
