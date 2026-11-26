@@ -4,8 +4,198 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-26T18:06:16.000Z",
+  "updatedAt": "2026-11-26T20:21:04.000Z",
   "plugins": [
+    {
+      "id": "haw",
+      "name": "Hundred Acre Wood",
+      "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
+      "author": "Coolroo",
+      "category": "Infrastructure",
+      "repository": "https://github.com/Coolroo/termix-plugin-haw",
+      "icon": "Trees",
+      "features": [
+        "Add any Termix host as a VM host and choose its interface (Hyper-V in 1.0)",
+        "HAW runs one fixed command on the host, vmctl, as an account that can do nothing else",
+        "Every VM on each host with its state, size, addresses and uptime",
+        "Start, resume, shut down, turn off and restart, with a confirm",
+        "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
+        "Open a VM's console in the Remote Desktop plugin",
+        "Three roles: owner, operator and viewer",
+        "A VM service other plugins (Runbooks) use to do VM actions for a person, for the plugins an admin allows",
+        "Every action recorded, in HAW and in Termix's audit log"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.0.6",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.6/haw-1.0.6.tmxplug",
+          "sha256": "0dc2ed6ee1009ad61f906b18aa899dd9ce9903052609b6d0f2cc3f579da2692a",
+          "signature": "6SE2gzzvLp3EvoNXxsEO0+ThRhSM7Lr/ygiVHpXPyADwOjvT+PXZ6sHqdIYMP0QWD1+jBZl7DlWCF0z8mhncCQ==",
+          "size": 100017,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13 || ^2.9",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.6",
+          "notes": "### Added\n\n- **Resume a paused VM.** vmctl has a new verb, `resume`, for a VM that is paused. It is a power verb like `start`, for operators, and it works on a protected VM too. HAW has the route `POST /hosts/:id/vms/:name/resume`, recorded and audited as `resume`. A VM that is not paused gets `wrong-state`, and `start` on a paused VM now says to resume it instead.\n- **VM status and drive space.** `list` and `show` give each VM's `status` (Hyper-V's own words for its health) and `critical` (Hyper-V marks the VM critical, as in Paused-Critical). `show` gives `drive`: the host drive that holds the VM's first disk file, with its size and free space in GB, or `null` for a share, a VM with no disk, or a drive that Windows does not measure.\n- **Resume on the card.** A paused VM gets **Resume**, never **Start**, when the host's vmctl lists `resume`. Under its row, HAW shows Paused-Critical in words, Hyper-V's status and the free space of the VM's drive. Under 10 GB free, it adds \"Hyper-V pauses a VM when its disk drive is almost full: free space first, then Resume.\" The details of every VM show the drive line.\n\n### Changed\n\n- **The VM service `haw.vms` is version 1.1.0.** It adds `resume(caller, host, name)`, with the same role rules as `start`, and the new `status`, `critical` and `drive` fields. The agent limit refuses `resume`. See [the VM service](docs/service.md).\n- **The Hyper-V back end (`vmctl-worker.ps1`) is version 1.1.0.** `vmctl.ps1` and `install.ps1` did not change. HAW does not update a host by itself: run the host's setup of this version again (see [Update vmctl](docs/hyper-v.md#update-vmctl)). Until then, HAW works as before, without Resume, and says what to do for a paused VM.\n- **Refresh updates the host's info.** After a host's vmctl is updated, its new verbs show when you press **Refresh**, without a reload of the page.",
+          "publishedAt": "2026-11-26T20:21:04Z"
+        },
+        {
+          "version": "1.0.5",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.5/haw-1.0.5.tmxplug",
+          "sha256": "27196f1f3817d6f43e699743d1fefc700f07afe422de25a695c9c0b809d00c7e",
+          "signature": "YnH4nDSmDRSfq2DsNsP9mOsj33u4l4eZfvXTtPW1Mu5DHIMZmPQ9p0cjWWDNO5bFxid3b7n5Lv/9pJXJ72vfCA==",
+          "size": 91272,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13 || ^2.9",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.5",
+          "notes": "### Changed\n\n- **One build for Termix 26.11.0 and 26.11.2 or later.** The manifest allows plugin API 1.13 and plugin API 2.9 (`\"api\": \"^1.13 || ^2.9\"`). On Termix 26.11.0, HAW runs as before. On Termix 26.11.2 or later, HAW runs in its own process and its tab in a sandboxed frame. HAW needs no `sandbox` block: it has no timers, event listeners or registry values of its own.\n- HAW's icon is Lucide's **Trees** icon, the same drawing. Termix 26.11.2 draws only Lucide icons in the rail and on the tab; it showed a puzzle piece for the old icon.\n\n### Fixed\n\n- **The VM service binds under plugin API 2.** `bindPlugin` now waits for the consumer's receiver from `ctx.registry.consume`, which plugin API 2 gives as a Promise. Before, a plugin like Runbooks got `no-receiver` and could not use VM steps on Termix 26.11.2.\n\n### Security\n\n- **Termix API keys under plugin API 2.** Termix 26.11.2 and later do not tell a plugin process whether a request came in on a Termix API key (`tmx_...`), so HAW can't refuse API keys there as it does on Termix 26.11.0: a request with an admin's API key reaches HAW's routes as that admin. On Termix 26.11.0 nothing changes.",
+          "publishedAt": "2026-11-23T19:50:36Z"
+        },
+        {
+          "version": "1.0.4",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.4/haw-1.0.4.tmxplug",
+          "sha256": "fb68b58fd17aa8c1ce62c37c8c8cfcb4fb4674ced40fea08982022cbe398ced5",
+          "signature": "EH2kvLn0kN00L0dxq1H/mjHZurlbWpNw8duohvd9ae0J8GSWLZOBBPzPSqmA3PPZMpWUJPc+g9X+swj81iiyDw==",
+          "size": 82101,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.4",
+          "notes": "### Fixed\n\n- **The queue's OWNER RIGHTS entry works.** `install.ps1` set the queue folder's owner after its entries, and Windows then drops the OWNER RIGHTS entry's \"files\" flag, so the entry did nothing: the vmctl account could change the access list of a request file it made. `install.ps1` now sets the owner first, and removes a dead entry before it grants the entry again. Run `install.ps1` once on each Hyper-V host to repair the queue.\n- **`install.ps1` reports only real changes.** It reported SET for the queue access and the worker task on every run: the queue because of the dead entry, the task because Task Scheduler stores the account's \"read and run\" right as `0x1200a9`, not as the `GRGX` that `install.ps1` writes. It now compares the right as a number, so a second run ends with `CHANGED 0`.",
+          "publishedAt": "2026-11-19T03:21:07Z"
+        },
+        {
+          "version": "1.0.3",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.3/haw-1.0.3.tmxplug",
+          "sha256": "2464c44b085a3ea6f2dfc1b523fccd2595c3f559bb85865a0e674efae41ea883",
+          "signature": "h4WDkzB0yaY7XldYqG2voklK7VRm5dyGmXlhxxvfCqxMsefaXcqt2U7HxoGgzNMlyxCnya3PsQw3QLoVD1v+Aw==",
+          "size": 81806,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.3",
+          "notes": "### Added\n\n- The VM service `haw.vms` (version 1.0.0), for other plugins: `hosts`, `info`, `list`, `show`, `start`, `stop`, `restart` and `consoleInfo`, as the acting person, with their HAW role and the host's limits, through the same vmctl call as the tab. Runbooks uses it for VM steps. See [the VM service](docs/service.md).\n- **Plugins that may act for a person**, an admin setting: the plugin ids that may use the service, one a line. Empty by default.\n- A plugin proves who it is with a key HAW hands to a receiver under the plugin's own id (`<id>.hawVmsKey`), as OpenBao Secrets' service does. Every call carries it.\n- A call for an agent token (`agent: true`) may only list hosts and VMs.\n- HAW's record keeps the plugin that acted for the person and its reference (\"via runbooks: runbook 12 step 3\"). **Record** and a VM's last action show it; Termix's audit line has it in its details.",
+          "publishedAt": "2026-11-17T22:26:42Z"
+        },
+        {
+          "version": "1.0.2",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.2/haw-1.0.2.tmxplug",
+          "sha256": "1bf4ada80b5fcec6a813aa74a577c10895c68617a3c444d00e7a26f3fd77819f",
+          "signature": "kJDO/XrR53FUDes4Hm1vS2Xgf0dHPA9PiGllzYH3NR0R3EB1vKqZ+CUuk7zC32cV6V5O9D7QM6M/j5+wR9KYDg==",
+          "size": 69866,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.2",
+          "notes": "### Changed\n\n- A new VM list. Each VM is one item of two lines: its name with the Protected or Not-managed badge, then its state, size and addresses, with the uptime at the right. The buttons sit at the right and move under the name in a narrow pane, so the list never scrolls to the side.\n- A click on a VM opens its details in place: generation, size, checkpoints and ID; each disk with its use; each network with its switch, MAC and addresses; the notes; and the last action HAW recorded on that VM. Turn off and Reset are in the details; the row keeps Start, Shut down, Restart and Console.\n- On a phone, the rows have no buttons. The details show every button the VM allows, large, two to a line.\n- Each host's header shows its VM count, its memory in use as a bar, and a **Limits** button for the name pattern, protect list and ceilings.\n- A filter box (name or address) and **All**, **Running** and **Stopped** buttons with counts, above all hosts.\n\n### Added\n\n- `GET /actions` takes `vmName`, with `hostId`, for the last action on one VM.",
+          "publishedAt": "2026-11-17T15:38:36Z"
+        },
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.1/haw-1.0.1.tmxplug",
+          "sha256": "a45b756695f20dfb637329160e18051b4cc523ecce6eac2b19fbd87eb14cecf0",
+          "signature": "/xGglDgmcOsPp8hO2lDaeCVKUyNePhNB53MsHWtx8vn8DBpQPU2BeL7/vSKQFDqG+DH65fMCx7y4OoWRZ2xYCQ==",
+          "size": 60220,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.1",
+          "notes": "### Changed\n\n- The VM list keeps up by itself: while the tab is on screen, it reads each host's VMs again 2 seconds after the last read ended, so a VM that starts, stops or changes on the host shows without a click. A read never starts while another one or a power action is still running.",
+          "publishedAt": "2026-11-17T06:33:04Z"
+        },
+        {
+          "version": "1.0.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.0/haw-1.0.0.tmxplug",
+          "sha256": "3ae39414c353e683280e9ec8e46ddb60ac854ba695bdc1a6e31986cd10cca1a0",
+          "signature": "ezqZmhfTndwetzseP+k9wInZ2JIN9h3AMVMXb/XLgYmdEEY+bqXuYutbrwPCSm4t9ry+IZ/AGe660W/GTZHGDA==",
+          "size": 59532,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.0",
+          "notes": "### Added\n\n- VM hosts: any Termix host, with an interface (Hyper-V). **Add VM host** checks the host with `vmctl info` before it adds it, and shows that interface's one-time setup when vmctl does not answer. A host with no stored host key is refused.\n- The vmctl protocol, version 1: one JSON request on standard input, one JSON reply. Verbs `info`, `list`, `show`, `start`, `stop`, `restart` and `console-info`; `create`, `delete`, `snapshot`, `restore` and `users` answer \"not in this version\".\n- The Hyper-V back end, with `install.ps1` for the one-time setup. `vmctl.ps1` is the forced command of a plain account (key login, no TTY, no forwarding); it hands each request to the task `haw-vmctl-worker`, which runs `vmctl-worker.ps1` as SYSTEM, checks the request again and runs Hyper-V. Windows refuses Hyper-V to a non-admin account over an SSH key login, even in Hyper-V Administrators; the worker keeps the account out of Administrators. The host config holds a name pattern, a protect list and ceilings that the plugin can't change.\n- A fake back end for tests and rehearsals (`vmctl/fake/vmctl-fake.mjs`).\n- The VMs tab: each VM host with its VMs, state, size, addresses and uptime; Start, Shut down, Turn off, Restart and Reset with a confirm; protected and not-managed VMs marked.\n- Consoles through the Remote Desktop plugin, from a Termix host an owner links to the VM.\n- Roles: See VMs (viewer), Power VMs (operator) and Manage VM hosts (owner).\n- The record of actions, in HAW's tables and in Termix's audit log.",
+          "publishedAt": "2026-11-17T06:09:17Z"
+        }
+      ],
+      "contributes": [
+        "permissions",
+        "settings",
+        "tabs"
+      ]
+    },
     {
       "id": "runbooks",
       "name": "Runbooks",
@@ -503,173 +693,6 @@
         "settings",
         "tabs",
         "uses"
-      ]
-    },
-    {
-      "id": "haw",
-      "name": "Hundred Acre Wood",
-      "description": "A VM manager for any host you add: see every VM, start, stop and restart them, and open their consoles, through one fixed command on each host.",
-      "author": "Coolroo",
-      "category": "Infrastructure",
-      "repository": "https://github.com/Coolroo/termix-plugin-haw",
-      "icon": "Trees",
-      "features": [
-        "Add any Termix host as a VM host and choose its interface (Hyper-V in 1.0)",
-        "HAW runs one fixed command on the host, vmctl, as an account that can do nothing else",
-        "Every VM on each host with its state, size, addresses and uptime",
-        "Start, shut down, turn off and restart, with a confirm",
-        "The host keeps its own limits: a name pattern, a protect list and ceilings that HAW can't change",
-        "Open a VM's console in the Remote Desktop plugin",
-        "Three roles: owner, operator and viewer",
-        "A VM service other plugins (Runbooks) use to do VM actions for a person, for the plugins an admin allows",
-        "Every action recorded, in HAW and in Termix's audit log"
-      ],
-      "docs": "https://github.com/Coolroo/termix-plugin-haw/tree/main/docs",
-      "versions": [],
-      "gated": [
-        {
-          "version": "1.0.5",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.5/haw-1.0.5.tmxplug",
-          "sha256": "27196f1f3817d6f43e699743d1fefc700f07afe422de25a695c9c0b809d00c7e",
-          "signature": "YnH4nDSmDRSfq2DsNsP9mOsj33u4l4eZfvXTtPW1Mu5DHIMZmPQ9p0cjWWDNO5bFxid3b7n5Lv/9pJXJ72vfCA==",
-          "size": 91272,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13 || ^2.9",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.5",
-          "notes": "### Changed\n\n- **One build for Termix 26.11.0 and 26.11.2 or later.** The manifest allows plugin API 1.13 and plugin API 2.9 (`\"api\": \"^1.13 || ^2.9\"`). On Termix 26.11.0, HAW runs as before. On Termix 26.11.2 or later, HAW runs in its own process and its tab in a sandboxed frame. HAW needs no `sandbox` block: it has no timers, event listeners or registry values of its own.\n- HAW's icon is Lucide's **Trees** icon, the same drawing. Termix 26.11.2 draws only Lucide icons in the rail and on the tab; it showed a puzzle piece for the old icon.\n\n### Fixed\n\n- **The VM service binds under plugin API 2.** `bindPlugin` now waits for the consumer's receiver from `ctx.registry.consume`, which plugin API 2 gives as a Promise. Before, a plugin like Runbooks got `no-receiver` and could not use VM steps on Termix 26.11.2.\n\n### Security\n\n- **Termix API keys under plugin API 2.** Termix 26.11.2 and later do not tell a plugin process whether a request came in on a Termix API key (`tmx_...`), so HAW can't refuse API keys there as it does on Termix 26.11.0: a request with an admin's API key reaches HAW's routes as that admin. On Termix 26.11.0 nothing changes.",
-          "publishedAt": "2026-11-23T19:50:36Z"
-        },
-        {
-          "version": "1.0.4",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.4/haw-1.0.4.tmxplug",
-          "sha256": "fb68b58fd17aa8c1ce62c37c8c8cfcb4fb4674ced40fea08982022cbe398ced5",
-          "signature": "EH2kvLn0kN00L0dxq1H/mjHZurlbWpNw8duohvd9ae0J8GSWLZOBBPzPSqmA3PPZMpWUJPc+g9X+swj81iiyDw==",
-          "size": 82101,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.4",
-          "notes": "### Fixed\n\n- **The queue's OWNER RIGHTS entry works.** `install.ps1` set the queue folder's owner after its entries, and Windows then drops the OWNER RIGHTS entry's \"files\" flag, so the entry did nothing: the vmctl account could change the access list of a request file it made. `install.ps1` now sets the owner first, and removes a dead entry before it grants the entry again. Run `install.ps1` once on each Hyper-V host to repair the queue.\n- **`install.ps1` reports only real changes.** It reported SET for the queue access and the worker task on every run: the queue because of the dead entry, the task because Task Scheduler stores the account's \"read and run\" right as `0x1200a9`, not as the `GRGX` that `install.ps1` writes. It now compares the right as a number, so a second run ends with `CHANGED 0`.",
-          "publishedAt": "2026-11-19T03:21:07Z"
-        },
-        {
-          "version": "1.0.3",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.3/haw-1.0.3.tmxplug",
-          "sha256": "2464c44b085a3ea6f2dfc1b523fccd2595c3f559bb85865a0e674efae41ea883",
-          "signature": "h4WDkzB0yaY7XldYqG2voklK7VRm5dyGmXlhxxvfCqxMsefaXcqt2U7HxoGgzNMlyxCnya3PsQw3QLoVD1v+Aw==",
-          "size": 81806,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.3",
-          "notes": "### Added\n\n- The VM service `haw.vms` (version 1.0.0), for other plugins: `hosts`, `info`, `list`, `show`, `start`, `stop`, `restart` and `consoleInfo`, as the acting person, with their HAW role and the host's limits, through the same vmctl call as the tab. Runbooks uses it for VM steps. See [the VM service](docs/service.md).\n- **Plugins that may act for a person**, an admin setting: the plugin ids that may use the service, one a line. Empty by default.\n- A plugin proves who it is with a key HAW hands to a receiver under the plugin's own id (`<id>.hawVmsKey`), as OpenBao Secrets' service does. Every call carries it.\n- A call for an agent token (`agent: true`) may only list hosts and VMs.\n- HAW's record keeps the plugin that acted for the person and its reference (\"via runbooks: runbook 12 step 3\"). **Record** and a VM's last action show it; Termix's audit line has it in its details.",
-          "publishedAt": "2026-11-17T22:26:42Z"
-        },
-        {
-          "version": "1.0.2",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.2/haw-1.0.2.tmxplug",
-          "sha256": "1bf4ada80b5fcec6a813aa74a577c10895c68617a3c444d00e7a26f3fd77819f",
-          "signature": "kJDO/XrR53FUDes4Hm1vS2Xgf0dHPA9PiGllzYH3NR0R3EB1vKqZ+CUuk7zC32cV6V5O9D7QM6M/j5+wR9KYDg==",
-          "size": 69866,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.2",
-          "notes": "### Changed\n\n- A new VM list. Each VM is one item of two lines: its name with the Protected or Not-managed badge, then its state, size and addresses, with the uptime at the right. The buttons sit at the right and move under the name in a narrow pane, so the list never scrolls to the side.\n- A click on a VM opens its details in place: generation, size, checkpoints and ID; each disk with its use; each network with its switch, MAC and addresses; the notes; and the last action HAW recorded on that VM. Turn off and Reset are in the details; the row keeps Start, Shut down, Restart and Console.\n- On a phone, the rows have no buttons. The details show every button the VM allows, large, two to a line.\n- Each host's header shows its VM count, its memory in use as a bar, and a **Limits** button for the name pattern, protect list and ceilings.\n- A filter box (name or address) and **All**, **Running** and **Stopped** buttons with counts, above all hosts.\n\n### Added\n\n- `GET /actions` takes `vmName`, with `hostId`, for the last action on one VM.",
-          "publishedAt": "2026-11-17T15:38:36Z"
-        },
-        {
-          "version": "1.0.1",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.1/haw-1.0.1.tmxplug",
-          "sha256": "a45b756695f20dfb637329160e18051b4cc523ecce6eac2b19fbd87eb14cecf0",
-          "signature": "/xGglDgmcOsPp8hO2lDaeCVKUyNePhNB53MsHWtx8vn8DBpQPU2BeL7/vSKQFDqG+DH65fMCx7y4OoWRZ2xYCQ==",
-          "size": 60220,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.1",
-          "notes": "### Changed\n\n- The VM list keeps up by itself: while the tab is on screen, it reads each host's VMs again 2 seconds after the last read ended, so a VM that starts, stops or changes on the host shows without a click. A read never starts while another one or a power action is still running.",
-          "publishedAt": "2026-11-17T06:33:04Z"
-        },
-        {
-          "version": "1.0.0",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-haw/releases/download/v1.0.0/haw-1.0.0.tmxplug",
-          "sha256": "3ae39414c353e683280e9ec8e46ddb60ac854ba695bdc1a6e31986cd10cca1a0",
-          "signature": "ezqZmhfTndwetzseP+k9wInZ2JIN9h3AMVMXb/XLgYmdEEY+bqXuYutbrwPCSm4t9ry+IZ/AGe660W/GTZHGDA==",
-          "size": 59532,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.0",
-          "notes": "### Added\n\n- VM hosts: any Termix host, with an interface (Hyper-V). **Add VM host** checks the host with `vmctl info` before it adds it, and shows that interface's one-time setup when vmctl does not answer. A host with no stored host key is refused.\n- The vmctl protocol, version 1: one JSON request on standard input, one JSON reply. Verbs `info`, `list`, `show`, `start`, `stop`, `restart` and `console-info`; `create`, `delete`, `snapshot`, `restore` and `users` answer \"not in this version\".\n- The Hyper-V back end, with `install.ps1` for the one-time setup. `vmctl.ps1` is the forced command of a plain account (key login, no TTY, no forwarding); it hands each request to the task `haw-vmctl-worker`, which runs `vmctl-worker.ps1` as SYSTEM, checks the request again and runs Hyper-V. Windows refuses Hyper-V to a non-admin account over an SSH key login, even in Hyper-V Administrators; the worker keeps the account out of Administrators. The host config holds a name pattern, a protect list and ceilings that the plugin can't change.\n- A fake back end for tests and rehearsals (`vmctl/fake/vmctl-fake.mjs`).\n- The VMs tab: each VM host with its VMs, state, size, addresses and uptime; Start, Shut down, Turn off, Restart and Reset with a confirm; protected and not-managed VMs marked.\n- Consoles through the Remote Desktop plugin, from a Termix host an owner links to the VM.\n- Roles: See VMs (viewer), Power VMs (operator) and Manage VM hosts (owner).\n- The record of actions, in HAW's tables and in Termix's audit log.",
-          "publishedAt": "2026-11-17T06:09:17Z"
-        }
-      ],
-      "contributes": [
-        "permissions",
-        "settings",
-        "tabs"
       ]
     }
   ]
