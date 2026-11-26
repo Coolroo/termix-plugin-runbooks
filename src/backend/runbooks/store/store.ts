@@ -228,7 +228,7 @@ export async function createStore(db: PluginDatabase) {
   }
 
   /**
-   * Puts runbooks in a folder, or in none (1.4.11). Nothing else changes:
+   * Puts runbooks in a folder, or in none (1.4.10). Nothing else changes:
    * not the revision, not updatedAt, so a move never reorders the list or
    * makes a person's open page stale, and works on any status.
    */

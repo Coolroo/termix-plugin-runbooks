@@ -263,7 +263,7 @@ export function runbookSummary(
     createdAt: runbook.createdAt,
     updatedAt: runbook.updatedAt,
     revision: runbook.revision,
-    // The folder the list shows it in (1.4.11); null: No folder.
+    // The folder the list shows it in (1.4.10); null: No folder.
     folder: runbook.folder,
     progress: progress(steps, notNeeded),
     // Amendments that have not run yet (1.4.0): the list shows "amended".

@@ -166,7 +166,7 @@ const OWNER_SCHEMA = {
   },
 };
 
-/** 1.4.11: the folder the person's list files the runbook under. */
+/** 1.4.10: the folder the person's list files the runbook under. */
 const FOLDER_SCHEMA = {
   type: ["string", "null"],
   minLength: 1,

@@ -57,7 +57,7 @@ export function useTerminalSend(
       const run = await attempt("terminal", step, flags);
       if (!run) return;
       // Notes the prompt before the command is typed, so Mark done can
-      // read what the command prints (1.4.9). Without a terminal handle
+      // read what the command prints (1.4.10). Without a terminal handle
       // the paste box works as before.
       const reading = startCapture({
         runId: run.id,

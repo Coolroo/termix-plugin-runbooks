@@ -1,5 +1,5 @@
 /**
- * The list's sections and folders (1.4.11): Open, Done and Abandoned, and
+ * The list's sections and folders (1.4.10): Open, Done and Abandoned, and
  * inside each the runbooks grouped by folder, A to Z, No folder last. Two
  * spellings of one folder are one group, named as the first one read.
  */

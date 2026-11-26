@@ -1,5 +1,5 @@
 /**
- * Folders (1.4.11): an optional name on a runbook that the list groups by.
+ * Folders (1.4.10): an optional name on a runbook that the list groups by.
  * One level: a folder holds runbooks only, so a name has no "/". A folder
  * exists only while a runbook is in it. Shared by the server, which checks
  * every name, and the page, which checks it before it sends one.
@@ -60,7 +60,7 @@ export function uniqueFolders(names: Iterable<string>): string[] {
   );
 }
 
-/** The sections of the list, in their order (1.4.11). */
+/** The sections of the list, in their order (1.4.10). */
 export const LIST_SECTIONS = ["open", "done", "abandoned"] as const;
 export type ListSection = (typeof LIST_SECTIONS)[number];
 

@@ -105,7 +105,7 @@ const putBodies = (client: FakeApi) =>
     .filter(([url]) => url === "/list-state")
     .map(([, body]) => body);
 
-describe("the list's sections and folders (1.4.11)", () => {
+describe("the list's sections and folders (1.4.10)", () => {
   it("groups by state then folder, A to Z with No folder last, with counts", async () => {
     await showList();
     expect(
@@ -209,7 +209,7 @@ describe("the list's sections and folders (1.4.11)", () => {
   });
 });
 
-describe("the list's search (1.4.11)", () => {
+describe("the list's search (1.4.10)", () => {
   it("filters titles across sections and opens what matches, without keeping it", async () => {
     const client = await showList();
     const box = screen.getByPlaceholderText("Search runbook titles");
@@ -252,7 +252,7 @@ describe("the list's search (1.4.11)", () => {
   });
 });
 
-describe("Move to folder and Rename folder (1.4.11)", () => {
+describe("Move to folder and Rename folder (1.4.10)", () => {
   function client(posts: Array<[string, unknown]>) {
     return fakeApi({
       list: LIST,

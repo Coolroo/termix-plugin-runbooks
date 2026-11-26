@@ -12,7 +12,7 @@ import {
 useTestServer();
 
 // Text Send to terminal read from the terminal is Mark done's pasted output
-// (1.4.9): kept with where it came from, and hidden, checked and captured
+// (1.4.10): kept with where it came from, and hidden, checked and captured
 // as any paste.
 
 const TOKEN = "tk-1a2b3c4d5e6f";

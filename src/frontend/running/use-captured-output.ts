@@ -1,5 +1,5 @@
 /**
- * The Mark done paste box of a terminal run (1.4.9): filled with what the
+ * The Mark done paste box of a terminal run (1.4.10): filled with what the
  * command printed when this page sent it, and kept up with the terminal
  * until the person changes it or the reading stops. It only fills the box:
  * the person checks the text before saving it (BUG-021). Read again puts

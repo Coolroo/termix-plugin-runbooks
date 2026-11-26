@@ -1,5 +1,5 @@
 /**
- * Folders and the list's sections (1.4.11): move a runbook to a folder,
+ * Folders and the list's sections (1.4.10): move a runbook to a folder,
  * rename a folder, and what each person collapsed in the list.
  *
  * Moving and renaming take what changing a runbook's status takes: a

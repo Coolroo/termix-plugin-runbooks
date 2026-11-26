@@ -65,7 +65,7 @@ export interface RunbookRow {
   owner: RunbookOwner | null;
   /** Event types the agent wants delivered (1.4.0); null: the default. */
   notify: string[] | null;
-  /** The folder the list shows it in (1.4.11); null: No folder. */
+  /** The folder the list shows it in (1.4.10); null: No folder. */
   folder: string | null;
 }
 

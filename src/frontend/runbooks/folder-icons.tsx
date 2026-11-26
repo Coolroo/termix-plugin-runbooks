@@ -1,4 +1,4 @@
-/** The folder and rename icons of the list and the runbook page (1.4.11). */
+/** The folder and rename icons of the list and the runbook page (1.4.10). */
 
 export function FolderIcon(props: { className?: string }) {
   return (

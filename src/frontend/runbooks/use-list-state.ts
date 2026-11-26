@@ -1,5 +1,5 @@
 /**
- * What this person collapsed or opened in the list (1.4.11), kept on the
+ * What this person collapsed or opened in the list (1.4.10), kept on the
  * server as their own setting (GET and PUT /list-state), so it follows
  * them to every browser. Until it is read, and when it cannot be, the
  * defaults hold: Open expanded, Done and Abandoned collapsed.

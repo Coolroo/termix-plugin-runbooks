@@ -18,7 +18,7 @@ export const MIN_HIDDEN_CHARS = 4;
 
 /**
  * The most Mark done takes as a terminal run's output, in characters; what
- * Send to terminal reads from the terminal is cut to it (1.4.9).
+ * Send to terminal reads from the terminal is cut to it (1.4.10).
  */
 export const MAX_PASTED_CHARS = 262_144;
 

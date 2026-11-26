@@ -59,7 +59,7 @@ export interface StepActions {
    * step (1.4.2). Resolves true when the server stored it.
    */
   secret: (step: Step, value?: string) => Promise<boolean>;
-  /** `source`: pasted, or read from the terminal and maybe changed (1.4.9). */
+  /** `source`: pasted, or read from the terminal and maybe changed (1.4.10). */
   complete: (
     run: Run,
     pasted: string,

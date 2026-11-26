@@ -1,5 +1,5 @@
 /**
- * Reading what a Send to terminal step printed (1.4.9, T-249), to fill the
+ * Reading what a Send to terminal step printed (1.4.10, T-249), to fill the
  * paste box, so the person checks it there instead of copying it from the
  * terminal (which a phone cannot do).
  *

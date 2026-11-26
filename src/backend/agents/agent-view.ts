@@ -187,7 +187,7 @@ function agentRun(
     stdout: output.stdout,
     stderr: output.stderr,
     pastedOutput: output.pastedOutput,
-    // Where the person said the text came from (1.4.9): pasted, or read
+    // Where the person said the text came from (1.4.10): pasted, or read
     // from the terminal. The page says so; it proves nothing. On a hidden
     // step it would tell whether the command printed anything, and whether
     // the person changed it: that is its output too (BUG-019).

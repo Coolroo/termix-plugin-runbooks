@@ -112,7 +112,7 @@ export async function openRunbook(
 
 /**
  * The list's row of the runbook called `title`, its section opened first
- * as a person would (1.4.11: Done and Abandoned start collapsed).
+ * as a person would (1.4.10: Done and Abandoned start collapsed).
  */
 export function listRow(title: string): HTMLElement {
   expandSections();
@@ -349,7 +349,7 @@ type Reply = Promise<{ data: unknown }>;
 /**
  * The plugin's routes, faked: GET /runbooks answers `list` (default: the
  * detail's list fields), GET /colors answers `colors` (default none),
- * GET /list-state `listState` (default none: 1.4.11), GET /folders the
+ * GET /list-state `listState` (default none: 1.4.10), GET /folders the
  * list's folders, and any other GET the runbook. POST answers `post`, or
  * the runbook; PUT answers what it was given.
  */
@@ -357,7 +357,7 @@ export function fakeApi(options: {
   list?: RunbookListEntry[];
   detail: Runbook | (() => Runbook);
   colors?: unknown;
-  /** What GET /list-state answers (1.4.11). */
+  /** What GET /list-state answers (1.4.10). */
   listState?: unknown;
   post?: (url: string, body?: unknown) => Promise<unknown>;
   /** Answers other GETs, such as a VM step's /steps/:id/vm (1.4.7). */

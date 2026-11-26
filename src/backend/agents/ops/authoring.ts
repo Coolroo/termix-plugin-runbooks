@@ -286,11 +286,11 @@ export function createAuthoring(
   { getRunbook }: Pick<Reads, "getRunbook">,
   /** 1.4.10: whether a command may not wait a fixed time (no-sleep.ts). */
   banSleep: () => Promise<boolean> = async () => true,
-  /** 1.4.11: where an agent's folder moves are written down. */
+  /** 1.4.10: where an agent's folder moves are written down. */
   audit?: AgentAudit,
 ) {
   /**
-   * The folder an agent wrote (1.4.11), spelled as one of its own
+   * The folder an agent wrote (1.4.10), spelled as one of its own
    * folders when it is the same in other letters; undefined: not given.
    */
   async function agentFolder(caller: AgentCaller, value: unknown) {
@@ -404,7 +404,7 @@ export function createAuthoring(
       notify: raw.notify === undefined ? undefined : parseNotify(raw.notify),
     };
     const before = await ownRunbook(caller, runbookId);
-    // A move (1.4.11) changes the folder only: any status, no new
+    // A move (1.4.10) changes the folder only: any status, no new
     // revision, no event. Agents fill it in for runbooks of any age.
     if (folder !== undefined && folder !== before.folder) {
       await store.setFolder([runbookId], folder);

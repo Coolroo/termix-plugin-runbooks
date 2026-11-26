@@ -51,7 +51,7 @@ async function rpc(s: TestServer, token: string, name: string, args: unknown) {
   return reply.body.result;
 }
 
-describe("folders (1.4.11): the data", () => {
+describe("folders (1.4.10): the data", () => {
   it("keep a trimmed folder from create, and show it in every read", async () => {
     const { s, token, loader, mirror, loose } = await filed();
     expect(loader.folder).toBe("gbtvg-coop");
@@ -129,7 +129,7 @@ describe("folders (1.4.11): the data", () => {
   });
 });
 
-describe("folders (1.4.11): a person moves a runbook", () => {
+describe("folders (1.4.10): a person moves a runbook", () => {
   it("moves it, changes nothing else, and writes it in the audit log", async () => {
     const { s, mirror } = await filed();
     const before = (await listed(s)).find((row) => row.id === mirror.id)!;
@@ -208,7 +208,7 @@ describe("folders (1.4.11): a person moves a runbook", () => {
   });
 });
 
-describe("folders (1.4.11): a person renames a folder", () => {
+describe("folders (1.4.10): a person renames a folder", () => {
   it("moves every runbook in it, any status, and writes one audit line", async () => {
     const { s, token, loader } = await filed();
     const second = await agentRunbook(s, token, {
@@ -297,7 +297,7 @@ describe("folders (1.4.11): a person renames a folder", () => {
   });
 });
 
-describe("folders (1.4.11): agents", () => {
+describe("folders (1.4.10): agents", () => {
   it("move a runbook with PATCH on any status, with nothing else changed, audited, and no event", async () => {
     const { s, token, loader } = await filed();
     await s.agent("PATCH", `/runbooks/${loader.id}`, token, {
@@ -387,7 +387,7 @@ describe("folders (1.4.11): agents", () => {
   });
 });
 
-describe("the list state (1.4.11)", () => {
+describe("the list state (1.4.10)", () => {
   it("is empty at first, keeps a person's choices, and is each person's own", async () => {
     const s = await startServer();
     expect((await s.person("GET", "/list-state")).body).toEqual({});

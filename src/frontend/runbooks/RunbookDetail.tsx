@@ -68,7 +68,7 @@ export function RunbookDetail({
   const setStatus = (status: Runbook["status"]) =>
     postRunbook(`/runbooks/${id}/status`, { status });
 
-  // Move to folder (1.4.11), on any status: the folders come with it.
+  // Move to folder (1.4.10), on any status: the folders come with it.
   const api = usePluginApi();
   const [moving, askMove] = usePromptRequest<
     Omit<MoveRequest, "resolve">,

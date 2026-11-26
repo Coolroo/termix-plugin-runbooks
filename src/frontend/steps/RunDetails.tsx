@@ -84,7 +84,7 @@ function LiveRun({ run, step, onInput }: { run: Run } & InputProps) {
 }
 
 /**
- * Above a paste box that Send to terminal filled (1.4.9): where the text is
+ * Above a paste box that Send to terminal filled (1.4.10): where the text is
  * from, and Read again. It only fills the box, so it always asks the person
  * to check the text, and never says the command finished (BUG-021).
  */

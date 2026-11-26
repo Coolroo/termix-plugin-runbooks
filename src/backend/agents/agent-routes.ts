@@ -130,7 +130,7 @@ export function createAgentRouter(
    *         schema: { type: string, enum: [open, done, abandoned] }
    *       - in: query
    *         name: folder
-   *         description: Only runbooks in this folder (1.4.11), any spelling
+   *         description: Only runbooks in this folder (1.4.10), any spelling
    *         schema: { type: string, maxLength: 60 }
    *     responses:
    *       200: { description: The runbooks }

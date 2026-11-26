@@ -1,5 +1,5 @@
 /**
- * Folders (1.4.11): the name a runbook is filed under, checked and spelled
+ * Folders (1.4.10): the name a runbook is filed under, checked and spelled
  * the same way for people and agents. A folder is only a name on runbooks:
  * moving the last runbook out of one is all it takes to remove it.
  */

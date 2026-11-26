@@ -1,5 +1,5 @@
 /**
- * The raw output of a Send to terminal step, read in two parts (1.4.9,
+ * The raw output of a Send to terminal step, read in two parts (1.4.10,
  * BUG-021): first the command's echo, then its output as lines.
  *
  * The echo: the shell draws the typed command, maybe draws it again on

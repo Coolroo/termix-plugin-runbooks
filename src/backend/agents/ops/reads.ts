@@ -108,7 +108,7 @@ export function createReads(
       ownerUserId: owner(caller),
       status,
     });
-    // 1.4.11: one folder, any spelling of it; null: the runbooks in no
+    // 1.4.10: one folder, any spelling of it; null: the runbooks in no
     // folder; "" or left out: every folder.
     if (filter.folder !== undefined && filter.folder !== "") {
       const folder = parseFolder(filter.folder);

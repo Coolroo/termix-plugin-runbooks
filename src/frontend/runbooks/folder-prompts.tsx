@@ -1,5 +1,5 @@
 /**
- * The two folder questions (1.4.11), in the pane like every prompt: Move
+ * The two folder questions (1.4.10), in the pane like every prompt: Move
  * to folder (an existing folder, a new name, or No folder) and Rename
  * folder. Each checks the name as the server does before it is sent.
  */

@@ -50,7 +50,7 @@ export async function activate(ctx: PluginContext) {
     };
   });
   // Step colors (1.4.1): a person's own colors override the admin's.
-  // 1.4.11: what a person collapsed in the list.
+  // 1.4.10: what a person collapsed in the list.
   ctx.settings.onValidate("user", (values) => {
     const list =
       LIST_STATE_SETTING in values

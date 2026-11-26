@@ -35,7 +35,7 @@ const NO_HOST_KEY =
   "open a Terminal to this host once to store its host key, then run the step again";
 
 /**
- * Where Mark done's output came from (1.4.9): the page says so, and the
+ * Where Mark done's output came from (1.4.10): the page says so, and the
  * person saw and could change it. Pasted when left out, as before.
  */
 function parseOutputSource(value: unknown): OutputSource {
@@ -528,7 +528,7 @@ export function registerRunRoutes(router: Router, kit: PersonKit): void {
    *     description: >
    *       Body { pastedOutput, exitCode?, outcome done|failed, outputSource? }.
    *       outputSource is pasted (the default), captured (read from the
-   *       terminal by the page, 1.4.9) or captured-edited.
+   *       terminal by the page, 1.4.10) or captured-edited.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The run }

@@ -194,7 +194,7 @@ export interface RunRecord {
   /** The parts that `error` was made from (1.4.6); null for none or older. */
   errorParts: RunErrorParts | null;
   /**
-   * Where a terminal run's pasted output came from (1.4.9); null for no
+   * Where a terminal run's pasted output came from (1.4.10); null for no
    * pasted output, and for runs from before.
    */
   outputSource: OutputSource | null;
@@ -207,7 +207,7 @@ export interface RunRecord {
 }
 
 /**
- * Where a terminal run's pasted output came from (1.4.9): `pasted` by the
+ * Where a terminal run's pasted output came from (1.4.10): `pasted` by the
  * person, `captured` from the terminal by Send to terminal and kept as
  * read, or `captured-edited`, read from the terminal and then changed by
  * the person before Mark done.
@@ -438,7 +438,7 @@ export interface RunbookSummary {
   createdAt: string;
   updatedAt: string;
   revision: number;
-  /** The folder the list shows it in (1.4.11); null: No folder. */
+  /** The folder the list shows it in (1.4.10); null: No folder. */
   folder: string | null;
   progress: Progress;
   /** Amendments that have not run yet (1.4.0): the list shows "amended". */
