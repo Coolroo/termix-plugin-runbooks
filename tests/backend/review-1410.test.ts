@@ -466,7 +466,7 @@ describe("R2 http from Termix: IPv4-mapped loopback", () => {
         ],
       });
       expect(made.status, url).toBe(400);
-      expect(made.body.error).toContain("127.0.0.1, localhost or [::1]");
+      expect(made.body.error).toContain("write 127.0.0.1 or localhost");
     }
   });
 });

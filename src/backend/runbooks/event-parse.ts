@@ -20,9 +20,10 @@ import type { OnFail } from "../../shared/sequence.js";
 import {
   CONTAINER_NAME,
   EVENT_LIMITS,
+  FORWARD_HOSTS,
+  FORWARD_ONLY,
   isLoopbackUrl,
   linuxOnly,
-  LOOPBACK_HOSTS,
   SERVER_NAME,
   UNIT_NAME,
   type ContainerItemSpec,
@@ -248,14 +249,19 @@ export function urlProblem(
     return `${field} must not hold a user name or password`;
   }
   const loopback = isLoopbackUrl(plain(url));
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  // The host's loopback is reached through SSH at the literal 127.0.0.1
+  // (FORWARD_HOSTS); Termix's key cannot forward to ::1 (T-279).
+  if (loopback && !(FORWARD_HOSTS as readonly string[]).includes(host)) {
+    return `${field}: ${parsed.hostname} cannot be reached through SSH: ${FORWARD_ONLY}`;
+  }
   if (parsed.protocol === "http:" && !loopback) {
-    return `${field}: plain http:// is allowed only to the host's own loopback (127.0.0.1, localhost or [::1]), through the SSH connection; use https:// for any other address`;
+    return `${field}: plain http:// is allowed only to the host's own loopback (127.0.0.1 or localhost), through the SSH connection; use https:// for any other address`;
   }
   // An address Termix never reaches from itself (BUG-022 M4), in any
-  // spelling: the host's own loopback is 127.0.0.1, localhost or [::1].
-  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  // spelling: the host's own loopback is 127.0.0.1 or localhost.
   if (!loopback && net.isIP(host) && rangeKind(host) === "refused") {
-    return `${field}: ${parsed.hostname} is a loopback, link-local, unspecified or reserved address, which Termix does not reach for a runbook; to reach the host's own loopback through SSH, write 127.0.0.1, localhost or [::1]`;
+    return `${field}: ${parsed.hostname} is a loopback, link-local, unspecified or reserved address, which Termix does not reach for a runbook; to reach the host's own loopback through SSH, write 127.0.0.1 or localhost`;
   }
   if (servername && !loopback) {
     return `${field}: servername is for a loopback URL only; any other address is checked against its own host name`;
@@ -362,11 +368,19 @@ export function parseEventItem(
       }
       const host = raw.host ?? "127.0.0.1";
       if (
-        typeof host !== "string" ||
-        !(LOOPBACK_HOSTS as readonly string[]).includes(host.toLowerCase())
+        typeof host === "string" &&
+        ["::1", "[::1]"].includes(host.toLowerCase())
       ) {
         throw new InputError(
-          `${field}.host must be the host's own loopback: "127.0.0.1" (the default), "localhost" or "::1". A port item checks a port as the host sees it, through the SSH connection; it never reaches another address`,
+          `${field}.host: ${host} cannot be reached through SSH: ${FORWARD_ONLY}`,
+        );
+      }
+      if (
+        typeof host !== "string" ||
+        !(FORWARD_HOSTS as readonly string[]).includes(host.toLowerCase())
+      ) {
+        throw new InputError(
+          `${field}.host must be the host's own loopback: "127.0.0.1" (the default) or "localhost". A port item checks a port as the host sees it, through the SSH connection; it never reaches another address`,
         );
       }
       item = {

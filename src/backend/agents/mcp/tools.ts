@@ -6,7 +6,7 @@
 import {
   EVENT_LIMITS,
   EVENT_TYPES,
-  LOOPBACK_HOSTS,
+  FORWARD_HOSTS,
 } from "../../../shared/events.js";
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
@@ -135,8 +135,8 @@ const WAIT_EVENTS_HELP =
   "EVENTS (1.4.10): items that wait until a state holds, checked by Termix itself (no shell loop on the host), each with a wait's schedule: within (required, 1 to 7200 s), every, backoff, factor, maxDelay, jitter, attempts, timeoutMs (one check, default 30000), label, onFail. Use them instead of a wait item with docker inspect, systemctl, curl or test -f. " +
   '{"type":"container","name":"enforcarr","state":"healthy","within":180} (state healthy, running, exited or gone; one fixed docker container inspect, read by Termix; healthy and running fail at once when the container exits or restarts; healthy needs a HEALTHCHECK). ' +
   '{"type":"unit","name":"restic-backup.service","state":"finished","within":3600} (active, or finished: ran to its end with Result=success since the step started; fails at once when it failed; one fixed systemctl show). ' +
-  '{"type":"http","url":"https://127.0.0.1:8443/health","servername":"termix.example.com","status":200,"contains":"ok","within":60} (a URL on 127.0.0.1, localhost or [::1] goes through the SSH connection to the host\'s own loopback; any other https URL goes from Termix itself, never to Termix\'s own loopback, its own addresses, 0.0.0.0 or a link-local address in any spelling; the certificate is always checked, against the URL\'s host name or servername (loopback only), with public roots plus the admin\'s extra CAs; plain http:// only to the loopback; redirects are not followed). ' +
-  '{"type":"port","port":5432,"state":"open","within":60} (open or closed, on the host\'s own 127.0.0.1 (host may be localhost or ::1), through the SSH connection; fails at once when the host\'s SSH key does not allow forwarding). ' +
+  '{"type":"http","url":"https://127.0.0.1:8443/health","servername":"termix.example.com","status":200,"contains":"ok","within":60} (a URL on 127.0.0.1 or localhost goes through the SSH connection to the host\'s own 127.0.0.1 ([::1] is refused: Termix\'s SSH key allows forwarding to 127.0.0.1 only); any other https URL goes from Termix itself, never to Termix\'s own loopback, its own addresses, 0.0.0.0 or a link-local address in any spelling; the certificate is always checked, against the URL\'s host name or servername (loopback only), with public roots plus the admin\'s extra CAs; plain http:// only to the loopback; redirects are not followed). ' +
+  '{"type":"port","port":5432,"state":"open","within":60} (open or closed, on the host\'s own 127.0.0.1 (host may be localhost; ::1 is refused: Termix\'s SSH key allows forwarding to 127.0.0.1 only), through the SSH connection; fails at once when the host\'s SSH key does not allow forwarding). ' +
   '{"type":"file","path":"/srv/app/ready","state":"exists","within":300} (exists, nonEmpty or gone; SFTP stat as the SSH user, also on Windows; sudo true reads a root-only path with one fixed sudo -n stat, Linux only). ' +
   '{"type":"log","container":"enforcarr","pattern":"listening on","failPattern":"FATAL","within":120} (or unit instead of container, with sudo true to read the system journal with sudo -n; lines written after the step started; pattern and failPattern are JavaScript regular expressions up to 200 characters, with no repeated group that holds a repeat or alternatives, such as (a+)+ or (a|aa)+; a pattern that takes longer than 250 ms on the new lines fails the item). ' +
   '{"type":"job","command":"sudo restic-nightly.sh","unit":"restic-nightly","within":7200,"every":30} (starts the command as a transient root systemd unit with sudo -n systemd-run, streams its journal into the item, passes when it ended with Result=success; for work longer than the 10-minute limit of one command; Stop or running out of time stops the unit; the sleep ban applies to its command). ' +
@@ -320,15 +320,15 @@ const EVENT_PROPERTIES = {
   },
   host: {
     type: "string",
-    enum: [...LOOPBACK_HOSTS],
+    enum: [...FORWARD_HOSTS],
     description:
-      "port: 127.0.0.1 (default), localhost or ::1. Never another address.",
+      "port: 127.0.0.1 (default) or localhost; both open to 127.0.0.1. Never another address (::1 is refused: the key forwards to 127.0.0.1 only).",
   },
   url: {
     type: "string",
     maxLength: EVENT_LIMITS.url,
     description:
-      "http: https://... (or http:// to the host's own 127.0.0.1, localhost or [::1]).",
+      "http: https://... (or http:// to the host's own 127.0.0.1 or localhost).",
   },
   status: {
     type: "integer",

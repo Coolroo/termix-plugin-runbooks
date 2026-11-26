@@ -58,8 +58,25 @@ export const EVENT_LIMITS = {
   bodyShown: 2048,
 } as const;
 
-/** The loopback names a port or http item may reach through SSH. */
+/**
+ * The names of the host's own loopback. A URL on one of these goes through
+ * the SSH connection, never from Termix.
+ */
 export const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
+
+/**
+ * The loopback names a port or http item may be written with: both open a
+ * channel to the literal 127.0.0.1. Termix's SSH key allows forwarding to
+ * permitopen="127.0.0.1:*" only, and sshd compares the address as written:
+ * a forward to "localhost" or "::1" is refused (T-279, tested on sshd). So
+ * localhost is sent as 127.0.0.1 (the URL keeps its name for the Host
+ * header and the certificate), and ::1 is refused when written.
+ */
+export const FORWARD_HOSTS = ["127.0.0.1", "localhost"] as const;
+
+/** Why ::1 is refused when written. */
+export const FORWARD_ONLY =
+  "write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only";
 
 /** What every event item has: its schedule and time limit, as a wait has. */
 interface EventBase extends Schedule {
@@ -78,7 +95,7 @@ export interface PortItemSpec extends EventBase {
   type: "port";
   port: number;
   state: "open" | "closed";
-  /** 127.0.0.1 (the default), localhost or ::1. */
+  /** 127.0.0.1 (the default) or localhost; both open to 127.0.0.1. */
   host: string;
 }
 
@@ -210,10 +227,17 @@ export function isLoopbackUrl(url: string): boolean {
   }
 }
 
-/** The host to open a channel to: localhost is 127.0.0.1. */
+/**
+ * The host to open a channel to: the literal 127.0.0.1, the one address
+ * Termix's key may forward to (FORWARD_HOSTS). An item holds 127.0.0.1 or
+ * localhost (::1 is refused when written); every loopback name opens to
+ * 127.0.0.1, never to the name as written.
+ */
 export function channelHost(host: string): string {
   const bare = host.replace(/^\[|\]$/g, "").toLowerCase();
-  return bare === "localhost" ? "127.0.0.1" : bare;
+  return (LOOPBACK_HOSTS as readonly string[]).includes(bare)
+    ? "127.0.0.1"
+    : bare;
 }
 
 // --- The fixed commands ---------------------------------------------------

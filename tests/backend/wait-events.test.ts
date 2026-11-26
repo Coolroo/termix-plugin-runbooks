@@ -207,6 +207,25 @@ describe("writing events", () => {
       ev("port", { port: 22, host: "10.0.0.5" }),
       "host must be the host's own loopback",
     ],
+    // T-279: the key's permitopen="127.0.0.1:*" forwards to that address
+    // as written; sshd refuses ::1 (and localhost, which is sent as
+    // 127.0.0.1).
+    [
+      ev("port", { port: 5432, host: "::1" }),
+      "::1 cannot be reached through SSH: write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only",
+    ],
+    [
+      ev("port", { port: 5432, host: "[::1]" }),
+      "write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only",
+    ],
+    [
+      ev("http", { url: "http://[::1]:8080/health" }),
+      "[::1] cannot be reached through SSH: write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only",
+    ],
+    [
+      ev("http", { url: "https://[::1]:8443/", servername: "a.example.com" }),
+      "write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only",
+    ],
     [ev("port", { port: 70000 }), "port must be an integer from 1 to 65535"],
     [ev("port", {}), "port is required"],
     [
@@ -999,6 +1018,29 @@ describe.skipIf(!certs)("http over the SSH connection, TLS checked", () => {
     expect(results(done.items[0])).toEqual(["HTTP 503", "HTTP 200"]);
     expect(done.items[0].stdout).toContain(`ok 127.0.0.1:${port}`);
     expect(s.forwardCalls[0]).toEqual({ host: "127.0.0.1", port });
+  });
+
+  it("opens a localhost URL to the literal 127.0.0.1, and keeps localhost for the Host header (T-279)", async () => {
+    const port = await serve([200]);
+    const { done, s } = await runOne(
+      [
+        ev("http", {
+          url: `https://localhost:${port}/health`,
+          servername: "svc.test",
+          contains: "ok",
+          every: 1,
+          within: 30,
+        }),
+      ],
+      toLocal(port),
+      {
+        fakeTimers: false,
+        server: { settings: { [HTTP_CA_SETTING]: certs!.ca } },
+      },
+    );
+    expect(done.status, JSON.stringify(done.items[0])).toBe("done");
+    expect(done.items[0].stdout).toContain(`ok localhost:${port}`);
+    expect(s.forwardCalls).toEqual([{ host: "127.0.0.1", port }]);
   });
 
   it("never skips the check: without the extra CA the certificate is not trusted", async () => {
