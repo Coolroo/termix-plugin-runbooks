@@ -21,6 +21,7 @@ import {
 } from "./agents/notifier.js";
 import { registerAdminRoutes } from "./agents/admin-routes.js";
 import { validateColors } from "../shared/step-kinds.js";
+import { LIST_STATE_SETTING, listStateProblem } from "../shared/folders.js";
 import { BAN_SLEEP_SETTING } from "./runbooks/no-sleep.js";
 import { createPlatforms } from "./events/platforms.js";
 import { caBundleProblem, HTTP_CA_SETTING } from "./events/trust.js";
@@ -49,7 +50,17 @@ export async function activate(ctx: PluginContext) {
     };
   });
   // Step colors (1.4.1): a person's own colors override the admin's.
-  ctx.settings.onValidate("user", (values) => validateColors(values));
+  // 1.4.11: what a person collapsed in the list.
+  ctx.settings.onValidate("user", (values) => {
+    const list =
+      LIST_STATE_SETTING in values
+        ? listStateProblem(values[LIST_STATE_SETTING])
+        : null;
+    return {
+      ...validateColors(values),
+      ...(list ? { [LIST_STATE_SETTING]: list } : {}),
+    };
+  });
   // Runs a stopped Termix left running never finish: fail them first.
   await sweepInterrupted(store, events);
   const live = createLiveRuns(store);

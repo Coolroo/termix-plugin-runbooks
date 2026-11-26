@@ -351,6 +351,9 @@
     "stepColors": {
       "label": "Step colors"
     },
+    "listCollapsed": {
+      "label": "Runbook list: collapsed sections and folders"
+    },
     "banSleep": {
       "label": "Refuse sleep in commands",
       "description": "Agents cannot write a command that waits a fixed time (sleep, Start-Sleep, timeout /t, ping -n as a delay): they make the step a sequence with a delay item, which the person sees count down. Steps written before stay as they are."

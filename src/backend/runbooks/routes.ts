@@ -23,6 +23,7 @@ import { registerColorsRoute } from "../kinds/colors-route.js";
 import { registerRunRoutes } from "../running/run-routes.js";
 import { registerSecretRoutes } from "../secrets/secret-routes.js";
 import { registerStepRoutes } from "./step-routes.js";
+import { registerFolderRoutes } from "./folder-routes.js";
 import { registerDecisionRoutes } from "../decisions/decision-routes.js";
 import { registerVmRoutes } from "../vms/vm-routes.js";
 import { registerSendRoutes } from "../agents/send-route.js";
@@ -55,6 +56,7 @@ export function registerPersonRoutes(
   registerRunbookList(router, kit);
   registerColorsRoute(router, kit);
   registerRunbookRoutes(router, kit);
+  registerFolderRoutes(router, kit);
   registerRunRoutes(router, kit);
   registerSecretRoutes(router, kit);
   registerStepRoutes(router, kit);

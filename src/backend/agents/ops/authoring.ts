@@ -45,6 +45,13 @@ import { fillChecks, type Check } from "../../../shared/checks.js";
 import { parseNotify, type Events } from "../events.js";
 import type { Access, AgentCaller } from "./access.js";
 import type { Reads } from "./reads.js";
+import type { AgentAudit } from "./ops.js";
+import {
+  folderText,
+  parseFolder,
+  spellFolder,
+} from "../../runbooks/folders.js";
+import { runbookResource } from "../../core/audit.js";
 
 /**
  * A step and the step number it has, or will have, with what a when rule
@@ -279,7 +286,18 @@ export function createAuthoring(
   { getRunbook }: Pick<Reads, "getRunbook">,
   /** 1.4.10: whether a command may not wait a fixed time (no-sleep.ts). */
   banSleep: () => Promise<boolean> = async () => true,
+  /** 1.4.11: where an agent's folder moves are written down. */
+  audit?: AgentAudit,
 ) {
+  /**
+   * The folder an agent wrote (1.4.11), spelled as one of its own
+   * folders when it is the same in other letters; undefined: not given.
+   */
+  async function agentFolder(caller: AgentCaller, value: unknown) {
+    if (value === undefined) return undefined;
+    return spellFolder(store, parseFolder(value), owner(caller));
+  }
+
   /**
    * Numbers the steps that are not amendments 1, 2, 3 in `order`. Each
    * step's amendments (same position, with a suffix) move with it.
@@ -307,6 +325,7 @@ export function createAuthoring(
     const values = parseValues(raw.values);
     const runbookOwner = parseOwner(raw.owner);
     const notify = parseNotify(raw.notify);
+    const folder = (await agentFolder(caller, raw.folder)) ?? null;
     const steps = parseSteps(raw.steps, await banSleep());
     checkStepCount(steps.length);
     await checkHosts(caller, steps);
@@ -337,6 +356,7 @@ export function createAuthoring(
       createdByUserId: owner(caller),
       owner: runbookOwner,
       notify,
+      folder,
     });
     const made: Numbered[] = [];
     for (const [index, step] of steps.entries()) {
@@ -371,7 +391,9 @@ export function createAuthoring(
       "status",
       "owner",
       "notify",
+      "folder",
     ]);
+    const folder = await agentFolder(caller, raw.folder);
     const patch = {
       title: raw.title === undefined ? undefined : parseTitle(raw.title),
       summary:
@@ -382,12 +404,27 @@ export function createAuthoring(
       notify: raw.notify === undefined ? undefined : parseNotify(raw.notify),
     };
     const before = await ownRunbook(caller, runbookId);
-    await events.changeRunbook(
-      runbookId,
-      before.status,
-      patch,
-      caller.token.name,
-    );
+    // A move (1.4.11) changes the folder only: any status, no new
+    // revision, no event. Agents fill it in for runbooks of any age.
+    if (folder !== undefined && folder !== before.folder) {
+      await store.setFolder([runbookId], folder);
+      await store.persist();
+      await audit?.({
+        action: "runbooks_runbook_folder",
+        ...runbookResource(before),
+        details: `runbook ${runbookId} moved from ${folderText(before.folder)} to ${folderText(folder)} by agent token "${caller.token.name}"`,
+        success: true,
+      });
+    }
+    const changes = Object.values(patch).some((value) => value !== undefined);
+    if (changes || folder === undefined) {
+      await events.changeRunbook(
+        runbookId,
+        before.status,
+        patch,
+        caller.token.name,
+      );
+    }
     return getRunbook(caller, runbookId);
   }
 

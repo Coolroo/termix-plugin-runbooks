@@ -11,6 +11,7 @@ import {
 import { APP_FIELD, APP_PART } from "../../../shared/secret-steps.js";
 import { LIBRARY_REF, MAX_SECRET_NAME, NAME } from "../../../shared/names.js";
 import { OPTION_ID } from "../../../shared/decisions.js";
+import { MAX_FOLDER } from "../../../shared/folders.js";
 import { SEQUENCE_LIMITS } from "../../../shared/sequence.js";
 import {
   BACKOFFS,
@@ -163,6 +164,15 @@ const OWNER_SCHEMA = {
     agent: { type: "string", maxLength: 200 },
     label: { type: "string", maxLength: 80 },
   },
+};
+
+/** 1.4.11: the folder the person's list files the runbook under. */
+const FOLDER_SCHEMA = {
+  type: ["string", "null"],
+  minLength: 1,
+  maxLength: MAX_FOLDER,
+  pattern: "^[^/]+$",
+  description: `The folder the person's Runbooks list shows the runbook in: one level, 1 to ${MAX_FOLDER} characters (trimmed), no "/". Use your task's board name (gbtvg-coop, home-server, termix). The same folder in other letters keeps its existing spelling. Null: no folder. The person can move it.`,
 };
 
 const EVENTS_HELP =
@@ -769,7 +779,7 @@ export const TOOLS = [
   },
   {
     name: "list_runbooks",
-    description: `List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps). ${OPEN_LINK}`,
+    description: `List the runbooks made with tokens of this token's creator, newest change first, with progress (finished and total steps) and folder. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -778,6 +788,12 @@ export const TOOLS = [
           type: "string",
           enum: ["open", "done", "abandoned"],
           description: "Only runbooks with this status.",
+        },
+        folder: {
+          type: ["string", "null"],
+          maxLength: MAX_FOLDER,
+          description:
+            "Only runbooks in this folder (any spelling of it); null: only runbooks in no folder.",
         },
       },
     },
@@ -803,6 +819,7 @@ export const TOOLS = [
         title: { type: "string" },
         owner: OWNER_SCHEMA,
         notify: NOTIFY_SCHEMA,
+        folder: FOLDER_SCHEMA,
         summary: {
           type: "string",
           description: "Markdown: what the runbook does and why.",
@@ -818,7 +835,7 @@ export const TOOLS = [
   },
   {
     name: "update_runbook",
-    description: `Change a runbook's title, summary, values, status (open, done, abandoned) or owner. Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. ${OPEN_LINK}`,
+    description: `Change a runbook's title, summary, values, status (open, done, abandoned), owner, notify or folder. Values replace the whole author value set. A changed value changes the resolved commands, so the owner sees the new text before running. A folder works on any status and changes nothing else: send only folder to file a done or abandoned runbook without reopening it. ${OPEN_LINK}`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -827,6 +844,7 @@ export const TOOLS = [
         runbookId: ID("The runbook id."),
         owner: OWNER_SCHEMA,
         notify: NOTIFY_SCHEMA,
+        folder: FOLDER_SCHEMA,
         title: { type: "string" },
         summary: { type: "string" },
         values: { type: "object", additionalProperties: { type: "string" } },

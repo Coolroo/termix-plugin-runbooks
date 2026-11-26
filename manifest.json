@@ -146,6 +146,12 @@
           "type": "json",
           "labelKey": "settings.stepColors.label",
           "hidden": true
+        },
+        {
+          "key": "listCollapsed",
+          "type": "json",
+          "labelKey": "settings.listCollapsed.label",
+          "hidden": true
         }
       ]
     }

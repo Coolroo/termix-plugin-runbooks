@@ -49,7 +49,14 @@ export function createAgentOps(
   const access = createAccess(store, vmHostIds, options.platforms);
   const reads = createReads(store, live, access);
   const banSleep = options.banSleep ?? (async () => true);
-  const authoring = createAuthoring(store, events, access, reads, banSleep);
+  const authoring = createAuthoring(
+    store,
+    events,
+    access,
+    reads,
+    banSleep,
+    options.audit,
+  );
   const complete = createComplete(
     store,
     events,

@@ -38,7 +38,10 @@ async function callTool(
     case "list_vms":
       return ops.listVms(caller, { host: args.host });
     case "list_runbooks":
-      return ops.listRunbooks(caller, { status: args.status });
+      return ops.listRunbooks(caller, {
+        status: args.status,
+        folder: args.folder,
+      });
     case "get_runbook":
       return ops.getRunbook(caller, int(args, "runbookId"));
     case "create_runbook":

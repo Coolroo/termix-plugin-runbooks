@@ -8,6 +8,7 @@ import {
   runbookSummary,
 } from "../../runbooks/view.js";
 import { parseStatus } from "../../runbooks/parse.js";
+import { inFolder, parseFolder } from "../../runbooks/folders.js";
 import type { LiveRuns } from "../../running/live.js";
 import { InputError } from "../../core/errors.js";
 import type { RunbookSummary } from "../../../shared/api.js";
@@ -97,16 +98,25 @@ export function createReads(
 
   async function listRunbooks(
     caller: AgentCaller,
-    filter: { status?: unknown } = {},
+    filter: { status?: unknown; folder?: unknown } = {},
   ) {
     const status =
       filter.status === undefined || filter.status === ""
         ? undefined
         : parseStatus(filter.status);
-    const rows = await store.listRunbooks({
+    let rows = await store.listRunbooks({
       ownerUserId: owner(caller),
       status,
     });
+    // 1.4.11: one folder, any spelling of it; null: the runbooks in no
+    // folder; "" or left out: every folder.
+    if (filter.folder !== undefined && filter.folder !== "") {
+      const folder = parseFolder(filter.folder);
+      rows =
+        folder === null
+          ? rows.filter((row) => row.folder === null)
+          : inFolder(rows, folder);
+    }
     const out: Array<RunbookSummary & { openPath: string }> = [];
     // One time limit for every runbook's rules (BUG-008).
     const budget = new PatternBudget(RULE_TIME_BUDGET_MS);
