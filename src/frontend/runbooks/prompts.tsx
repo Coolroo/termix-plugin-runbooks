@@ -65,7 +65,7 @@ export function usePromptRequest<Req, Res>(): [
  * `onEscape` before anything else sees the key. With `restoreFocus`, the
  * focus goes back where it was when the prompt closes.
  */
-function usePaneEscape(
+export function usePaneEscape(
   onEscape: () => void,
   {
     focus,

@@ -6,7 +6,13 @@
  */
 
 import { afterEach, vi } from "vitest";
-import { act, fireEvent, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   renderWithApp,
   type RenderedPluginApp,
@@ -91,17 +97,39 @@ export async function openRunbook(
   app.renderTab("runbooks", { isVisible: true });
   if (fakeTimers) {
     await flush();
-    fireEvent.click(screen.getByText(title));
+    fireEvent.click(listRow(title));
     await flush();
     return app;
   }
-  fireEvent.click(await screen.findByText(title));
+  fireEvent.click(await waitFor(() => listRow(title)));
   if (typeof shows === "string") {
     await screen.findByRole("heading", { name: shows });
   } else if (shows) {
     await shows();
   }
   return app;
+}
+
+/**
+ * The list's row of the runbook called `title`, its section opened first
+ * as a person would (1.4.11: Done and Abandoned start collapsed).
+ */
+export function listRow(title: string): HTMLElement {
+  expandSections();
+  const row = [
+    ...document.querySelectorAll<HTMLElement>("[data-runbook-row]"),
+  ].find((each) => within(each).queryByText(title));
+  if (!row) throw new Error(`no row "${title}" in the list`);
+  return row;
+}
+
+/** Opens the list's collapsed sections, as a person does. */
+export function expandSections(): void {
+  for (const toggle of document.querySelectorAll(
+    '[data-section-toggle][aria-expanded="false"]',
+  )) {
+    fireEvent.click(toggle);
+  }
 }
 
 /** Lets promises and due timers run under fake timers. */

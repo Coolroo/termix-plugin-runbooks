@@ -8,20 +8,30 @@
 /** The longest folder name. */
 export const MAX_FOLDER = 60;
 
+/** What is wrong with a folder name; the page says it in its own words. */
+export type FolderProblem = "empty" | "long" | "slash" | "control";
+
+/** What is wrong with `name` (already trimmed); null when nothing is. */
+export function folderProblemCode(name: string): FolderProblem | null {
+  if (name === "") return "empty";
+  if (name.length > MAX_FOLDER) return "long";
+  if (name.includes("/")) return "slash";
+  // Control characters (a newline, a tab) never show as text in the list.
+  if (/\p{Cc}/u.test(name)) return "control";
+  return null;
+}
+
+const PROBLEM_TEXT: Record<FolderProblem, string> = {
+  empty: "a folder name must not be empty",
+  long: `a folder name is at most ${MAX_FOLDER} characters`,
+  slash: 'a folder name has no "/": folders hold runbooks, not folders',
+  control: "a folder name has no control characters",
+};
+
 /** Why `name` (already trimmed) is not a folder name; null when it is. */
 export function folderProblem(name: string): string | null {
-  if (name === "") return "a folder name must not be empty";
-  if (name.length > MAX_FOLDER) {
-    return `a folder name is at most ${MAX_FOLDER} characters`;
-  }
-  if (name.includes("/")) {
-    return 'a folder name has no "/": folders hold runbooks, not folders';
-  }
-  // Control characters (a newline, a tab) never show as text in the list.
-  if (/\p{Cc}/u.test(name)) {
-    return "a folder name has no control characters";
-  }
-  return null;
+  const code = folderProblemCode(name);
+  return code ? PROBLEM_TEXT[code] : null;
 }
 
 /** The key two spellings of one folder share: "Termix" and "termix". */
@@ -37,6 +47,17 @@ export function reuseSpelling(name: string, existing: Iterable<string>) {
     if (folderKey(other) === key) return other;
   }
   return name;
+}
+
+/** Folder names, each folder once (its first spelling), A to Z. */
+export function uniqueFolders(names: Iterable<string>): string[] {
+  const byKey = new Map<string, string>();
+  for (const name of names) {
+    if (!byKey.has(folderKey(name))) byKey.set(folderKey(name), name);
+  }
+  return [...byKey.values()].sort((a, b) =>
+    a.localeCompare(b, "en", { sensitivity: "base" }),
+  );
 }
 
 /** The sections of the list, in their order (1.4.11). */

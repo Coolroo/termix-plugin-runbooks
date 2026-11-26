@@ -23,7 +23,41 @@
     "metaNotNeeded": "{{done}}/{{total}} done · {{notNeeded}} not needed · by {{author}} · {{time}}",
     "failed": "{{count}} failed",
     "amended": "amended",
-    "next": "Next: {{kind}}"
+    "next": "Next: {{kind}}",
+    "search": "Search runbook titles",
+    "noMatch": "No runbook title matches \"{{query}}\".",
+    "noMatchHint": "Press Esc in the search box to show every runbook.",
+    "section": {
+      "open": "Open",
+      "done": "Done",
+      "abandoned": "Abandoned"
+    }
+  },
+  "folder": {
+    "none": "No folder",
+    "moveTo": "Move to folder",
+    "moveTitle": "Move \"{{title}}\" to a folder",
+    "inNone": "It is in no folder now.",
+    "inFolder": "It is in {{folder}} now.",
+    "existing": "Folders",
+    "name": "Folder name",
+    "placeholder": "A folder, or a new name",
+    "rules": "One level: up to {{max}} characters, no \"/\". A new name makes the folder.",
+    "joins": "Same folder as {{folder}}: it goes there.",
+    "move": "Move",
+    "toNone": "No folder",
+    "moveFailed": "The runbook did not move.",
+    "renameTitle": "Rename folder {{folder}}",
+    "renameHint": "Every runbook in it moves to the new name, in all sections.",
+    "renameNamed": "Rename folder {{folder}}",
+    "rename": "Rename",
+    "renameFailed": "The folder was not renamed.",
+    "problem": {
+      "empty": "Type a folder name.",
+      "long": "A folder name is at most {{max}} characters.",
+      "slash": "A folder name has no \"/\": folders hold runbooks, not folders.",
+      "control": "A folder name has no tabs or line breaks."
+    }
   },
   "runbook": {
     "status": {

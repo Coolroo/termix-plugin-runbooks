@@ -11,6 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
+  usePluginApi,
   useShell,
   useTranslation,
   type TermixApp,
@@ -22,7 +23,14 @@ import { StepCard } from "../steps/StepCard";
 import { buttonForKey, pressedKey } from "../nav/bar-items";
 import { StepRail, useNavSteps, useStepNav } from "../nav/StepNav";
 import { NextStepBar, useBarContext } from "../nav/NextStepBar";
-import { EarlyStartPrompt, SendToAgentPrompt } from "./prompts";
+import {
+  EarlyStartPrompt,
+  SendToAgentPrompt,
+  usePromptRequest,
+} from "./prompts";
+import { MoveFolderPrompt, type MoveRequest } from "./folder-prompts";
+import { FolderIcon } from "./folder-icons";
+import { uniqueFolders } from "../../shared/folders";
 import { useRunbook } from "./use-runbook";
 import { useStepActions } from "./use-step-actions";
 import {
@@ -59,6 +67,33 @@ export function RunbookDetail({
 
   const setStatus = (status: Runbook["status"]) =>
     postRunbook(`/runbooks/${id}/status`, { status });
+
+  // Move to folder (1.4.11), on any status: the folders come with it.
+  const api = usePluginApi();
+  const [moving, askMove] = usePromptRequest<
+    Omit<MoveRequest, "resolve">,
+    { folder: string | null } | null
+  >();
+  const moveToFolder = async () => {
+    if (!runbook) return;
+    let folders: string[] = [];
+    try {
+      const { data } = await api.get<unknown>("/folders");
+      if (Array.isArray(data)) {
+        folders = uniqueFolders(
+          data.filter((name): name is string => typeof name === "string"),
+        );
+      }
+    } catch {
+      // Only a new name, then; the move itself still works.
+    }
+    const answer = await askMove({
+      title: runbook.title,
+      folder: runbook.folder,
+      folders,
+    });
+    if (answer) postRunbook(`/runbooks/${id}/folder`, answer);
+  };
 
   // The values the server fills commands with fill the steps' text too.
   const effective = runbook?.effectiveValues;
@@ -129,6 +164,13 @@ export function RunbookDetail({
               <span className="text-xs text-muted-foreground">
                 {runbookMeta(t, runbook)}
               </span>
+              <span
+                className="flex items-center gap-1 text-xs text-muted-foreground"
+                data-runbook-folder
+              >
+                <FolderIcon className="size-3 shrink-0" />
+                {runbook.folder ?? t("folder.none")}
+              </span>
               {(runbook.progress.notNeeded ?? 0) > 0 && (
                 <label
                   className="flex items-center gap-1 text-xs text-muted-foreground"
@@ -144,7 +186,16 @@ export function RunbookDetail({
                   {t("notNeeded.hide")}
                 </label>
               )}
-              <span className="ml-auto flex gap-2">
+              <span className="ml-auto flex flex-wrap gap-2">
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  data-runbook-move
+                  disabled={busy}
+                  onClick={() => void moveToFolder()}
+                >
+                  {t("folder.moveTo")}
+                </Button>
                 {open ? (
                   <>
                     <Button
@@ -192,6 +243,7 @@ export function RunbookDetail({
 
             {early && <EarlyStartPrompt request={early} />}
             {sending && <SendToAgentPrompt request={sending} />}
+            {moving && <MoveFolderPrompt request={moving} />}
 
             <Markdown source={runbook.summary} />
 
