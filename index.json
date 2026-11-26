@@ -4,8 +4,365 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-23T19:51:04.000Z",
+  "updatedAt": "2026-11-26T18:06:16.000Z",
   "plugins": [
+    {
+      "id": "runbooks",
+      "name": "Runbooks",
+      "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
+      "author": "Coolroo",
+      "category": "Productivity",
+      "repository": "https://github.com/Coolroo/termix-plugin-runbooks",
+      "icon": "ListChecks",
+      "features": [
+        "Agents propose runbooks through a token API or MCP; they can never run anything",
+        "Each agent token is limited to the hosts you choose for it",
+        "A person runs each step after seeing the exact command and host",
+        "Run over SSH or send the command to an open terminal and paste the output back",
+        "Every run is kept, and a repeat of the same command asks first",
+        "Values with {{name}} placeholders in commands and step text, filled by the author or captured from output",
+        "Outputs can be hidden from agents step by step",
+        "Standard input from an earlier step's output, a value or a secret",
+        "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown",
+        "Agent steps: work the agent does itself between the person's steps, ended through the API",
+        "Runbook events an agent can read or get as a signed webhook, off by default",
+        "Send to agent on any step, with a short note",
+        "Steps run outside Termix: the command with a Copy button, the pasted output checked",
+        "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
+        "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed",
+        "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
+        "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it",
+        "Sequences: one Run runs commands, delays, waits and wait events (container, unit, log, http, port, file, job) in order, with no sleep",
+        "Send to terminal fills the Mark done box with the command's output, for the person to check and save",
+        "A list in Open, Done and Abandoned sections with folders inside, each collapsible and remembered for each person, and a search over titles"
+      ],
+      "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
+      "versions": [],
+      "gated": [
+        {
+          "version": "1.4.10",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.10/runbooks-1.4.10.tmxplug",
+          "sha256": "90fe3e47e36d86080655fccf3d97a736e8d3f150168ac835858a6614d125d27b",
+          "signature": "Xdzcq4A6Mp5NPNLH7TvSjTNs1SohP1Q0QF2ASQ4Sdzt/5v0d5Xiq3Xa5bfBqyU/DabDVOt7J2LjU2grbSaGNCQ==",
+          "size": 1259934,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.10",
+          "notes": "One release for the work planned as 1.4.9 (output read from the terminal), sequences with waits and wait events, and folders in the list. 1.4.9 was never released.\n\n### Added\n\n- **Sequences** (T-034). A step that Termix runs on a host may be a `sequence` of 1 to 20 items instead of one command: `run` items (a command with its own `label`, `checks`, `captures`, `timeoutMs`, `interactive` and `onFail`), `delay` items (1 to 3600 seconds, with a `reason`; a timer in Termix, nothing runs on the host) and the waits below. One **Run** runs the items in order as the person who pressed it, also with the page closed. The step card lists each item with its state (waiting, running, passed, failed, skipped), its time, its live output and a delay's countdown with **Skip**. A failed item stops the sequence and fails the step, unless it has `\"onFail\": \"continue\"`. **Stop** ends the item that runs; after a stop, a failure or a Termix restart, **Continue from item N** starts a new run that keeps the items that passed (409 `changed` when the sequence or its values changed). Before each item after the first, Runbooks checks that the person may still connect to the host. A step's `workdir` (an absolute path) runs every run item as `cd -- '<workdir>' && <command>`, and works on a one-command step too. An item's captures fill `{{name}}` in the items after it. Each run of a sequence step has `items`, one record per item; agents get one `step-done` or `step-failed` event for the step, not one per item. Not on a sequence step: `stdin`, `secretCaptures`, `where`, `owner: \"agent\"`, `runIn: \"terminal\"` (Send to terminal is refused). REST and MCP take and show sequences; a hidden step hides each item's output, captures and error. Migration 0021.\n- **Wait items and retry** (T-036). A `wait` item runs a command until its checks pass, on a schedule: `within` (required, up to 7200 seconds), `attempts` (up to 500), `every` (default 5 s), `backoff` (`fixed`, `linear`, `exponential` with `factor`), `maxDelay`, `jitter` (`none`, `full`, `equal`) and `stopIf` checks that fail it at once. A `run` item's `retry` runs a flaky command again on the same schedule, with `retryOn` (`exit`, `check`, `timeout`, `connect`). The card shows the planned schedule (\"up to 120 attempts, every 30 s, at most 1 h\"), which the person approves with the commands, then attempt dots, the attempt counter, a countdown with **Try now** and the earlier attempts folded. One Run press covers every attempt: attempts never ask the repeat question. Each attempt is kept (`attempts` on the item, with `why` it did not pass); the step has `attempt` and `schedules` for agents. An attempt's output is read on its own (`GET .../runs/{runId}/items/{item}/attempts/{attempt}`, MCP `get_attempt`). A Termix restart fails the waiting item as interrupted; Continue starts it again. Migration 0022 (`run_attempts`).\n- **Wait events** (T-038): items that wait until a state holds, checked by Termix itself, on the wait schedule, with no loop, `grep` or `test` on the host. `container` (`healthy`, `running`, `exited`, `gone`; one fixed `docker container inspect`), `unit` (`active`, or `finished` with `Result=success` since the step started; one fixed `systemctl show`), `log` (a line in a container's log or a unit's journal, written after the step started, matches `pattern`, or `failPattern` fails it), `http` (status and text of an address), `port` (`open` or `closed` on the host's loopback), `file` (`exists`, `nonEmpty`, `gone`, over SFTP; `sudo: true` for one fixed `sudo -n stat`) and `job` (a long command started with `sudo -n systemd-run` as a transient unit, followed to its end with its journal streamed, then unloaded; past the 10-minute limit of one command). Each check is an attempt whose `result` says the state in fixed words (`healthy`, `exited (1)`, `port closed`, `HTTP 503`, `forwarding refused`). A state that cannot turn good (a container that exited or restarted, a failed unit, permission denied) fails the item at once. Names, paths, units and URLs are checked when written and go into the fixed commands quoted after `--`. Linux-only events are refused (400 `linux-only`) for a host tagged `windows` and fail at once on a host whose SSH server says it is Windows. The card shows each event's icon, what it checks, its attempt dots and the last state. Migration 0023 (the attempt's `result`).\n- `port`, and `http` to the host's own loopback (`127.0.0.1` or `localhost`), open a TCP channel from the host through the SSH connection, always to the literal `127.0.0.1` (the URL keeps `localhost` for the `Host` header and the certificate). The host's SSH key needs `permitopen=\"127.0.0.1:*\"` and `permitlisten=\"127.0.0.1:1\"` instead of `no-port-forwarding`; a refused channel fails the item at once with words that say so, never as a closed port. `::1` (`[::1]` in a URL) is refused when written: \"write 127.0.0.1; Termix's SSH key allows forwarding to 127.0.0.1 only\". Any other `http` URL must be `https://` and goes from Termix through core's `ctx.fetch`, with no redirects followed; the certificate is always checked.\n- **Admin setting: Extra trusted CAs for http checks (PEM)** (`httpCaPem`). CA certificates, such as a home CA, that `http` items trust besides the public roots. Only Runbooks' http checks use them.\n- **No sleep in commands** (T-034, owner's rule 2026-11-19). Runbooks refuses a command that waits a fixed time when a runbook is created, steps are added, a step changes or is amended: 400 with `code` `sleep` and a message that points to the `delay`, `wait` and event items. It reads `sleep` as the shell reads the word (`sleep -- 5`, `sleep${IFS}5`, `s''leep 5`, `time.sleep(5)`), `Start-Sleep`, `timeout /t`, `read -t <n>`, `timeout <n>` before a command that never ends, and `ping -n`/`-c` used as a delay; also in wait and job commands, and in values once filled (a Run whose values make a command wait is refused). Steps stored before keep running. **Admin setting: Refuse sleep in commands** (`banSleep`), on by default.\n- **Captured values need a pattern** (BUG-022 M3, owner's choice 2026-11-23). A value captured from output may go into a later command, an event's name, path or URL only when what captures it has a `value` check with `matches`; otherwise the change is refused with 400 `captured-value`. At run time the value must match that pattern as a whole, or the item that uses it fails before it runs.\n- **Folders, sections and search in the list** (T-040). The Runbooks list has three sections, **Open**, **Done** and **Abandoned**, each with its count; Open starts expanded, the others collapsed. Inside each, runbooks are grouped by folder, A to Z, with **No folder** last, each folder with its count. Each person's collapsed sections and folders are kept on the server (a hidden per-user setting, `listCollapsed`). A search box keeps the runbooks whose title has every word typed. **Move to folder** on each row and on the runbook page, and **Rename** on a folder row, work on any status, change nothing else, and are in Termix's audit log. A folder is one level: 1 to 60 characters, no `/`; a name that is an existing folder in other letters gets its spelling. Agents set `folder` on create and `PATCH` (REST and MCP; a `PATCH` with only `folder` changes no status, revision or event) and list one folder with `GET /runbooks?folder=...` or `list_runbooks`. Migration 0024 (`runbooks.folder`).\n- **Send to terminal fills the Mark done box with its own output** (T-249). The person no longer copies the output from the terminal, which a phone cannot do. Once the person presses Enter in the terminal, the **Mark done** box fills with what the command prints, and follows the terminal until the person changes the text. It only fills the box: a line above it always says \"Check the text before you save it\" (or \"The terminal waits for a password\"), and it never says the command finished (BUG-021, owner's choice 2026-11-23: guessing where the output ends is what kept failing). **Read again** reads the terminal again and puts its text back after a change. The person still sees, can change, and presses **Mark done** or **Mark failed**. The toast after Send to terminal says the output comes back to the step.\n- It reads SSH Terminal's handle on the terminal tab (`readBufferLines`, `subscribeOutput`, `getInputModes`, `isAtPasswordPrompt`), which the plugin SDK does not declare: every part is tested before use and never throws. Without it (a Termix that changes it, plugin API 2's frames, a page reload, another device), the box is the empty paste box it was. The screen is read once, before the command is typed, to note the prompt; the text comes only from the raw output after that (BUG-019, BUG-021), so a reflow, a full scrollback, `clear` or tmux cannot bring another run's text in. The text starts only after the command's echo: the line the shell ends on Enter must be the noted prompt's end with the command (bash 5.1+ draws a pasted command again on Enter, a long or multi-line one after moving the cursor up; that redraw is followed). When the echo is not the command (the person changed it), or cannot be followed, nothing is read and the person pastes. The reading stops at the next prompt (where the shell turns line editing on again, `ESC[?2004h`, which bash 5.1+, zsh and fish send, so a prompt that `cd` changed still ends it; or, for other shells, the prompt noted before the send at the start of a line, if it is 3 characters or more), at a cursor move to another row (`clear`, a progress display, tmux; a note says the end may be missing), at Mark done's size limit (256 K characters) or at the time limit (an hour, or the step's longer one). Lines that look like a prompt (`# ` in a config file, a progress bar ending in `% `) never end it. What the person runs after is never read. While nothing new comes, the box reads every 5 seconds, and it stops reading once the reading stopped. No reading starts when the terminal's last line does not look like a prompt (a tmux status line, a MOTD still printing). A reading stops where it is when another Send to terminal types into the same terminal or its tab closes, and ends when the run is done or failed on another device or reopened; up to 20 are kept. Tests play bash 5.2 output recorded in a terminal (a read before the echo, a changed command, `clear`, a root prompt with `cat` of a config file, a command of two lines, a pause after a progress bar, a command typed ahead after `cd`, a long command redrawn on Enter, a two-line prompt) on the real terminal library (`@xterm/xterm` 6.0.0, a dev dependency).\n- A run's `outputSource` says where its pasted output came from: `pasted`, `captured` (from the terminal, as read) or `captured-edited`. `POST /runs/{id}/complete` takes it (default `pasted`; 400 for another value); a run with no pasted output has `null`, as do runs from before. The run shows \"Output read from the terminal\" or \"…, then changed\" for it; agents read it on every run, and `null` on a hidden step, since whether it printed anything is its output too (BUG-019). It is what the page reports, not proof that the text was not typed by hand. Captured text is the run's `pastedOutput`, so secret masking, checks, captures and secret captures read it as they read a paste. docs/agent-api.md has a section \"Output read from the terminal\", and docs/security.md says what is read and what is not (no-echo input never reaches the screen; echoed text is read like any output).\n- **Mark failed** sends the text read from the terminal only if the person opened (clicked or tapped into) or changed the box; otherwise it sends no output, as in 1.4.8 (BUG-019, owner's choice 2026-11-23). A line under the buttons says so. **Mark done** is unchanged.\n- New column `runs.output_source` (migration 0020), for SQLite, PostgreSQL and MySQL.\n\n### Changed\n\n- The latest run's Mark done box starts empty for each new run; it kept the text typed for the run before.\n- The Run confirm of a sequence shows each item's checks, `stopIf`, capture patterns, `onFail: \"continue\"`, `interactive`, schedule and what each event checks (BUG-022 L3). The card shows capture patterns.\n\n### Security\n\n- From the security review of sequences, waits and events before release (BUG-022): a `log` item's `pattern` and `failPattern` run with a time limit (250 ms for all new lines of one check): a pattern that backtracks without end fails the item with `pattern too slow`, and Termix goes on. A repeated group that holds a repeat or alternatives, at any depth (`(a+)+`, `((a+))+`, `(a|aa)+`), is refused when written (H1).\n- A `job`'s journal is redacted (secrets, hidden typed input) before it is shown live, stored or read by agents (H2). Every event's text is redacted the same way (L4).\n- An event item that reads a hidden value hides its step from agents, as a command does (M1).\n- Stored output is capped: an item's last attempt keeps its whole output (256 KB per stream), an earlier attempt the last 4 KB of each stream, an item's earlier attempts 256 KB together, and a run 8 MB (M2).\n- `http` items never reach Termix's own loopback, its own addresses, unspecified, link-local or reserved addresses, in any spelling (IPv4 in decimal, octal or hex, IPv4-mapped, compatible, translated and NAT64 forms): such an address in a URL is refused when written, and a name that resolves to one fails the item (`address refused`). Only a private address that is not loopback gets core's `allowPrivateHosts` (M4). DNS rebinding through a private name stays possible: docs/security.md says what that leaves.\n- **Try now** and **Skip** need the person who pressed Run, or a person who may connect to the step's host (403 `not-your-run`) (L2). A `file` item's result does not say the file's size (L1). A **Stop**, or the time limit, while `systemd-run` starts a job stops its unit too (L5).",
+          "publishedAt": "2026-11-26T18:06:16Z"
+        },
+        {
+          "version": "1.4.8",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.8/runbooks-1.4.8.tmxplug",
+          "sha256": "5cb42a280508283a29a27a6d154a22d263edeaae2c60342da2cba155e18cf2d9",
+          "signature": "2j31zyZ9fXtlFk3Ua5oWR3PkePCvPSJd4ZzirjINRHQ9ZB89Mxuq5pYBZlZ1UmSVLtA/+SQaNfxiM5TnPhcUCg==",
+          "size": 1016066,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.8",
+          "notes": "### Fixed\n\n- **A VM step's card no longer shows an old read.** The card read its VM only when it opened and when its own step ran, so a VM that an earlier step made or changed still showed as not found, and the button stayed off until the person found **Read again**. The card now reads the VM again when a run of any step of the runbook ends, and when the page shows again after a minute or more; one read runs at a time. **Read again** is an outline button with an icon next to the VM's state, and the card says how old the read is (\"read 3 min ago\"). A failed read, or a VM HAW cannot act on now, shows in a box with the time of the read, a line that an earlier step may have made or changed the VM, and **Read again**. The action button stays as it was after a failed read: pressing it asks HAW again.",
+          "publishedAt": "2026-11-23T16:02:30Z"
+        },
+        {
+          "version": "1.4.7",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.7/runbooks-1.4.7.tmxplug",
+          "sha256": "12f317237dfdea0b718395be5ab47176f2af789ddb90bb397ad5274b598490a1",
+          "signature": "u2JAmfkDIdiYiC0TbWa6rXW8HwRPfCjNlmua035zaJNoVQ/R1tFHR0m1ynegJx4n1hY5WncKzfJenH+RNNfqAQ==",
+          "size": 1012166,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.7",
+          "notes": "### Added\n\n- **VM steps.** A step's `vm: { host, name, action, force?, waitFor?, waitSeconds?, value? }` gives the person one button, and HAW VM Manager (1.0.3 or later, through its service `haw.vms`) does the action on that VM as the person who pressed it, with HAW's roles and the host's own limits (name pattern, protect list, ceilings). `action` is `start`, `stop`, `restart`, `show` or `console`. HAW keeps each action in its record with \"via runbooks: runbook 12 step 3\". An admin adds `runbooks` to HAW's **Plugins that may act for a person** first; until then, and without HAW, the step says why it cannot run.\n- The step waits for `waitFor` (by default the state the action leads to: `running` for start and restart, `off` for stop; none for show; `null` for no wait), reading the VM every 2 seconds for up to `waitSeconds` (1 to 600, default 300), and fails at the limit with the last state. When HAW restarts or updates during a wait, the step says \"HAW VM Manager did not answer; it may be restarting\" and goes on to its time limit; Runbooks binds to HAW again only on HAW's code `bad-key`, and steps that wait at once never clear each other's key. Its run, in mode `vm`, shows each state as it changes, and ends with the VM's details as JSON and one summary line (\"wyatt-pc-builder is running, 192.0.2.10\"), which checks (`contains`, `notContains`, `matches`, `notMatches`) and `when` output rules read. `value: \"build\"` sets `{{build.state}}`, `{{build.id}}` and, when the VM has an address, `{{build.ip}}` (the first IPv4 address, else the first) and `{{build.addresses}}` for later steps.\n- The card shows the host, the VM, its state now (HAW's `show`, read when the card opens, `GET /steps/{id}/vm`), what the action does and how long it waits, and \"the host refuses this\" for a protected VM's stop or restart and for a VM outside the host's name pattern. The button names the action: **Start VM**, **Shut down VM**, **Restart VM**, **Show VM**, **Open console**; with `force`, **Turn off VM** or **Reset VM** in red, with a question of its own (409 `force`, then `confirmForce: true`). `POST /steps/{id}/vm` keeps the usual questions: the revision, the order, the wait timer, the `when` rule and the repeat guard (the same action on the same VM in the last 24 hours; not for show and console). Two steps with the same power action on the same VM, pressed at once, do not both pass it: the second gets 409 `running` until the first run is written, and then 409 `repeat`. A host whose verbs HAW has not read yet refuses every action (409 `verbs-unknown`). A host's refusal fails the step with HAW's words; HAW's own refusals (Runbooks not allowed, the person's HAW role, a host HAW does not manage or whose `vmctl` does not offer the verb) refuse the button with 403, 404 or 409 and run nothing. **Stop** ends a wait.\n- **Open console** opens the VM's console host in a Remote Desktop tab, as HAW's own tab does, and the step waits for the person's **Done** or **Failed** (`POST /steps/{id}/vm/end`). Its run keeps one summary line, not HAW's console details (the console's address and the VM's id).\n- A new step kind, **VM action** (indigo, Server), with its own color setting.\n- Agents: `vm` on create, add, change and amend, through REST and MCP, and in `get_runbook`. A VM step has no `hostId`, `command`, `captures`, `secretCaptures`, `stdin`, `timeoutMs` or `interactive` and cannot be an agent step (400); `force` is for stop and restart only; `host` must be one of the token's hosts and, when HAW can say, one HAW manages. `GET /vms` and the MCP tool `list_vms` answer the token's VM hosts and the VMs on one from a copy Runbooks reads from HAW, as the signed-in person and marked for an agent, when that person makes the token or saves its hosts; the copy has the time it was read and no VM state, and a token saves without it when HAW is not there or refuses. An agent request never reaches HAW (it has no acting user), and Runbooks never acts as another user: it does not ask for `users:impersonate`. Agents never act on a VM. `hideOutputFromAgents` works on a VM step, and the built agent view test has a VM case and one that changes only the state. A hidden VM step's `{{build.state}}` is one of a few words, so it is not masked in other text (nor is a Decision's option id): whether \"running\" came back masked would tell the state. A step whose command, checks or standard input reads such a value is hidden from agents instead, and so are the values it captures and the steps that read those. The agent API doc has a section \"VM steps\"; docs/security.md says what a VM step lets a person do.\n- New column `steps.vm` (migration 0019), for SQLite, PostgreSQL and MySQL. The manifest declares `haw.vms` (`^1.0.0`) as an optional requirement.\n\n### Fixed\n\n- **Interactive steps on Windows hosts.** Windows (ConPTY) paints every row of the terminal empty before the first text, so an interactive run's output started with 39 empty lines; the output now drops empty lines before the first text, in the live output and in the stored output alike. This holds for every host's terminal output, Linux too: an interactive run on Linux no longer starts with the empty lines a program printed first. The agent API doc's \"Typed input\" says that under a terminal a Windows host may report exit code 0 (wyatt-pc did for `exit 7`), so such a step checks its output instead of its exit code, and that **End input** (Ctrl-D) may not end the input there. How Runbooks reads the exit code does not change: Linux hosts give real exit codes under a terminal.",
+          "publishedAt": "2026-11-20T02:00:34Z"
+        },
+        {
+          "version": "1.4.6",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.6/runbooks-1.4.6.tmxplug",
+          "sha256": "528eb9abf4a2d0d9b273190653af4d13a6aec85d9c986f418e0c3239bc69d108",
+          "signature": "I9CXGhR0zVu2WdszHkGrCZXwSvDWqKPvqOxEuNDZ7ridIUIG4CSxNlUJOuf1vLPU8WniOsL10pp2m0S4g+OqBA==",
+          "size": 959784,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.6",
+          "notes": "### Added\n\n- **Run or Send to terminal.** A step's `runIn` says how the person may start its command: `\"either\"` (the default, as before), `\"terminal\"` (Send to terminal only) or `\"run\"` (Run only), with an optional one-line `runInReason`. The step card shows only the button the step allows, with a line that says why (\"Send to terminal only: it opens your browser.\"), and a terminal-only step's chip says \"Terminal on <host>\" instead of \"Run on <host>\". The server refuses Run on a terminal-only step with 409 `terminal-only` and Send to terminal on a Run-only step with 409 `run-only`, before it asks about the order, the wait or a repeat; the answer carries `reason`.\n- `runIn` and `runInReason` work when an agent creates a runbook, adds, changes or amends a step, through REST and MCP, and show in `get_runbook`. Only a step Termix runs on a host may set them (400 otherwise), and `\"terminal\"` cannot have `stdin` (400). Older steps read as `\"either\"`. The agent API doc has a section \"Run or Send to terminal\".\n- **Conditional steps.** A step's `when` rule says when it is needed, from earlier steps only: how a step ended (`{ \"step\": 8, \"status\": \"failed\" }`, also `done`, `skipped`, `ran` and `not-needed`), what its latest run printed (`{ \"step\": 1, \"output\": <any check> }`, with `{{name}}` values and secrets hidden), what a decision step chose (`{ \"step\": 5, \"chose\": \"rollback\" }`), or a value (`{ \"value\": \"mode\", \"equals\": \"fast\" }` or `matches`), combined with `all`, `any` and `not` (at most 4 levels and 20 rules). Steps are written as `3` or `\"3a\"`, as in `stdin`. A rule that names this step, a later step, a capture the step does not have, or an option a decision does not have is refused with 400. It works when an agent creates a runbook, adds, changes or amends a step, through REST and MCP.\n- Runbooks works out each rule's state every time it reads the runbook (`waiting`, `met` or `not-met`) and never stores it, so reopening an earlier step changes the answer. Each step has `condition: { state, rule, reason, notNeeded }`; the reason never quotes output. A pending step that never ran and whose rule does not hold is **not needed**: it counts as ended for the order of later steps, the next step, the bar and the rail, the progress (`notNeeded`, and \"2/5 done · 1 not needed\"), the list's next kind and `agent-turn`. A step that ran keeps its result. A step that is not needed is not \"the step before\" for a wait timer: `waitAfterPreviousSeconds` counts from the last step before it that ended.\n- A rule reads the author's values and what steps **before** it captured, also for `{{name}}` in an output rule, so a later step that captures the same name cannot change it. A rule that names a step an amendment replaced reads its latest replacement. An output rule on a decision step reads the chosen ids, one per line; a decision that is skipped, or reopened and not chosen again, has no output, no `value` and matches no `chose` rule. A step a rule names cannot be removed (409 `when`) or moved after the rule (400). A change to a step's `captures`, `decision` or `interactive`, and an amendment that replaces a step, check again every rule that reads the step and answer 409 `when` when one no longer fits.\n- **A rule never reads hidden output.** Every rule, whoever wrote it, is worked out on what the agent view shows: a hidden step's output and captures read `[hidden by owner]`, a hidden value is masked in other steps' output and captures, and `{{name}}` is filled with the masked value. So a rule's state, `nextStepId`, the progress, `agent-turn` and an agent's 409s are the same whatever the hidden values are. To branch on hidden output, give the hidden step a check and the later step a status rule; on the page, a rule that reads hidden output says \"This rule can't see hidden output\". An agent's rule that reads a hidden step's output, a value such a step captures, or such a value as `{{name}}` is refused with 400 as an early error.\n- Rules are cheap to read. What a pattern said of a finished run or a value is kept for the server's life (1000 answers for each of the 50 runbooks read last), so a page load or a list poll tests no pattern twice. The patterns of one read, or of one list of runbooks, share a limit of 500 ms; a rule whose pattern that limit stopped is `waiting` (\"not worked out yet\") until a later read, and no `agent-turn` is sent while the turn is not known.\n- On the page, a step that is not needed is one grey line in its place, \"3 · Way back — not needed: step 1 is done and step 2 is done\"; a click opens it. A step whose rule still waits says \"Only if step 1 failed or step 2 failed\". **Hide not needed** leaves them out of the cards, the rail and the bar, and the browser remembers it.\n- A person can still start a step that is not needed: Run, Send to terminal, Make it or Save and Done or Failed answer 409 `not-needed` with the rule and the reason, the page asks **Run anyway?**, and a start after a yes (`conditionAnyway: true`) is in the audit log, written only once every other question passed. An agent cannot complete its own step when it is not needed (409 `not-needed`). The agent API doc has a section \"Conditional steps\", and its events section says how `agent-turn` treats a step that is not needed.\n- **Decision steps.** A step with `decision: { options, multiple?, min?, max?, value? }` lets the person choose from 2 to 10 options the author wrote (`id`, one-line `label`, optional short Markdown `description`), with radio cards or, with `multiple`, check boxes from `min` to `max`. There is no free text. **Confirm** (`POST /steps/{id}/decide`) ends the step done with a run in mode `decision` whose output is the chosen ids, one per line, and sets `value`, when given, to the ids joined with commas. The card then says \"You chose: Go back to the old release\", by whom and when. A decision step has no host, command, checks, captures, stdin or wait timer, cannot be hidden from agents (400; the page offers no Hide on it), and only a person decides (`owner: \"agent\"` is refused).\n- **Reopen** on a decision lets the person choose again. When steps that read it already ran, the page names them first (\"Choose again?\"); they stay as history, and steps that have not run follow the new choice (`decisionRan` on the step).\n- The agent view shows `decision` and `choice`; `step-done` carries \"chose <ids>\" as its note. A new step kind, **Decide** (amber, Split), with its own color setting. The agent API doc has a section \"Decision steps\".\n- **Typed input.** While a Run runs, the person who started it can type into the command from the runbook page: a line under the live output, \"Type into the command\", with **Send** (Enter), **End input** and an eye to hide what they type. It shows on every Run without `stdin` and shows the time left of the step's limit. It lights up and starts hidden when the last line of the output looks like a prompt for a password, passphrase, token or PIN. Another person sees who can type instead. On a phone, Send and End input wrap under the field.\n- `POST /runs/{id}/input` with `{ text, hidden?, end? }` writes to the command's standard input. Only the person who started the run (403 `not-your-run`); never a Termix API key or an agent. 409 `not-running`, `stdin-source` (the run got `stdin`) and `input-closed` (input ended); at most 4 KB at once (400 `too-long`). End input is EOF, or Ctrl-D for an interactive step: twice in mid-line, so the line goes to the command as typed, without a line end added. On an interactive step, Send ends the line with CR, as a terminal's Enter does (PowerShell's `Read-Host` under Windows OpenSSH may not take LF), and a line sent with LF gets CR; other Runs keep LF. Ctrl-D is the Linux and Unix end of input and may not end input on a Windows host.\n- What the person types is never stored or logged. The run keeps `inputs: [{ at, chars, hidden, ended }]`, the audit line `runbooks_step_input` says \"input sent: 14 characters, hidden\", and agents see only `inputCount`. How many characters were typed (`chars`) shows only to the person who typed; others get `null`. A hidden text of 4 characters or more is replaced with `[secret:typed]` in the live output, the stored output and what the checks read; on an interactive step, so is its copy as the terminal shows it, with control characters taken out.\n- **Interactive steps.** `interactive: true` makes Run open a terminal (pty) for the command, so `sudo`, `ssh` and `ansible --ask-become-pass` can ask for a password. Its stdout and stderr come as one stream; line ends, colour codes and title codes are taken out before the output is shown, kept or checked. It cannot have `stdin`, `secretCaptures`, a check or an output rule on `stream: \"stderr\"` or `runIn: \"terminal\"` (400), and only a step Termix runs on a host may set it. The step's chip says \"Interactive\". It works through REST and MCP and shows in `get_runbook`. The agent API doc has a section \"Typed input\".\n- The Run confirm shows each capture's and secret capture's pattern under the checks, so the person sees all that reads the output before it runs.\n- New columns, added for SQLite, PostgreSQL and MySQL: `run_in` and `run_in_reason` (migration 0014), `when_json` (0015), `decision` (0016), `steps.interactive` and `runs.inputs_json` (0017), and `runs.error_parts_json` (0018). Steps and runs from before read as they did.\n\n### Changed\n\n- **The agent view is built, not masked.** Nothing an agent reads depends on a hidden value: a test builds each of 14 runbooks twice, with two hidden values, and compares all that agents read through REST, MCP, events, the list and webhooks. A run's `command` and its check results' words are filled from the step with the values agents saw when it ran, so a literal an agent wrote stays as written. An agent's own output and command, and a decision's choice and value, are never masked. Agents see a visible step's captured value masked when it holds a hidden value, in its run and in `effectiveValues`.\n- An agent step's checks are tested with the values agents see, and a check there that uses a hidden step's value is refused (400 on create, add, change and amend). A step whose `stdin` is a hidden step's output or a hidden value counts as hidden. A hidden step that ended done shows each capture it declares as `[hidden by owner]`, matched or not, also in a later step's `missing`; it shows `truncated: false`, no `lastOutputAt`, and a failed check on it says only that it failed. A hidden step's run, and a run that read a secret, show agents no `stdin.bytes`.\n- A run's `error` for agents is built from its parts. A hidden step's failed run says `[hidden by owner]` and its run that ended done says nothing, so agents do not learn that a capture pattern took too long on the hidden output, or which secret capture found no match. On a visible step only Termix's own words are masked: a capture or secret name that equals a hidden value stays as written. A run from before 1.4.6 keeps its masked text.\n- docs/security.md says what stays possible: a visible step that a person runs can print a hidden value in a changed form, or one shorter than four characters; and a hidden step still shows agents its status, exit code, check results, run time and whether its secret captures matched.\n- Live output that hides secrets holds back only an end of the output that a hidden value starts with. It held back the last characters (as many as the longest value, less one) of each stream before, so a prompt such as \"Password: \" showed only when more output came. When one value holds another, it holds back from where the longer one may start, so no part of it shows.\n\n### Fixed\n\n- Checks fill `{{name}}` values, with the same values as the command (the author's, then captures). A check `contains \"registry:5443/app:{{ver}}@sha256:\"` looked for the text `{{ver}}` and always failed. `text` in `contains` and `notContains` and `equals` in a `value` check get the value as it is; a pattern (`matches`, `notMatches`, `matches` in a `value` check) gets it as literal text, escaped, so a value `1.2.3` matches only `1.2.3`. The step card and the Run confirm show the checks filled in (`resolvedChecks` on each step), and the run's results name the filled text.\n- A check whose value is not set stops the step, as a command's does: the step's `missing` names it, and Run, Send to terminal, Mark done, Done on a step run outside Termix and an agent's `complete_step` with `done` answer 409 `missing-values`. Mark done and `complete_step` test the checks with the values the runbook has at that time.\n- When a check uses a value, the hash the person approves (`commandHash`) covers the checks with their values, so a value that changes between the Run confirm and the run answers 409 `stale`. The run keeps the command's own hash, so \"the same command ran on this host\" still means the same command, whatever its checks.\n- An agent never sees a value from a step hidden from agents in a check result: the result's label and detail are built from the step's check filled with `[hidden by owner]` in its place, also where a pattern holds the value escaped.\n- Captures read the output with its secrets hidden, as checks do: a capture took part of a secret from the output before.\n- An agent's create or add-steps that is refused stores nothing. Every step is checked before the first is stored, through REST and MCP. Before, a bad `stdin` in a later step answered 400 but left the new runbook, or the steps before the bad one, in the store.\n- The agent API doc (\"Checks\", \"Values\") and the MCP tool help say that checks take values.",
+          "publishedAt": "2026-11-17T21:59:01Z"
+        },
+        {
+          "version": "1.4.5",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.5/runbooks-1.4.5.tmxplug",
+          "sha256": "a02739d3620371de7f8e58b93b9c493722f4a8e9227291bb6c029c370964ee75",
+          "signature": "Jaalw2Gdt9Bc/HpNPGAdXRWJjq7s7Q/1elzqfkWQLAxH2cRjc5FrGYe/L3jPKmg9YM6RiLBgDlftCWVEzq+TDQ==",
+          "size": 878342,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.5",
+          "notes": "### Fixed\n\n- The MCP tool schemas told agents a library secret path the server refuses (`mine/a/b/c/d/e`, or one with an empty part). Their library, app field and name patterns now come from the regular expressions the server checks with, and a test keeps them equal.\n- The agent API refuses a body that is not an object with 400 \"body must be an object\" when it creates or changes a runbook, adds steps or reorders them. An array was taken as an empty body before, and adding or reordering steps with no body said only that steps or stepIds were missing.\n- The wait timer of a Make a secret or Ask for a secret step had no test. A test now checks that an early Make it gets the 409 `wait` answer, and that `waitAnyway` makes the secret.\n- Copy in the boxes that show a new agent token or the notification signing secret once says \"Copied\" after a copy, as every other Copy button does.\n- A refused **Mark done** with pasted output, or a refused note save, reads the runbook again, as a refused **Stop** already did, so the page does not show a step that changed meanwhile.\n- The agent tokens page shows the server's error text only when it is text, and its general message otherwise, instead of turning any error value into text.\n- \"Stored until\" on a secret step uses the same time format as the rest of the page; a value that is not a date shows as it was sent instead of \"Invalid Date\".\n\n### Changed\n\n- The release and CI workflows follow the current Termix plugin template: write permissions only on the release job, only the two secrets it uses (`TERMIX_PAT`, `TERMIX_PLUGIN_SIGNING_KEY`) instead of every secret, and no `overwrite` mode. Dependabot updates npm packages (not the plugin SDK) and the pinned actions weekly.\n- The frontend tests share `tests/frontend/helpers.tsx`: the rendered app, typed builders for what the server sends (`makeSummary`, `makeStep`, `clickStep`, `makeRun`, `makeRunbook`), a fake of the routes (`fakeApi`), `openRunbook`, `card` and `flush`. Their fixtures now match the server: a wait names the previous step's `label`, the fake `GET /runbooks` sends the list fields only, and `GET /colors` sends no colors.\n- The backend tests share `useTestServer`, `setupRunbook` and `execResult` from `tests/backend/helpers.ts`, instead of a copy of each in every file.\n- The tests of `src/shared` code (values in text, SSH hosts, step numbers) moved to `tests/backend/shared/`.\n- `{{name}}` in a command is filled by `fillPlain` in `src/shared/fill.ts`, the filler of a step's `where`, instead of a copy in `src/backend/values.ts`. A new test pins the resolved text and hash of a set of commands, and they did not change. The agent view's `missing` comes from the same fill instead of a second scan of the command.\n- The rules on names live in `src/shared/names.ts`: the value and secret name (`NAME`, which was `VALUE_NAME` and `SECRET_NAME`), `{{name}}` (`PLACEHOLDER`), `MAX_SECRET_NAME`, `LIBRARY_REF`, `secretNameProblem`, `regexProblem` (the check on a capture, check or ask pattern) and `isOneLine`. The server's checks, the MCP schemas and the page's store line use them instead of their own copies; every error message is the same.\n- A step's `body`, `expect` and `where` are filled by one function, `fillStepText` in `src/shared/fill.ts`: the server's `resolvedBody`, `resolvedExpect`, `resolvedWhere` and `textMissing` come from it, and the page uses it with its \"not set yet\" marker instead of its own copy. The API sends the same fields as before.\n- What the person routes send is typed once, in `src/shared/api.ts`: runbooks, steps, runs, waits, inputs, secret states, amendments, progress, tokens and the 409 answers the page asks about (`ConflictBody`). The server's view builders (`personView`, `runbookSummary`, `amendmentView`, `progress`, `runSummary`, the runbook list) return these types, and `src/frontend/api-types.ts` re-exports them instead of a hand copy, so the server and the page type-check against one definition. Fields the server always sends are required, and the page no longer falls back from `agentLabel` to `createdBy` or from a step's `label` to its position. `Translate` has one definition.\n- Small rules have one definition each. The page numbers steps and matches a step's secrets with `stepLabel` and `stepRef` from `src/shared/steps.ts`, as the server does. `isAgentStep` and `isOutsideStep` there tell the step kinds, the step card, the person view and the routes which steps Termix never runs. `MAX_SENT_NOTE` lives in `src/shared/limits.ts`, and `secretLabel` (the name of the secret a step's input reads) in `src/shared/names.ts`.\n- One module (`gates.ts`) decides whether a step may be acted on: an agent step, a closed runbook, a replaced step, a stale page, missing values, the order and the wait timer. Run, Send to terminal, Done and Failed, secret steps and an agent's completion all use it, each asking in its own order. Send to terminal no longer asks about an agent step twice.\n- `events.endStep` ends a step everywhere, including the sweep at start-up. `judgeOutput` finds secrets, hides them, takes captures and only then runs checks, so checks still never see a secret.\n- `insertRun` fills in the fields that an unfinished or hand-ended run does not have. `events.changeRunbook`, `secrets.read`, `storedRun`, the audit helpers and one `APP_STORE_NEEDS` replace copies that were in two or three places.\n- `http.ts` (wrap, idParam, body, requireSignedIn, refuseApiKey) and `parse.ts` (InputError, strictObject, optionalText, parseOutcome) are shared by the person, agent and admin routes. Each keeps its own wording.\n- The store reads rows by id, nullable columns, query conditions and JSON patches through one helper each.\n- The page's text helpers (times, durations, sizes, waits, the input source, the host label, the run summary) live in `format.ts`, and its clocks (`useTick`, `useFetchedAt`, `useWaitRemaining`, `usePolling`) in `timers.ts`.\n- Run, Send to terminal and Make it or Save share one handler for the repeat, wait, order and stale answers, and every step and runbook action posts through `postRunbook` or `postThenLoad`. The in-pane prompts use `usePromptRequest` and `usePaneEscape`, and finding or opening a terminal is `openSessionFor` in `terminal.ts`.\n- Shared screen pieces live in `ui.tsx`: `SectionLabel`, `CodeBlock`, `CommandBlock`, `OutcomeButtons`, `PasteFirstHint`, `ShownOnce`, `RunbookStatusBadge`, `runbookMeta` and `LoadError`.\n- A step's kind, marks, color and state are worked out once per render, and the cards, the rail and the bar all use that one result.\n- New tests pin the refusals of every route and the 200-step limit, `judgeOutput`, the page's order and stale answers, and Skip, Reopen, Hide, Note and the runbook status buttons.\n- The code is in one folder per feature (`core`, `runbooks`, `values`, `running`, `checks`, `secrets`, `kinds`, `agents` on the server; `ui`, `runbooks`, `steps`, `running`, `secrets`, `kinds`, `nav`, `agents` on the page), and the large files are split: `service.ts`, the store, the MCP server, the person routes (one kit with the one set of running steps), the agent operations, the step card and the Runbooks tab. The routes, their guards and their order, the MCP tools, settings, permissions and tables are the same; `dist/openapi.json` lists the same paths in a new order. Bar items are registered in `src/frontend/nav/bar-items.tsx`.\n- Dead code is gone: `store.getEvent`, the server's re-export of `describeCheck`, two unread terminal session fields, and the `export` on constants and functions that only their own file uses.",
+          "publishedAt": "2026-11-13T06:41:54Z"
+        },
+        {
+          "version": "1.4.4",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.4/runbooks-1.4.4.tmxplug",
+          "sha256": "f1aadbbcf1ef1d3523932981266b1fe9e38e3d348a29c5532409e1c9f541f153",
+          "signature": "kQlyEbqrGwNCrVTysGvZ1bjMRGU3WOUjPTZhItwNeHrdPXYvfeO3LnySbZU0y4+ffX5uj/wNyORA0Q63o1O0Dg==",
+          "size": 857600,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.4",
+          "notes": "### Added\n\n- A bar under the open runbook names the next step: its number of the total, how many are done, its title and its kind. **Go to step** puts that step in the middle of the view and moves the focus to it. The key **N** does the same while the focus is in the runbook, never while you type in a field, and never in a terminal. When the step is already on screen, the bar says \"On screen\" and the button goes quiet. When the next step failed, it says \"Failed\" in red. With every step done, or the runbook closed, it says so, and **Go to top** goes back to the runbook's own buttons.\n- A rail of steps on the right edge of the runbook. It shows only the steps near the part of the runbook on screen, at most 11, so a runbook of 80 steps stays readable. Each step is a dot drawn like its card: the next step big and glowing, pending steps a ring, done ones a dimmed dot, failed ones red, replaced and skipped ones grey. A box marks the steps on screen, and counts above and below say how many steps the rail leaves out (click one to move by a window). When the next step is outside the window, its number stays pinned at the rail's edge. Hover or focus on a dot to see its number and title, and click it to go there.\n- In a narrow pane (under 560 px, as on a phone) the rail hides, and the bar shows a progress strip with the next step and the steps on screen.\n- The bar's contents come from one registry, `src/frontend/bar-items.tsx`. A new button is one entry (`registerBarItem` with an id, an order, a label and an onClick, plus an optional icon, key and `when`); anything else is a custom entry that renders itself. The bar draws every entry from it, and the keys of its buttons work from it, so Go to step and N are entries like any other. The README's \"Adding a button to the bar\" shows how.\n\n### Changed\n\n- A runbook scrolls in its own area between the panel's header and the new bar, beside the rail. Step cards can take the focus (`tabIndex=-1`), so the bar and the key can move it there.",
+          "publishedAt": "2026-11-12T18:44:20Z"
+        },
+        {
+          "version": "1.4.3",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.3/runbooks-1.4.3.tmxplug",
+          "sha256": "2973084711bc90a0132047ad2d30e3845db8f8cf8caa1d4fba24a78ab1ee0743",
+          "signature": "oueI721ufajI7f6OeLf0roE2NjvUn1mkeA8Bm/D1DVdgbMB64ECTnJyGupeuiKEAVVZoLsRvVTvE56EdSWBYDg==",
+          "size": 837017,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.3",
+          "notes": "### Fixed\n\n- `{{name}}` values fill a step's text, not only its command. `body`, `expect` and `where` showed the bare name, so a click step that said \"find `{{ts_ip}}` in the admin console\" gave the person no address. They now get the same values as the command (the author's, then captures), on the server, as `resolvedBody`, `resolvedExpect` and `resolvedWhere` (null when the step has no `where`), with `textMissing` for names that have no value yet. The person view, the agent API and MCP `get_runbook` return them next to the written text. In an agent's view, a value from a step hidden from agents shows as `[hidden by owner]`, as in `effectiveValues`.\n- A value is never Markdown. Outside code, its Markdown characters are escaped with a backslash, its line breaks become spaces, and a bare address in it (`://`, `www.`, `@`) gets an empty HTML comment that the page drops, so a value cannot add a link, an image, a heading, emphasis or HTML. Inside a code span or a code block it goes in as it is: a value with backticks gets a longer code span, and a value with a fence line gets a longer fence. In the author's link destination (`[text]({{url}})`) and autolink (`<https://{{host}}/>`) it makes the link the author wrote. `where` is plain text, filled as it is.\n- A value not set yet shows as \"(value ts_ip: not set yet)\", and the step's \"Values missing\" line names it. It does not stop the step: a click step can still be marked done or failed, and a command runs when the command's own values are set, as before.\n- A Copy button on a code block in `body` or `expect` copies the filled-in text.",
+          "publishedAt": "2026-11-11T16:23:59Z"
+        },
+        {
+          "version": "1.4.2",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.2/runbooks-1.4.2.tmxplug",
+          "sha256": "277904c0fcf34f4c0c13a1a1945411cdb483c8348518b943c55d8ff802309df4",
+          "signature": "X3g9I55z/MscHiBaMvni6p1GcSQGYIszfDuqoVDAYcH6TMuZxAYqWaZ0WgnlRyeWIvhimLKPeJVn9RUGFPMbDA==",
+          "size": 643230,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.2",
+          "notes": "### Added\n\n- **Make a secret** steps. A step with `generate: { name, format, length, store }` makes a new random value on the server when a person clicks **Make it**: `alnum` (letters and digits, the default, 16 to 128, default 32), `hex` (16 to 128, default 64), `base64url` (16 to 128, default 43), `words` (4 to 12 words of the EFF long word list joined by `-`, default 6) or `pin` (4 to 12 digits, default 6). Each character or word is picked with `crypto.randomInt`, so there is no modulo bias. The step says \"Make secret <name>: 32 letters and digits\" and where the value goes.\n- **Ask for a secret** steps. A step with `ask: { name, label, pattern?, store }` takes a value the person types or pastes once, such as a token another site shows, in a field that shows it while it is typed with **Hide** (as in OpenBao Secrets 1.0.2), then **Save**. The value is trimmed and must match `pattern` whole (checked with a time limit); a refusal never repeats it.\n- Where the value goes, `store`: `\"runbook\"` (the default: the runbook's own secrets, as captured ones, for 7 days and deleted when the runbook ends), `{ library: \"mine/<path>\" | \"shared/<path>\", expires?: <days, 1 to 30> }` (a new secret in the OpenBao Secrets library, never replacing one: 409 `exists`), or `{ app: \"<app>/<host>\", field }` (a new field through OpenBao Secrets 1.0.5's `createAppField`, for app paths its admin allows; 409 `app-store-off`, `app-not-allowed` or `exists` when it refuses).\n- The value never reaches the browser, an agent, an event, a notification, the audit log or any output. The run (`mode: \"secret\"`) says \"Made secret <name>\" or \"Saved secret <name>\" with `secrets.made` (`name`, `how`, `store`, `where`, `expiresAt`). Later steps read it with `stdin: { from: \"secret\", name }` (or the library form), and every later output of the runbook shows `[secret:<name>]` instead of it, also in steps that do not read it.\n- By hand: when OpenBao Secrets is not installed or not connected, or an app path store meets an OpenBao Secrets without `createAppField`, the step shows **Do it by hand**: for Make a secret the format and length to make in a password manager, then the KV engine, path and field to save it at in OpenBao or Vault (each with Copy), and **Done** and **Failed**. A later step that reads the secret says where to get it.\n- `POST /plugin-api/runbooks/steps/{id}/secret` (`{ revision, value?, confirmRepeat?, outOfOrder?, waitAnyway? }`), a person only, asks about a repeat, the order and a wait as Run does. Agents can set `generate` and `ask` (REST, MCP, amendments) but never make, save or complete such a step; `owner: \"agent\"`, a command, a host, `where`, `stdin`, captures, secret captures and checks are refused on it (400), as are bad formats, lengths, names, labels, patterns and stores.\n- Two step kinds in the registry: **Make a secret** (fuchsia, Dices) and **Ask for a secret** (teal, Clipboard paste), with their own color settings.\n- The EFF long word list (CC BY 3.0 US), credited in NOTICE and the README.\n\n### Changed\n\n- A step that reads a secret by name may read one an earlier step made or asked for with store `\"runbook\"`. Reading a library or app store secret by name is refused with a hint to use the library form.",
+          "publishedAt": "2026-11-11T00:27:22Z"
+        },
+        {
+          "version": "1.4.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.0/runbooks-1.4.0.tmxplug",
+          "sha256": "b5df67b3c461203aaa2816a0c66d91bcba945fa689cbee7e9adaa1acdb43d363",
+          "signature": "5B+2XD6HyYvjZlR0RsScOfzvvdUH94hCis5BkJTVvPqgiavmuZ6DZNfvwdOY4KfUoUWGA8LevTLc2KX2F9zNBQ==",
+          "size": 533598,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.0",
+          "notes": "This update asks the admin to agree to two new capabilities: `network:outbound`, to send agent notifications to the webhook an admin sets, and `secrets:own`, to keep the webhook's signing secret sealed with Termix's installation key. Runbooks sends nothing until an admin turns notifications on.\n\n### Added\n\n- A runbook's owner. Agents set `owner: { task, agent, label }` on a runbook (create, `PATCH`, `create_runbook`, `update_runbook`): a task id (up to 64 characters), an address of the agent's session that a notification receiver understands (up to 200), and a label for the person (up to 80). The person sees \"Agent: <label or token name> · task <task>\" under the title.\n- Agent steps. A step with `owner: \"agent\"` is work the agent does itself. The person sees \"Waiting for the agent\" with the agent's label and can only Skip or Reopen it; Run, Send to terminal and Done are refused with 409 `agent-step`. Its command, if any, is shown as \"What the agent will run\" and needs no host. Captures, secret captures, standard input, wait timers and `exitCode` checks are refused on it (400).\n- `POST /agent/steps/{id}/complete` (MCP `complete_step`): `{ outcome: \"done\" | \"failed\", note?, output? }` (note up to 2000 characters, output up to 64 KB). Only for an agent step, once every earlier step ended; refused with 403 `person-step`, 409 `order`, 409 `ended` and 409 `closed`. It records a run in mode `agent` with the token's name, the note and the output, which the step's checks test. Audited.\n- Events: `agent-turn` (an agent step became the next step), `step-failed` (with `reason` `exit`, `check`, `stopped`, `interrupted`, `secret` or `manual`), `runbook-done` (`done` or `abandoned`), `sent` and `step-done` (only when the runbook's `notify` lists it). `GET /agent/runbooks/{id}` lists the latest 100 as `events`; `GET /agent/events?since=<id>&limit=<n>` (MCP `list_events`) pages through all of the token's.\n- `notify` on a runbook: the event types the webhook delivers for it, default `agent-turn`, `step-failed`, `runbook-done`, `sent`.\n- Agent notifications, off by default. Admin settings **Notify agents**, **Webhook address** (https only; http is refused) and **CA certificate (PEM)**, and a section with **Make a new signing secret** (32 random bytes, shown once, sealed) and **Test**. Each wanted event is POSTed once as JSON with ids and labels only (never output, a command or a note's text), with `X-Runbooks-Event` and `X-Runbooks-Signature: t=<unix>,v1=<HMAC-SHA256 of \"<t>.<body>\">`. Retries after 1, 5, 30 and 120 minutes, then it is given up. See [docs/notifications.md](docs/notifications.md), with a receiver that checks the signature.\n- Amendments. `POST /agent/steps/{id}/amend` (MCP `amend_step`): `{ kind: \"replace\" | \"substep\", reason, step }`. A fixed version (`replace`) of a step that did not end done, or an extra step (`substep`) after a step in any state, goes right after it as **3a**, **3b**: the new step keeps the step's position with a letter (`suffix`), and later steps keep their numbers. A replaced step gets status `replaced`, folds to \"Replaced by 3a\" with its runs, counts as ended and does not run, take a mark or a skip. The new step says \"Amended by <token name>: <reason>\" (reason up to 500 characters), and a fixed version shows the old command struck through. An amendment can be amended. Refused with 409 `closed`, `running`, `done` (replace on a done step) and `replaced`, and checked like a new step. A step's output hidden from agents stays hidden in its fixed version. Steps have `label`, `suffix`, `amendment` and `replacedBy`; the runbook list says \"amended\" while an amendment has not run (`amendedPending`).\n- Steps run outside Termix. A person step may have `command` and `where` (up to 80 characters, such as \"Windows PC, PowerShell as admin\") and no `hostId`. It shows \"Run outside Termix: <where>\", the resolved command and Copy (off while a value is missing), and no Run or Send to terminal (409 `outside`). The person pastes the output and marks it Done or Failed (`POST /steps/{id}/manual` with `output` and `revision`); checks and captures read the pasted output, and the run has `mode: \"outside\"`. `where` without a command, with a host, `stdin`, `secretCaptures` or `exitCode` checks is refused (400). Agent API, MCP and amendments take `where`.\n- A Copy button on every fenced code block in a step's text and its \"You should see\" text.\n- `stdin` names an amendment as `\"3a\"`; numbers still name steps.\n- Event `amended` (reason `replace` or `substep`, `stepId` the new step), delivered only when `notify` lists it. Events and webhook requests carry `stepLabel` besides `stepPosition`.\n- **Send to agent** on every step when notifications are on and the runbook has an owner: \"Send step N to <agent>?\" with an optional note of up to 500 characters. It records a `sent` event, always delivered, says \"Sent to <agent>\", and shows in the step's history.\n\n### Changed\n\n- `POST /agent/steps/{id}/complete` now exists: for a person's step it answers 403 instead of 404.\n- A step with a command and no host is refused with \"a step with a command needs a hostId, or where for a command the person runs outside Termix\".\n- Reopen of a replaced step works only when its fixed version was skipped and never ran; otherwise 409 `replaced`.\n- With amendments, `position` in add steps and `reorder` count steps, not amendments: an amendment moves with its step. A step with amendments, and a fixed version, cannot be removed.\n- An order refusal's `blocking` and a wait's `previous` also carry the step's `label`.",
+          "publishedAt": "2026-11-10T04:35:30Z"
+        },
+        {
+          "version": "1.2.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.2.0/runbooks-1.2.0.tmxplug",
+          "sha256": "c54cd669866e618f348263821f3192d93e106db1b0ab2ecc0a36f6be89b90857",
+          "signature": "aLC3Z0EXxRalGcjv5d3Bp4jt5+xvRUlBmXroKJ3w+JqNlbML9lJQCE+TJxx1R3SWLJ4jda2JXPiJRyAy3SDbDQ==",
+          "size": 470306,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.2.0",
+          "notes": "### Added\n\n- Standard input for a step. Agents set `stdin` on a step: the standard output or standard error of an earlier step's latest finished run (`{ \"from\": \"step\", \"step\": 2, \"stream\": \"stdout\" }`, with `allowFailed` to take a failed run's output), a value (`{ \"from\": \"value\", \"name\": \"build_id\" }`, with one newline), or a secret (`{ \"from\": \"secret\", \"name\": \"api_token\" }` captured earlier in the runbook, or `{ \"from\": \"secret\", \"library\": \"shared/<name>\" }` and `mine/<name>` from the OpenBao Secrets library, read as the person who runs it). Run writes it to the command's standard input and ends it; at most 256 KB. The step and the Run confirm say where it comes from (\"Standard input: output of step 3 (stdout, 1.2 KB)\"), with the first 200 characters of a step or value input and never a secret. The approved hash covers the source. Send to terminal is off for such a step. A Run is refused with 409 `stdin-missing` while the input is not there yet.\n- Secret captures. Agents set `secretCaptures` on a step (at most 10, the same pattern rules as captures). When its run, or a terminal Mark done, ends done, each match is stored in OpenBao through the OpenBao Secrets plugin, in Runbooks' own area, for 7 days; a pattern that matches nothing fails the step with \"secret <name>: no match\". A later step reads it as standard input. Secrets never appear in commands.\n- Secret values a step captures or reads are replaced by `[secret:<name>]` in its standard output, standard error, pasted output and captured values before anything is stored or shown, also when a value is split across two pieces of live output. The output of a step that captures a secret shows when its run ends.\n- A runbook's secrets are deleted when a person marks it done or abandoned, or on the next read by a person after an agent closed it; the rest expire after 7 days.\n- Agents read secrets as `{ name, step, set, expiresAt }` on the runbook, and each run's `stdin` (source and size) and `secrets` (names read and stored), in the agent API and MCP. The MCP tools explain `stdin` and `secretCaptures` with an example.\n- The OpenBao Secrets service (`openbao-secrets.store` `^1.0.0`) is an optional requirement. Without it, steps that use secrets are refused with \"Install and connect the OpenBao Secrets plugin to use secrets\"; people who run them need its Use secrets permission.\n- Done and Failed buttons for a step with no command, the size of Run. A click records a run in mode `manual` with who, when, the outcome and the step's note; agents see it like other runs.\n- Runs keep `startedEarlySeconds` when a person started before the step's wait timer ended; the run history shows \"started 36 s early\" and agents see the field.\n\n### Changed\n\n- Skip is a separate small button on every pending step, always labelled Skip. \"Mark read\" is gone: use Done.\n- Mark done on a terminal run needs at least one line of pasted output; the server refuses an empty paste with 400.\n- An early start on a wait timer asks one question, \"The wait is not over: m:ss left (reason)\", with the command, Cancel focused and Start anyway as a warning, instead of a Run confirm and then a second question.",
+          "publishedAt": "2026-11-09T22:03:56Z"
+        },
+        {
+          "version": "1.1.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.1.0/runbooks-1.1.0.tmxplug",
+          "sha256": "3ff70bf1879bcbda48e5fe9d7b6fd95b034dd20893ebe88cd466c691700cdcfd",
+          "signature": "601ivn9/ne1H3mYi+6+Yf6l4XS+SWAvKKeXqnKiKaP0swrBBkLuwvbChpVYZBmCLOhtprFhsW/op9B3PJBz9BA==",
+          "size": 433350,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.1.0",
+          "notes": "### Added\n\n- Live output. Run answers at once and the command goes on in the background. While it runs, the step shows its standard output and standard error as they arrive, how long it has run, and how long since it last printed anything, which turns to a warning after 30 seconds without output. The page reads it every second while a command of the open runbook runs.\n- Stop on a running step, after a confirm. It sends the command a TERM signal where the server takes one and closes its session; the run ends failed with \"stopped by\" and the person, and is audited. Agents and Termix API keys cannot stop a run.\n- Agents read a running run's output so far: `running: true`, `stdout` and `stderr` up to now, and `lastOutputAt`, in the agent API and MCP `get_runbook`. Hidden steps still read `[hidden by owner]`.\n- Checks on a step's output. Agents set `checks` on a step: `exitCode`, `contains` and `notContains`, `matches` and `notMatches` (on stdout, stderr or either), and `value` (a value the step captures). Runbooks tests them when a run ends, and on the pasted output when a terminal run is marked done. A failed check marks the step failed even on exit code 0; the step lists its checks with a tick or a cross and a reason, and the Run confirm shows them. Runs carry the results as `checks` in the agent API and MCP.\n- An optional exit code box next to Mark done for a terminal run.\n- Wait timers. Agents set `waitAfterPreviousSeconds` (1 to 86400) and an optional `waitReason` on a step. Once the step before it ends, the step counts down (\"Wait 1:42 before you start\") and Run and Send to terminal look not-yet; starting before the end asks \"Start anyway?\" and is audited. The server refuses an early start with 409 `wait` until confirmed. Agents read `waitUntil` on a step while its timer runs.\n- Output of a running command is saved every 2 seconds. A run that was running when Termix restarted ends failed with \"interrupted: Termix restarted while it ran\" and keeps the output saved so far.\n\n### Fixed\n\n- A character split across two pieces of command output (such as an accented letter or a box-drawing line) no longer shows as broken characters.",
+          "publishedAt": "2026-11-07T22:00:02Z"
+        },
+        {
+          "version": "1.0.1",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.1/runbooks-1.0.1.tmxplug",
+          "sha256": "430ef741c257e52c1601a9d229d8b2db3b1109e5131be6648fabd1e8eb95d923",
+          "signature": "qWC9HPq6bBi3V1VkCy55wrxc1uMbOOPoCwkRVMss8JCHyfQGknX9fI9/sjWLP5qInRuclX1Emy9LVeC1bM0aBg==",
+          "size": 398192,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.1",
+          "notes": "### Added\n\n- Links that open a runbook: `<Termix address>/?view=runbook&id=<id>` opens the Runbooks tab on that runbook, after a sign-in when the person was signed out. Every runbook in the agent API and MCP answers carries its `openPath`, and the MCP tools tell agents to give the person that link.\n\n### Fixed\n\n- Send to terminal takes one click. With no terminal open to the step's host, it opens one, waits for it to connect and types the command in, instead of only opening it. The \"Send to ...?\" question is gone: the command is typed without Enter, so nothing runs until you press Enter there. The repeat and order questions stay.\n- Send to terminal finds an open terminal when the terminal and Termix give the host id in different forms (text or number), prefers the one on screen, and brings it to the front.\n- When a new terminal does not connect within 30 seconds, no run is recorded and Runbooks says to copy the command instead.\n- Remote desktop hosts (RDP, VNC, consoles) are no longer offered for agent tokens. Runbooks runs and types commands over SSH only, so token hosts, agent steps, Run and Send to terminal now refuse a host that does not take SSH.\n- A 1.0.0 token that lists a remote desktop host stops offering it to agents once someone with Manage Runbooks tokens opens Agent tokens.",
+          "publishedAt": "2026-11-07T20:44:00Z"
+        },
+        {
+          "version": "1.0.0",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.0/runbooks-1.0.0.tmxplug",
+          "sha256": "ec1cb57cd6a522bbd9735d0c4a3106c193d9ea37188284a62474572e0ce40456",
+          "signature": "3v+HLlnu0GYfrZOejXxMF6s5hz9hZo89ZRXnyqYdBNztdzmdNWLd/HJ3aMErUSXhJjTcPgyGF++18/8VYgmhCA==",
+          "size": 387979,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.0",
+          "notes": "### Added\n\n- Runbooks, steps, runs and agent tokens, with migrations for SQLite, PostgreSQL and MySQL\n- An agent API under /plugin-api/runbooks/agent/ and an MCP endpoint, both behind Runbooks tokens; agents propose and read, never run\n- Agent tokens limited to the hosts chosen for each token\n- Runs over SSH or through an open terminal, with checks for a changed step, step order, repeats and a stored host key\n- Values with {{name}} placeholders, filled by the author or captured from output\n- Output hidden from agents per step\n- A Runbooks tab with the runbook list, step cards, run history, notes and token management",
+          "publishedAt": "2026-11-07T19:19:18Z"
+        }
+      ],
+      "contributes": [
+        "permissions",
+        "settings",
+        "tabs"
+      ]
+    },
     {
       "id": "openbao-secrets",
       "name": "OpenBao Secrets",
@@ -307,335 +664,6 @@
           "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-haw/releases/tag/v1.0.0",
           "notes": "### Added\n\n- VM hosts: any Termix host, with an interface (Hyper-V). **Add VM host** checks the host with `vmctl info` before it adds it, and shows that interface's one-time setup when vmctl does not answer. A host with no stored host key is refused.\n- The vmctl protocol, version 1: one JSON request on standard input, one JSON reply. Verbs `info`, `list`, `show`, `start`, `stop`, `restart` and `console-info`; `create`, `delete`, `snapshot`, `restore` and `users` answer \"not in this version\".\n- The Hyper-V back end, with `install.ps1` for the one-time setup. `vmctl.ps1` is the forced command of a plain account (key login, no TTY, no forwarding); it hands each request to the task `haw-vmctl-worker`, which runs `vmctl-worker.ps1` as SYSTEM, checks the request again and runs Hyper-V. Windows refuses Hyper-V to a non-admin account over an SSH key login, even in Hyper-V Administrators; the worker keeps the account out of Administrators. The host config holds a name pattern, a protect list and ceilings that the plugin can't change.\n- A fake back end for tests and rehearsals (`vmctl/fake/vmctl-fake.mjs`).\n- The VMs tab: each VM host with its VMs, state, size, addresses and uptime; Start, Shut down, Turn off, Restart and Reset with a confirm; protected and not-managed VMs marked.\n- Consoles through the Remote Desktop plugin, from a Termix host an owner links to the VM.\n- Roles: See VMs (viewer), Power VMs (operator) and Manage VM hosts (owner).\n- The record of actions, in HAW's tables and in Termix's audit log.",
           "publishedAt": "2026-11-17T06:09:17Z"
-        }
-      ],
-      "contributes": [
-        "permissions",
-        "settings",
-        "tabs"
-      ]
-    },
-    {
-      "id": "runbooks",
-      "name": "Runbooks",
-      "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
-      "author": "Coolroo",
-      "category": "Productivity",
-      "repository": "https://github.com/Coolroo/termix-plugin-runbooks",
-      "icon": "ListChecks",
-      "features": [
-        "Agents propose runbooks through a token API or MCP; they can never run anything",
-        "Each agent token is limited to the hosts you choose for it",
-        "A person runs each step after seeing the exact command and host",
-        "Run over SSH or send the command to an open terminal and paste the output back",
-        "Every run is kept, and a repeat of the same command asks first",
-        "Values with {{name}} placeholders in commands and step text, filled by the author or captured from output",
-        "Outputs can be hidden from agents step by step",
-        "Standard input from an earlier step's output, a value or a secret",
-        "Secrets captured from output and kept in OpenBao through the OpenBao Secrets plugin, never shown",
-        "Agent steps: work the agent does itself between the person's steps, ended through the API",
-        "Runbook events an agent can read or get as a signed webhook, off by default",
-        "Send to agent on any step, with a short note",
-        "Steps run outside Termix: the command with a Copy button, the pasted output checked",
-        "Amendments: an agent fixes a step or adds one after it in place (3a), and later steps keep their numbers",
-        "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed",
-        "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
-        "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it"
-      ],
-      "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
-      "versions": [],
-      "gated": [
-        {
-          "version": "1.4.8",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.8/runbooks-1.4.8.tmxplug",
-          "sha256": "5cb42a280508283a29a27a6d154a22d263edeaae2c60342da2cba155e18cf2d9",
-          "signature": "2j31zyZ9fXtlFk3Ua5oWR3PkePCvPSJd4ZzirjINRHQ9ZB89Mxuq5pYBZlZ1UmSVLtA/+SQaNfxiM5TnPhcUCg==",
-          "size": 1016066,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.8",
-          "notes": "### Fixed\n\n- **A VM step's card no longer shows an old read.** The card read its VM only when it opened and when its own step ran, so a VM that an earlier step made or changed still showed as not found, and the button stayed off until the person found **Read again**. The card now reads the VM again when a run of any step of the runbook ends, and when the page shows again after a minute or more; one read runs at a time. **Read again** is an outline button with an icon next to the VM's state, and the card says how old the read is (\"read 3 min ago\"). A failed read, or a VM HAW cannot act on now, shows in a box with the time of the read, a line that an earlier step may have made or changed the VM, and **Read again**. The action button stays as it was after a failed read: pressing it asks HAW again.",
-          "publishedAt": "2026-11-23T16:02:30Z"
-        },
-        {
-          "version": "1.4.7",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.7/runbooks-1.4.7.tmxplug",
-          "sha256": "12f317237dfdea0b718395be5ab47176f2af789ddb90bb397ad5274b598490a1",
-          "signature": "u2JAmfkDIdiYiC0TbWa6rXW8HwRPfCjNlmua035zaJNoVQ/R1tFHR0m1ynegJx4n1hY5WncKzfJenH+RNNfqAQ==",
-          "size": 1012166,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.7",
-          "notes": "### Added\n\n- **VM steps.** A step's `vm: { host, name, action, force?, waitFor?, waitSeconds?, value? }` gives the person one button, and HAW VM Manager (1.0.3 or later, through its service `haw.vms`) does the action on that VM as the person who pressed it, with HAW's roles and the host's own limits (name pattern, protect list, ceilings). `action` is `start`, `stop`, `restart`, `show` or `console`. HAW keeps each action in its record with \"via runbooks: runbook 12 step 3\". An admin adds `runbooks` to HAW's **Plugins that may act for a person** first; until then, and without HAW, the step says why it cannot run.\n- The step waits for `waitFor` (by default the state the action leads to: `running` for start and restart, `off` for stop; none for show; `null` for no wait), reading the VM every 2 seconds for up to `waitSeconds` (1 to 600, default 300), and fails at the limit with the last state. When HAW restarts or updates during a wait, the step says \"HAW VM Manager did not answer; it may be restarting\" and goes on to its time limit; Runbooks binds to HAW again only on HAW's code `bad-key`, and steps that wait at once never clear each other's key. Its run, in mode `vm`, shows each state as it changes, and ends with the VM's details as JSON and one summary line (\"wyatt-pc-builder is running, 192.0.2.10\"), which checks (`contains`, `notContains`, `matches`, `notMatches`) and `when` output rules read. `value: \"build\"` sets `{{build.state}}`, `{{build.id}}` and, when the VM has an address, `{{build.ip}}` (the first IPv4 address, else the first) and `{{build.addresses}}` for later steps.\n- The card shows the host, the VM, its state now (HAW's `show`, read when the card opens, `GET /steps/{id}/vm`), what the action does and how long it waits, and \"the host refuses this\" for a protected VM's stop or restart and for a VM outside the host's name pattern. The button names the action: **Start VM**, **Shut down VM**, **Restart VM**, **Show VM**, **Open console**; with `force`, **Turn off VM** or **Reset VM** in red, with a question of its own (409 `force`, then `confirmForce: true`). `POST /steps/{id}/vm` keeps the usual questions: the revision, the order, the wait timer, the `when` rule and the repeat guard (the same action on the same VM in the last 24 hours; not for show and console). Two steps with the same power action on the same VM, pressed at once, do not both pass it: the second gets 409 `running` until the first run is written, and then 409 `repeat`. A host whose verbs HAW has not read yet refuses every action (409 `verbs-unknown`). A host's refusal fails the step with HAW's words; HAW's own refusals (Runbooks not allowed, the person's HAW role, a host HAW does not manage or whose `vmctl` does not offer the verb) refuse the button with 403, 404 or 409 and run nothing. **Stop** ends a wait.\n- **Open console** opens the VM's console host in a Remote Desktop tab, as HAW's own tab does, and the step waits for the person's **Done** or **Failed** (`POST /steps/{id}/vm/end`). Its run keeps one summary line, not HAW's console details (the console's address and the VM's id).\n- A new step kind, **VM action** (indigo, Server), with its own color setting.\n- Agents: `vm` on create, add, change and amend, through REST and MCP, and in `get_runbook`. A VM step has no `hostId`, `command`, `captures`, `secretCaptures`, `stdin`, `timeoutMs` or `interactive` and cannot be an agent step (400); `force` is for stop and restart only; `host` must be one of the token's hosts and, when HAW can say, one HAW manages. `GET /vms` and the MCP tool `list_vms` answer the token's VM hosts and the VMs on one from a copy Runbooks reads from HAW, as the signed-in person and marked for an agent, when that person makes the token or saves its hosts; the copy has the time it was read and no VM state, and a token saves without it when HAW is not there or refuses. An agent request never reaches HAW (it has no acting user), and Runbooks never acts as another user: it does not ask for `users:impersonate`. Agents never act on a VM. `hideOutputFromAgents` works on a VM step, and the built agent view test has a VM case and one that changes only the state. A hidden VM step's `{{build.state}}` is one of a few words, so it is not masked in other text (nor is a Decision's option id): whether \"running\" came back masked would tell the state. A step whose command, checks or standard input reads such a value is hidden from agents instead, and so are the values it captures and the steps that read those. The agent API doc has a section \"VM steps\"; docs/security.md says what a VM step lets a person do.\n- New column `steps.vm` (migration 0019), for SQLite, PostgreSQL and MySQL. The manifest declares `haw.vms` (`^1.0.0`) as an optional requirement.\n\n### Fixed\n\n- **Interactive steps on Windows hosts.** Windows (ConPTY) paints every row of the terminal empty before the first text, so an interactive run's output started with 39 empty lines; the output now drops empty lines before the first text, in the live output and in the stored output alike. This holds for every host's terminal output, Linux too: an interactive run on Linux no longer starts with the empty lines a program printed first. The agent API doc's \"Typed input\" says that under a terminal a Windows host may report exit code 0 (wyatt-pc did for `exit 7`), so such a step checks its output instead of its exit code, and that **End input** (Ctrl-D) may not end the input there. How Runbooks reads the exit code does not change: Linux hosts give real exit codes under a terminal.",
-          "publishedAt": "2026-11-20T02:00:34Z"
-        },
-        {
-          "version": "1.4.6",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.6/runbooks-1.4.6.tmxplug",
-          "sha256": "528eb9abf4a2d0d9b273190653af4d13a6aec85d9c986f418e0c3239bc69d108",
-          "signature": "I9CXGhR0zVu2WdszHkGrCZXwSvDWqKPvqOxEuNDZ7ridIUIG4CSxNlUJOuf1vLPU8WniOsL10pp2m0S4g+OqBA==",
-          "size": 959784,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.6",
-          "notes": "### Added\n\n- **Run or Send to terminal.** A step's `runIn` says how the person may start its command: `\"either\"` (the default, as before), `\"terminal\"` (Send to terminal only) or `\"run\"` (Run only), with an optional one-line `runInReason`. The step card shows only the button the step allows, with a line that says why (\"Send to terminal only: it opens your browser.\"), and a terminal-only step's chip says \"Terminal on <host>\" instead of \"Run on <host>\". The server refuses Run on a terminal-only step with 409 `terminal-only` and Send to terminal on a Run-only step with 409 `run-only`, before it asks about the order, the wait or a repeat; the answer carries `reason`.\n- `runIn` and `runInReason` work when an agent creates a runbook, adds, changes or amends a step, through REST and MCP, and show in `get_runbook`. Only a step Termix runs on a host may set them (400 otherwise), and `\"terminal\"` cannot have `stdin` (400). Older steps read as `\"either\"`. The agent API doc has a section \"Run or Send to terminal\".\n- **Conditional steps.** A step's `when` rule says when it is needed, from earlier steps only: how a step ended (`{ \"step\": 8, \"status\": \"failed\" }`, also `done`, `skipped`, `ran` and `not-needed`), what its latest run printed (`{ \"step\": 1, \"output\": <any check> }`, with `{{name}}` values and secrets hidden), what a decision step chose (`{ \"step\": 5, \"chose\": \"rollback\" }`), or a value (`{ \"value\": \"mode\", \"equals\": \"fast\" }` or `matches`), combined with `all`, `any` and `not` (at most 4 levels and 20 rules). Steps are written as `3` or `\"3a\"`, as in `stdin`. A rule that names this step, a later step, a capture the step does not have, or an option a decision does not have is refused with 400. It works when an agent creates a runbook, adds, changes or amends a step, through REST and MCP.\n- Runbooks works out each rule's state every time it reads the runbook (`waiting`, `met` or `not-met`) and never stores it, so reopening an earlier step changes the answer. Each step has `condition: { state, rule, reason, notNeeded }`; the reason never quotes output. A pending step that never ran and whose rule does not hold is **not needed**: it counts as ended for the order of later steps, the next step, the bar and the rail, the progress (`notNeeded`, and \"2/5 done · 1 not needed\"), the list's next kind and `agent-turn`. A step that ran keeps its result. A step that is not needed is not \"the step before\" for a wait timer: `waitAfterPreviousSeconds` counts from the last step before it that ended.\n- A rule reads the author's values and what steps **before** it captured, also for `{{name}}` in an output rule, so a later step that captures the same name cannot change it. A rule that names a step an amendment replaced reads its latest replacement. An output rule on a decision step reads the chosen ids, one per line; a decision that is skipped, or reopened and not chosen again, has no output, no `value` and matches no `chose` rule. A step a rule names cannot be removed (409 `when`) or moved after the rule (400). A change to a step's `captures`, `decision` or `interactive`, and an amendment that replaces a step, check again every rule that reads the step and answer 409 `when` when one no longer fits.\n- **A rule never reads hidden output.** Every rule, whoever wrote it, is worked out on what the agent view shows: a hidden step's output and captures read `[hidden by owner]`, a hidden value is masked in other steps' output and captures, and `{{name}}` is filled with the masked value. So a rule's state, `nextStepId`, the progress, `agent-turn` and an agent's 409s are the same whatever the hidden values are. To branch on hidden output, give the hidden step a check and the later step a status rule; on the page, a rule that reads hidden output says \"This rule can't see hidden output\". An agent's rule that reads a hidden step's output, a value such a step captures, or such a value as `{{name}}` is refused with 400 as an early error.\n- Rules are cheap to read. What a pattern said of a finished run or a value is kept for the server's life (1000 answers for each of the 50 runbooks read last), so a page load or a list poll tests no pattern twice. The patterns of one read, or of one list of runbooks, share a limit of 500 ms; a rule whose pattern that limit stopped is `waiting` (\"not worked out yet\") until a later read, and no `agent-turn` is sent while the turn is not known.\n- On the page, a step that is not needed is one grey line in its place, \"3 · Way back — not needed: step 1 is done and step 2 is done\"; a click opens it. A step whose rule still waits says \"Only if step 1 failed or step 2 failed\". **Hide not needed** leaves them out of the cards, the rail and the bar, and the browser remembers it.\n- A person can still start a step that is not needed: Run, Send to terminal, Make it or Save and Done or Failed answer 409 `not-needed` with the rule and the reason, the page asks **Run anyway?**, and a start after a yes (`conditionAnyway: true`) is in the audit log, written only once every other question passed. An agent cannot complete its own step when it is not needed (409 `not-needed`). The agent API doc has a section \"Conditional steps\", and its events section says how `agent-turn` treats a step that is not needed.\n- **Decision steps.** A step with `decision: { options, multiple?, min?, max?, value? }` lets the person choose from 2 to 10 options the author wrote (`id`, one-line `label`, optional short Markdown `description`), with radio cards or, with `multiple`, check boxes from `min` to `max`. There is no free text. **Confirm** (`POST /steps/{id}/decide`) ends the step done with a run in mode `decision` whose output is the chosen ids, one per line, and sets `value`, when given, to the ids joined with commas. The card then says \"You chose: Go back to the old release\", by whom and when. A decision step has no host, command, checks, captures, stdin or wait timer, cannot be hidden from agents (400; the page offers no Hide on it), and only a person decides (`owner: \"agent\"` is refused).\n- **Reopen** on a decision lets the person choose again. When steps that read it already ran, the page names them first (\"Choose again?\"); they stay as history, and steps that have not run follow the new choice (`decisionRan` on the step).\n- The agent view shows `decision` and `choice`; `step-done` carries \"chose <ids>\" as its note. A new step kind, **Decide** (amber, Split), with its own color setting. The agent API doc has a section \"Decision steps\".\n- **Typed input.** While a Run runs, the person who started it can type into the command from the runbook page: a line under the live output, \"Type into the command\", with **Send** (Enter), **End input** and an eye to hide what they type. It shows on every Run without `stdin` and shows the time left of the step's limit. It lights up and starts hidden when the last line of the output looks like a prompt for a password, passphrase, token or PIN. Another person sees who can type instead. On a phone, Send and End input wrap under the field.\n- `POST /runs/{id}/input` with `{ text, hidden?, end? }` writes to the command's standard input. Only the person who started the run (403 `not-your-run`); never a Termix API key or an agent. 409 `not-running`, `stdin-source` (the run got `stdin`) and `input-closed` (input ended); at most 4 KB at once (400 `too-long`). End input is EOF, or Ctrl-D for an interactive step: twice in mid-line, so the line goes to the command as typed, without a line end added. On an interactive step, Send ends the line with CR, as a terminal's Enter does (PowerShell's `Read-Host` under Windows OpenSSH may not take LF), and a line sent with LF gets CR; other Runs keep LF. Ctrl-D is the Linux and Unix end of input and may not end input on a Windows host.\n- What the person types is never stored or logged. The run keeps `inputs: [{ at, chars, hidden, ended }]`, the audit line `runbooks_step_input` says \"input sent: 14 characters, hidden\", and agents see only `inputCount`. How many characters were typed (`chars`) shows only to the person who typed; others get `null`. A hidden text of 4 characters or more is replaced with `[secret:typed]` in the live output, the stored output and what the checks read; on an interactive step, so is its copy as the terminal shows it, with control characters taken out.\n- **Interactive steps.** `interactive: true` makes Run open a terminal (pty) for the command, so `sudo`, `ssh` and `ansible --ask-become-pass` can ask for a password. Its stdout and stderr come as one stream; line ends, colour codes and title codes are taken out before the output is shown, kept or checked. It cannot have `stdin`, `secretCaptures`, a check or an output rule on `stream: \"stderr\"` or `runIn: \"terminal\"` (400), and only a step Termix runs on a host may set it. The step's chip says \"Interactive\". It works through REST and MCP and shows in `get_runbook`. The agent API doc has a section \"Typed input\".\n- The Run confirm shows each capture's and secret capture's pattern under the checks, so the person sees all that reads the output before it runs.\n- New columns, added for SQLite, PostgreSQL and MySQL: `run_in` and `run_in_reason` (migration 0014), `when_json` (0015), `decision` (0016), `steps.interactive` and `runs.inputs_json` (0017), and `runs.error_parts_json` (0018). Steps and runs from before read as they did.\n\n### Changed\n\n- **The agent view is built, not masked.** Nothing an agent reads depends on a hidden value: a test builds each of 14 runbooks twice, with two hidden values, and compares all that agents read through REST, MCP, events, the list and webhooks. A run's `command` and its check results' words are filled from the step with the values agents saw when it ran, so a literal an agent wrote stays as written. An agent's own output and command, and a decision's choice and value, are never masked. Agents see a visible step's captured value masked when it holds a hidden value, in its run and in `effectiveValues`.\n- An agent step's checks are tested with the values agents see, and a check there that uses a hidden step's value is refused (400 on create, add, change and amend). A step whose `stdin` is a hidden step's output or a hidden value counts as hidden. A hidden step that ended done shows each capture it declares as `[hidden by owner]`, matched or not, also in a later step's `missing`; it shows `truncated: false`, no `lastOutputAt`, and a failed check on it says only that it failed. A hidden step's run, and a run that read a secret, show agents no `stdin.bytes`.\n- A run's `error` for agents is built from its parts. A hidden step's failed run says `[hidden by owner]` and its run that ended done says nothing, so agents do not learn that a capture pattern took too long on the hidden output, or which secret capture found no match. On a visible step only Termix's own words are masked: a capture or secret name that equals a hidden value stays as written. A run from before 1.4.6 keeps its masked text.\n- docs/security.md says what stays possible: a visible step that a person runs can print a hidden value in a changed form, or one shorter than four characters; and a hidden step still shows agents its status, exit code, check results, run time and whether its secret captures matched.\n- Live output that hides secrets holds back only an end of the output that a hidden value starts with. It held back the last characters (as many as the longest value, less one) of each stream before, so a prompt such as \"Password: \" showed only when more output came. When one value holds another, it holds back from where the longer one may start, so no part of it shows.\n\n### Fixed\n\n- Checks fill `{{name}}` values, with the same values as the command (the author's, then captures). A check `contains \"registry:5443/app:{{ver}}@sha256:\"` looked for the text `{{ver}}` and always failed. `text` in `contains` and `notContains` and `equals` in a `value` check get the value as it is; a pattern (`matches`, `notMatches`, `matches` in a `value` check) gets it as literal text, escaped, so a value `1.2.3` matches only `1.2.3`. The step card and the Run confirm show the checks filled in (`resolvedChecks` on each step), and the run's results name the filled text.\n- A check whose value is not set stops the step, as a command's does: the step's `missing` names it, and Run, Send to terminal, Mark done, Done on a step run outside Termix and an agent's `complete_step` with `done` answer 409 `missing-values`. Mark done and `complete_step` test the checks with the values the runbook has at that time.\n- When a check uses a value, the hash the person approves (`commandHash`) covers the checks with their values, so a value that changes between the Run confirm and the run answers 409 `stale`. The run keeps the command's own hash, so \"the same command ran on this host\" still means the same command, whatever its checks.\n- An agent never sees a value from a step hidden from agents in a check result: the result's label and detail are built from the step's check filled with `[hidden by owner]` in its place, also where a pattern holds the value escaped.\n- Captures read the output with its secrets hidden, as checks do: a capture took part of a secret from the output before.\n- An agent's create or add-steps that is refused stores nothing. Every step is checked before the first is stored, through REST and MCP. Before, a bad `stdin` in a later step answered 400 but left the new runbook, or the steps before the bad one, in the store.\n- The agent API doc (\"Checks\", \"Values\") and the MCP tool help say that checks take values.",
-          "publishedAt": "2026-11-17T21:59:01Z"
-        },
-        {
-          "version": "1.4.5",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.5/runbooks-1.4.5.tmxplug",
-          "sha256": "a02739d3620371de7f8e58b93b9c493722f4a8e9227291bb6c029c370964ee75",
-          "signature": "Jaalw2Gdt9Bc/HpNPGAdXRWJjq7s7Q/1elzqfkWQLAxH2cRjc5FrGYe/L3jPKmg9YM6RiLBgDlftCWVEzq+TDQ==",
-          "size": 878342,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.5",
-          "notes": "### Fixed\n\n- The MCP tool schemas told agents a library secret path the server refuses (`mine/a/b/c/d/e`, or one with an empty part). Their library, app field and name patterns now come from the regular expressions the server checks with, and a test keeps them equal.\n- The agent API refuses a body that is not an object with 400 \"body must be an object\" when it creates or changes a runbook, adds steps or reorders them. An array was taken as an empty body before, and adding or reordering steps with no body said only that steps or stepIds were missing.\n- The wait timer of a Make a secret or Ask for a secret step had no test. A test now checks that an early Make it gets the 409 `wait` answer, and that `waitAnyway` makes the secret.\n- Copy in the boxes that show a new agent token or the notification signing secret once says \"Copied\" after a copy, as every other Copy button does.\n- A refused **Mark done** with pasted output, or a refused note save, reads the runbook again, as a refused **Stop** already did, so the page does not show a step that changed meanwhile.\n- The agent tokens page shows the server's error text only when it is text, and its general message otherwise, instead of turning any error value into text.\n- \"Stored until\" on a secret step uses the same time format as the rest of the page; a value that is not a date shows as it was sent instead of \"Invalid Date\".\n\n### Changed\n\n- The release and CI workflows follow the current Termix plugin template: write permissions only on the release job, only the two secrets it uses (`TERMIX_PAT`, `TERMIX_PLUGIN_SIGNING_KEY`) instead of every secret, and no `overwrite` mode. Dependabot updates npm packages (not the plugin SDK) and the pinned actions weekly.\n- The frontend tests share `tests/frontend/helpers.tsx`: the rendered app, typed builders for what the server sends (`makeSummary`, `makeStep`, `clickStep`, `makeRun`, `makeRunbook`), a fake of the routes (`fakeApi`), `openRunbook`, `card` and `flush`. Their fixtures now match the server: a wait names the previous step's `label`, the fake `GET /runbooks` sends the list fields only, and `GET /colors` sends no colors.\n- The backend tests share `useTestServer`, `setupRunbook` and `execResult` from `tests/backend/helpers.ts`, instead of a copy of each in every file.\n- The tests of `src/shared` code (values in text, SSH hosts, step numbers) moved to `tests/backend/shared/`.\n- `{{name}}` in a command is filled by `fillPlain` in `src/shared/fill.ts`, the filler of a step's `where`, instead of a copy in `src/backend/values.ts`. A new test pins the resolved text and hash of a set of commands, and they did not change. The agent view's `missing` comes from the same fill instead of a second scan of the command.\n- The rules on names live in `src/shared/names.ts`: the value and secret name (`NAME`, which was `VALUE_NAME` and `SECRET_NAME`), `{{name}}` (`PLACEHOLDER`), `MAX_SECRET_NAME`, `LIBRARY_REF`, `secretNameProblem`, `regexProblem` (the check on a capture, check or ask pattern) and `isOneLine`. The server's checks, the MCP schemas and the page's store line use them instead of their own copies; every error message is the same.\n- A step's `body`, `expect` and `where` are filled by one function, `fillStepText` in `src/shared/fill.ts`: the server's `resolvedBody`, `resolvedExpect`, `resolvedWhere` and `textMissing` come from it, and the page uses it with its \"not set yet\" marker instead of its own copy. The API sends the same fields as before.\n- What the person routes send is typed once, in `src/shared/api.ts`: runbooks, steps, runs, waits, inputs, secret states, amendments, progress, tokens and the 409 answers the page asks about (`ConflictBody`). The server's view builders (`personView`, `runbookSummary`, `amendmentView`, `progress`, `runSummary`, the runbook list) return these types, and `src/frontend/api-types.ts` re-exports them instead of a hand copy, so the server and the page type-check against one definition. Fields the server always sends are required, and the page no longer falls back from `agentLabel` to `createdBy` or from a step's `label` to its position. `Translate` has one definition.\n- Small rules have one definition each. The page numbers steps and matches a step's secrets with `stepLabel` and `stepRef` from `src/shared/steps.ts`, as the server does. `isAgentStep` and `isOutsideStep` there tell the step kinds, the step card, the person view and the routes which steps Termix never runs. `MAX_SENT_NOTE` lives in `src/shared/limits.ts`, and `secretLabel` (the name of the secret a step's input reads) in `src/shared/names.ts`.\n- One module (`gates.ts`) decides whether a step may be acted on: an agent step, a closed runbook, a replaced step, a stale page, missing values, the order and the wait timer. Run, Send to terminal, Done and Failed, secret steps and an agent's completion all use it, each asking in its own order. Send to terminal no longer asks about an agent step twice.\n- `events.endStep` ends a step everywhere, including the sweep at start-up. `judgeOutput` finds secrets, hides them, takes captures and only then runs checks, so checks still never see a secret.\n- `insertRun` fills in the fields that an unfinished or hand-ended run does not have. `events.changeRunbook`, `secrets.read`, `storedRun`, the audit helpers and one `APP_STORE_NEEDS` replace copies that were in two or three places.\n- `http.ts` (wrap, idParam, body, requireSignedIn, refuseApiKey) and `parse.ts` (InputError, strictObject, optionalText, parseOutcome) are shared by the person, agent and admin routes. Each keeps its own wording.\n- The store reads rows by id, nullable columns, query conditions and JSON patches through one helper each.\n- The page's text helpers (times, durations, sizes, waits, the input source, the host label, the run summary) live in `format.ts`, and its clocks (`useTick`, `useFetchedAt`, `useWaitRemaining`, `usePolling`) in `timers.ts`.\n- Run, Send to terminal and Make it or Save share one handler for the repeat, wait, order and stale answers, and every step and runbook action posts through `postRunbook` or `postThenLoad`. The in-pane prompts use `usePromptRequest` and `usePaneEscape`, and finding or opening a terminal is `openSessionFor` in `terminal.ts`.\n- Shared screen pieces live in `ui.tsx`: `SectionLabel`, `CodeBlock`, `CommandBlock`, `OutcomeButtons`, `PasteFirstHint`, `ShownOnce`, `RunbookStatusBadge`, `runbookMeta` and `LoadError`.\n- A step's kind, marks, color and state are worked out once per render, and the cards, the rail and the bar all use that one result.\n- New tests pin the refusals of every route and the 200-step limit, `judgeOutput`, the page's order and stale answers, and Skip, Reopen, Hide, Note and the runbook status buttons.\n- The code is in one folder per feature (`core`, `runbooks`, `values`, `running`, `checks`, `secrets`, `kinds`, `agents` on the server; `ui`, `runbooks`, `steps`, `running`, `secrets`, `kinds`, `nav`, `agents` on the page), and the large files are split: `service.ts`, the store, the MCP server, the person routes (one kit with the one set of running steps), the agent operations, the step card and the Runbooks tab. The routes, their guards and their order, the MCP tools, settings, permissions and tables are the same; `dist/openapi.json` lists the same paths in a new order. Bar items are registered in `src/frontend/nav/bar-items.tsx`.\n- Dead code is gone: `store.getEvent`, the server's re-export of `describeCheck`, two unread terminal session fields, and the `export` on constants and functions that only their own file uses.",
-          "publishedAt": "2026-11-13T06:41:54Z"
-        },
-        {
-          "version": "1.4.4",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.4/runbooks-1.4.4.tmxplug",
-          "sha256": "f1aadbbcf1ef1d3523932981266b1fe9e38e3d348a29c5532409e1c9f541f153",
-          "signature": "kQlyEbqrGwNCrVTysGvZ1bjMRGU3WOUjPTZhItwNeHrdPXYvfeO3LnySbZU0y4+ffX5uj/wNyORA0Q63o1O0Dg==",
-          "size": 857600,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.4",
-          "notes": "### Added\n\n- A bar under the open runbook names the next step: its number of the total, how many are done, its title and its kind. **Go to step** puts that step in the middle of the view and moves the focus to it. The key **N** does the same while the focus is in the runbook, never while you type in a field, and never in a terminal. When the step is already on screen, the bar says \"On screen\" and the button goes quiet. When the next step failed, it says \"Failed\" in red. With every step done, or the runbook closed, it says so, and **Go to top** goes back to the runbook's own buttons.\n- A rail of steps on the right edge of the runbook. It shows only the steps near the part of the runbook on screen, at most 11, so a runbook of 80 steps stays readable. Each step is a dot drawn like its card: the next step big and glowing, pending steps a ring, done ones a dimmed dot, failed ones red, replaced and skipped ones grey. A box marks the steps on screen, and counts above and below say how many steps the rail leaves out (click one to move by a window). When the next step is outside the window, its number stays pinned at the rail's edge. Hover or focus on a dot to see its number and title, and click it to go there.\n- In a narrow pane (under 560 px, as on a phone) the rail hides, and the bar shows a progress strip with the next step and the steps on screen.\n- The bar's contents come from one registry, `src/frontend/bar-items.tsx`. A new button is one entry (`registerBarItem` with an id, an order, a label and an onClick, plus an optional icon, key and `when`); anything else is a custom entry that renders itself. The bar draws every entry from it, and the keys of its buttons work from it, so Go to step and N are entries like any other. The README's \"Adding a button to the bar\" shows how.\n\n### Changed\n\n- A runbook scrolls in its own area between the panel's header and the new bar, beside the rail. Step cards can take the focus (`tabIndex=-1`), so the bar and the key can move it there.",
-          "publishedAt": "2026-11-12T18:44:20Z"
-        },
-        {
-          "version": "1.4.3",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.3/runbooks-1.4.3.tmxplug",
-          "sha256": "2973084711bc90a0132047ad2d30e3845db8f8cf8caa1d4fba24a78ab1ee0743",
-          "signature": "oueI721ufajI7f6OeLf0roE2NjvUn1mkeA8Bm/D1DVdgbMB64ECTnJyGupeuiKEAVVZoLsRvVTvE56EdSWBYDg==",
-          "size": 837017,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.3",
-          "notes": "### Fixed\n\n- `{{name}}` values fill a step's text, not only its command. `body`, `expect` and `where` showed the bare name, so a click step that said \"find `{{ts_ip}}` in the admin console\" gave the person no address. They now get the same values as the command (the author's, then captures), on the server, as `resolvedBody`, `resolvedExpect` and `resolvedWhere` (null when the step has no `where`), with `textMissing` for names that have no value yet. The person view, the agent API and MCP `get_runbook` return them next to the written text. In an agent's view, a value from a step hidden from agents shows as `[hidden by owner]`, as in `effectiveValues`.\n- A value is never Markdown. Outside code, its Markdown characters are escaped with a backslash, its line breaks become spaces, and a bare address in it (`://`, `www.`, `@`) gets an empty HTML comment that the page drops, so a value cannot add a link, an image, a heading, emphasis or HTML. Inside a code span or a code block it goes in as it is: a value with backticks gets a longer code span, and a value with a fence line gets a longer fence. In the author's link destination (`[text]({{url}})`) and autolink (`<https://{{host}}/>`) it makes the link the author wrote. `where` is plain text, filled as it is.\n- A value not set yet shows as \"(value ts_ip: not set yet)\", and the step's \"Values missing\" line names it. It does not stop the step: a click step can still be marked done or failed, and a command runs when the command's own values are set, as before.\n- A Copy button on a code block in `body` or `expect` copies the filled-in text.",
-          "publishedAt": "2026-11-11T16:23:59Z"
-        },
-        {
-          "version": "1.4.2",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.2/runbooks-1.4.2.tmxplug",
-          "sha256": "277904c0fcf34f4c0c13a1a1945411cdb483c8348518b943c55d8ff802309df4",
-          "signature": "X3g9I55z/MscHiBaMvni6p1GcSQGYIszfDuqoVDAYcH6TMuZxAYqWaZ0WgnlRyeWIvhimLKPeJVn9RUGFPMbDA==",
-          "size": 643230,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.2",
-          "notes": "### Added\n\n- **Make a secret** steps. A step with `generate: { name, format, length, store }` makes a new random value on the server when a person clicks **Make it**: `alnum` (letters and digits, the default, 16 to 128, default 32), `hex` (16 to 128, default 64), `base64url` (16 to 128, default 43), `words` (4 to 12 words of the EFF long word list joined by `-`, default 6) or `pin` (4 to 12 digits, default 6). Each character or word is picked with `crypto.randomInt`, so there is no modulo bias. The step says \"Make secret <name>: 32 letters and digits\" and where the value goes.\n- **Ask for a secret** steps. A step with `ask: { name, label, pattern?, store }` takes a value the person types or pastes once, such as a token another site shows, in a field that shows it while it is typed with **Hide** (as in OpenBao Secrets 1.0.2), then **Save**. The value is trimmed and must match `pattern` whole (checked with a time limit); a refusal never repeats it.\n- Where the value goes, `store`: `\"runbook\"` (the default: the runbook's own secrets, as captured ones, for 7 days and deleted when the runbook ends), `{ library: \"mine/<path>\" | \"shared/<path>\", expires?: <days, 1 to 30> }` (a new secret in the OpenBao Secrets library, never replacing one: 409 `exists`), or `{ app: \"<app>/<host>\", field }` (a new field through OpenBao Secrets 1.0.5's `createAppField`, for app paths its admin allows; 409 `app-store-off`, `app-not-allowed` or `exists` when it refuses).\n- The value never reaches the browser, an agent, an event, a notification, the audit log or any output. The run (`mode: \"secret\"`) says \"Made secret <name>\" or \"Saved secret <name>\" with `secrets.made` (`name`, `how`, `store`, `where`, `expiresAt`). Later steps read it with `stdin: { from: \"secret\", name }` (or the library form), and every later output of the runbook shows `[secret:<name>]` instead of it, also in steps that do not read it.\n- By hand: when OpenBao Secrets is not installed or not connected, or an app path store meets an OpenBao Secrets without `createAppField`, the step shows **Do it by hand**: for Make a secret the format and length to make in a password manager, then the KV engine, path and field to save it at in OpenBao or Vault (each with Copy), and **Done** and **Failed**. A later step that reads the secret says where to get it.\n- `POST /plugin-api/runbooks/steps/{id}/secret` (`{ revision, value?, confirmRepeat?, outOfOrder?, waitAnyway? }`), a person only, asks about a repeat, the order and a wait as Run does. Agents can set `generate` and `ask` (REST, MCP, amendments) but never make, save or complete such a step; `owner: \"agent\"`, a command, a host, `where`, `stdin`, captures, secret captures and checks are refused on it (400), as are bad formats, lengths, names, labels, patterns and stores.\n- Two step kinds in the registry: **Make a secret** (fuchsia, Dices) and **Ask for a secret** (teal, Clipboard paste), with their own color settings.\n- The EFF long word list (CC BY 3.0 US), credited in NOTICE and the README.\n\n### Changed\n\n- A step that reads a secret by name may read one an earlier step made or asked for with store `\"runbook\"`. Reading a library or app store secret by name is refused with a hint to use the library form.",
-          "publishedAt": "2026-11-11T00:27:22Z"
-        },
-        {
-          "version": "1.4.0",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.0/runbooks-1.4.0.tmxplug",
-          "sha256": "b5df67b3c461203aaa2816a0c66d91bcba945fa689cbee7e9adaa1acdb43d363",
-          "signature": "5B+2XD6HyYvjZlR0RsScOfzvvdUH94hCis5BkJTVvPqgiavmuZ6DZNfvwdOY4KfUoUWGA8LevTLc2KX2F9zNBQ==",
-          "size": 533598,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use",
-            "network:outbound",
-            "secrets:own"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.0",
-          "notes": "This update asks the admin to agree to two new capabilities: `network:outbound`, to send agent notifications to the webhook an admin sets, and `secrets:own`, to keep the webhook's signing secret sealed with Termix's installation key. Runbooks sends nothing until an admin turns notifications on.\n\n### Added\n\n- A runbook's owner. Agents set `owner: { task, agent, label }` on a runbook (create, `PATCH`, `create_runbook`, `update_runbook`): a task id (up to 64 characters), an address of the agent's session that a notification receiver understands (up to 200), and a label for the person (up to 80). The person sees \"Agent: <label or token name> · task <task>\" under the title.\n- Agent steps. A step with `owner: \"agent\"` is work the agent does itself. The person sees \"Waiting for the agent\" with the agent's label and can only Skip or Reopen it; Run, Send to terminal and Done are refused with 409 `agent-step`. Its command, if any, is shown as \"What the agent will run\" and needs no host. Captures, secret captures, standard input, wait timers and `exitCode` checks are refused on it (400).\n- `POST /agent/steps/{id}/complete` (MCP `complete_step`): `{ outcome: \"done\" | \"failed\", note?, output? }` (note up to 2000 characters, output up to 64 KB). Only for an agent step, once every earlier step ended; refused with 403 `person-step`, 409 `order`, 409 `ended` and 409 `closed`. It records a run in mode `agent` with the token's name, the note and the output, which the step's checks test. Audited.\n- Events: `agent-turn` (an agent step became the next step), `step-failed` (with `reason` `exit`, `check`, `stopped`, `interrupted`, `secret` or `manual`), `runbook-done` (`done` or `abandoned`), `sent` and `step-done` (only when the runbook's `notify` lists it). `GET /agent/runbooks/{id}` lists the latest 100 as `events`; `GET /agent/events?since=<id>&limit=<n>` (MCP `list_events`) pages through all of the token's.\n- `notify` on a runbook: the event types the webhook delivers for it, default `agent-turn`, `step-failed`, `runbook-done`, `sent`.\n- Agent notifications, off by default. Admin settings **Notify agents**, **Webhook address** (https only; http is refused) and **CA certificate (PEM)**, and a section with **Make a new signing secret** (32 random bytes, shown once, sealed) and **Test**. Each wanted event is POSTed once as JSON with ids and labels only (never output, a command or a note's text), with `X-Runbooks-Event` and `X-Runbooks-Signature: t=<unix>,v1=<HMAC-SHA256 of \"<t>.<body>\">`. Retries after 1, 5, 30 and 120 minutes, then it is given up. See [docs/notifications.md](docs/notifications.md), with a receiver that checks the signature.\n- Amendments. `POST /agent/steps/{id}/amend` (MCP `amend_step`): `{ kind: \"replace\" | \"substep\", reason, step }`. A fixed version (`replace`) of a step that did not end done, or an extra step (`substep`) after a step in any state, goes right after it as **3a**, **3b**: the new step keeps the step's position with a letter (`suffix`), and later steps keep their numbers. A replaced step gets status `replaced`, folds to \"Replaced by 3a\" with its runs, counts as ended and does not run, take a mark or a skip. The new step says \"Amended by <token name>: <reason>\" (reason up to 500 characters), and a fixed version shows the old command struck through. An amendment can be amended. Refused with 409 `closed`, `running`, `done` (replace on a done step) and `replaced`, and checked like a new step. A step's output hidden from agents stays hidden in its fixed version. Steps have `label`, `suffix`, `amendment` and `replacedBy`; the runbook list says \"amended\" while an amendment has not run (`amendedPending`).\n- Steps run outside Termix. A person step may have `command` and `where` (up to 80 characters, such as \"Windows PC, PowerShell as admin\") and no `hostId`. It shows \"Run outside Termix: <where>\", the resolved command and Copy (off while a value is missing), and no Run or Send to terminal (409 `outside`). The person pastes the output and marks it Done or Failed (`POST /steps/{id}/manual` with `output` and `revision`); checks and captures read the pasted output, and the run has `mode: \"outside\"`. `where` without a command, with a host, `stdin`, `secretCaptures` or `exitCode` checks is refused (400). Agent API, MCP and amendments take `where`.\n- A Copy button on every fenced code block in a step's text and its \"You should see\" text.\n- `stdin` names an amendment as `\"3a\"`; numbers still name steps.\n- Event `amended` (reason `replace` or `substep`, `stepId` the new step), delivered only when `notify` lists it. Events and webhook requests carry `stepLabel` besides `stepPosition`.\n- **Send to agent** on every step when notifications are on and the runbook has an owner: \"Send step N to <agent>?\" with an optional note of up to 500 characters. It records a `sent` event, always delivered, says \"Sent to <agent>\", and shows in the step's history.\n\n### Changed\n\n- `POST /agent/steps/{id}/complete` now exists: for a person's step it answers 403 instead of 404.\n- A step with a command and no host is refused with \"a step with a command needs a hostId, or where for a command the person runs outside Termix\".\n- Reopen of a replaced step works only when its fixed version was skipped and never ran; otherwise 409 `replaced`.\n- With amendments, `position` in add steps and `reorder` count steps, not amendments: an amendment moves with its step. A step with amendments, and a fixed version, cannot be removed.\n- An order refusal's `blocking` and a wait's `previous` also carry the step's `label`.",
-          "publishedAt": "2026-11-10T04:35:30Z"
-        },
-        {
-          "version": "1.2.0",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.2.0/runbooks-1.2.0.tmxplug",
-          "sha256": "c54cd669866e618f348263821f3192d93e106db1b0ab2ecc0a36f6be89b90857",
-          "signature": "aLC3Z0EXxRalGcjv5d3Bp4jt5+xvRUlBmXroKJ3w+JqNlbML9lJQCE+TJxx1R3SWLJ4jda2JXPiJRyAy3SDbDQ==",
-          "size": 470306,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.2.0",
-          "notes": "### Added\n\n- Standard input for a step. Agents set `stdin` on a step: the standard output or standard error of an earlier step's latest finished run (`{ \"from\": \"step\", \"step\": 2, \"stream\": \"stdout\" }`, with `allowFailed` to take a failed run's output), a value (`{ \"from\": \"value\", \"name\": \"build_id\" }`, with one newline), or a secret (`{ \"from\": \"secret\", \"name\": \"api_token\" }` captured earlier in the runbook, or `{ \"from\": \"secret\", \"library\": \"shared/<name>\" }` and `mine/<name>` from the OpenBao Secrets library, read as the person who runs it). Run writes it to the command's standard input and ends it; at most 256 KB. The step and the Run confirm say where it comes from (\"Standard input: output of step 3 (stdout, 1.2 KB)\"), with the first 200 characters of a step or value input and never a secret. The approved hash covers the source. Send to terminal is off for such a step. A Run is refused with 409 `stdin-missing` while the input is not there yet.\n- Secret captures. Agents set `secretCaptures` on a step (at most 10, the same pattern rules as captures). When its run, or a terminal Mark done, ends done, each match is stored in OpenBao through the OpenBao Secrets plugin, in Runbooks' own area, for 7 days; a pattern that matches nothing fails the step with \"secret <name>: no match\". A later step reads it as standard input. Secrets never appear in commands.\n- Secret values a step captures or reads are replaced by `[secret:<name>]` in its standard output, standard error, pasted output and captured values before anything is stored or shown, also when a value is split across two pieces of live output. The output of a step that captures a secret shows when its run ends.\n- A runbook's secrets are deleted when a person marks it done or abandoned, or on the next read by a person after an agent closed it; the rest expire after 7 days.\n- Agents read secrets as `{ name, step, set, expiresAt }` on the runbook, and each run's `stdin` (source and size) and `secrets` (names read and stored), in the agent API and MCP. The MCP tools explain `stdin` and `secretCaptures` with an example.\n- The OpenBao Secrets service (`openbao-secrets.store` `^1.0.0`) is an optional requirement. Without it, steps that use secrets are refused with \"Install and connect the OpenBao Secrets plugin to use secrets\"; people who run them need its Use secrets permission.\n- Done and Failed buttons for a step with no command, the size of Run. A click records a run in mode `manual` with who, when, the outcome and the step's note; agents see it like other runs.\n- Runs keep `startedEarlySeconds` when a person started before the step's wait timer ended; the run history shows \"started 36 s early\" and agents see the field.\n\n### Changed\n\n- Skip is a separate small button on every pending step, always labelled Skip. \"Mark read\" is gone: use Done.\n- Mark done on a terminal run needs at least one line of pasted output; the server refuses an empty paste with 400.\n- An early start on a wait timer asks one question, \"The wait is not over: m:ss left (reason)\", with the command, Cancel focused and Start anyway as a warning, instead of a Run confirm and then a second question.",
-          "publishedAt": "2026-11-09T22:03:56Z"
-        },
-        {
-          "version": "1.1.0",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.1.0/runbooks-1.1.0.tmxplug",
-          "sha256": "3ff70bf1879bcbda48e5fe9d7b6fd95b034dd20893ebe88cd466c691700cdcfd",
-          "signature": "601ivn9/ne1H3mYi+6+Yf6l4XS+SWAvKKeXqnKiKaP0swrBBkLuwvbChpVYZBmCLOhtprFhsW/op9B3PJBz9BA==",
-          "size": 433350,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.1.0",
-          "notes": "### Added\n\n- Live output. Run answers at once and the command goes on in the background. While it runs, the step shows its standard output and standard error as they arrive, how long it has run, and how long since it last printed anything, which turns to a warning after 30 seconds without output. The page reads it every second while a command of the open runbook runs.\n- Stop on a running step, after a confirm. It sends the command a TERM signal where the server takes one and closes its session; the run ends failed with \"stopped by\" and the person, and is audited. Agents and Termix API keys cannot stop a run.\n- Agents read a running run's output so far: `running: true`, `stdout` and `stderr` up to now, and `lastOutputAt`, in the agent API and MCP `get_runbook`. Hidden steps still read `[hidden by owner]`.\n- Checks on a step's output. Agents set `checks` on a step: `exitCode`, `contains` and `notContains`, `matches` and `notMatches` (on stdout, stderr or either), and `value` (a value the step captures). Runbooks tests them when a run ends, and on the pasted output when a terminal run is marked done. A failed check marks the step failed even on exit code 0; the step lists its checks with a tick or a cross and a reason, and the Run confirm shows them. Runs carry the results as `checks` in the agent API and MCP.\n- An optional exit code box next to Mark done for a terminal run.\n- Wait timers. Agents set `waitAfterPreviousSeconds` (1 to 86400) and an optional `waitReason` on a step. Once the step before it ends, the step counts down (\"Wait 1:42 before you start\") and Run and Send to terminal look not-yet; starting before the end asks \"Start anyway?\" and is audited. The server refuses an early start with 409 `wait` until confirmed. Agents read `waitUntil` on a step while its timer runs.\n- Output of a running command is saved every 2 seconds. A run that was running when Termix restarted ends failed with \"interrupted: Termix restarted while it ran\" and keeps the output saved so far.\n\n### Fixed\n\n- A character split across two pieces of command output (such as an accented letter or a box-drawing line) no longer shows as broken characters.",
-          "publishedAt": "2026-11-07T22:00:02Z"
-        },
-        {
-          "version": "1.0.1",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.1/runbooks-1.0.1.tmxplug",
-          "sha256": "430ef741c257e52c1601a9d229d8b2db3b1109e5131be6648fabd1e8eb95d923",
-          "signature": "qWC9HPq6bBi3V1VkCy55wrxc1uMbOOPoCwkRVMss8JCHyfQGknX9fI9/sjWLP5qInRuclX1Emy9LVeC1bM0aBg==",
-          "size": 398192,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.1",
-          "notes": "### Added\n\n- Links that open a runbook: `<Termix address>/?view=runbook&id=<id>` opens the Runbooks tab on that runbook, after a sign-in when the person was signed out. Every runbook in the agent API and MCP answers carries its `openPath`, and the MCP tools tell agents to give the person that link.\n\n### Fixed\n\n- Send to terminal takes one click. With no terminal open to the step's host, it opens one, waits for it to connect and types the command in, instead of only opening it. The \"Send to ...?\" question is gone: the command is typed without Enter, so nothing runs until you press Enter there. The repeat and order questions stay.\n- Send to terminal finds an open terminal when the terminal and Termix give the host id in different forms (text or number), prefers the one on screen, and brings it to the front.\n- When a new terminal does not connect within 30 seconds, no run is recorded and Runbooks says to copy the command instead.\n- Remote desktop hosts (RDP, VNC, consoles) are no longer offered for agent tokens. Runbooks runs and types commands over SSH only, so token hosts, agent steps, Run and Send to terminal now refuse a host that does not take SSH.\n- A 1.0.0 token that lists a remote desktop host stops offering it to agents once someone with Manage Runbooks tokens opens Agent tokens.",
-          "publishedAt": "2026-11-07T20:44:00Z"
-        },
-        {
-          "version": "1.0.0",
-          "api": "1",
-          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.0.0/runbooks-1.0.0.tmxplug",
-          "sha256": "ec1cb57cd6a522bbd9735d0c4a3106c193d9ea37188284a62474572e0ce40456",
-          "signature": "3v+HLlnu0GYfrZOejXxMF6s5hz9hZo89ZRXnyqYdBNztdzmdNWLd/HJ3aMErUSXhJjTcPgyGF++18/8VYgmhCA==",
-          "size": 387979,
-          "capabilities": [
-            "db:own",
-            "network:serve",
-            "ui:surface",
-            "hosts:read",
-            "ssh:connect",
-            "credentials:use"
-          ],
-          "engine": {
-            "api": "^1.13",
-            "termix": ">=26.11.0"
-          },
-          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.0.0",
-          "notes": "### Added\n\n- Runbooks, steps, runs and agent tokens, with migrations for SQLite, PostgreSQL and MySQL\n- An agent API under /plugin-api/runbooks/agent/ and an MCP endpoint, both behind Runbooks tokens; agents propose and read, never run\n- Agent tokens limited to the hosts chosen for each token\n- Runs over SSH or through an open terminal, with checks for a changed step, step order, repeats and a stored host key\n- Values with {{name}} placeholders, filled by the author or captured from output\n- Output hidden from agents per step\n- A Runbooks tab with the runbook list, step cards, run history, notes and token management",
-          "publishedAt": "2026-11-07T19:19:18Z"
         }
       ],
       "contributes": [
