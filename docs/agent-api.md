@@ -35,24 +35,24 @@ When Termix runs under a base path (`BASE_PATH`), put it before `/plugin-api`.
 
 ## REST
 
-| Method and path                                             | What it does                                                                         |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `GET /hosts`                                                | Hosts ticked for the token: `id`, `name`, `address`, `folder`                        |
-| `GET /vms?host=4`                                           | Read only: the token's VM hosts in HAW, or the VMs on one; see [VM steps](#vm-steps) |
-| `GET /runbooks?status=open`                                 | Runbooks with progress; `status` is `open`, `done` or `abandoned`                    |
-| `POST /runbooks`                                            | Propose a runbook with steps (201)                                                   |
-| `GET /runbooks/{id}`                                        | One runbook: steps, notes, every run and its output, newest first                    |
-| `PATCH /runbooks/{id}`                                      | Change `title`, `summary`, `values` (the whole set), `status`, `owner` or `notify`   |
-| `POST /runbooks/{id}/steps`                                 | Add `steps`, at the end or at a 1-based `position` (201)                             |
-| `POST /runbooks/{id}/reorder`                               | `{ "stepIds": [...] }` with every step once, without amendments                      |
-| `GET /runbooks/{id}/values`                                 | Effective values and where each came from                                            |
-| `GET /runbooks/{id}/runs/{runId}/items/{item}/attempts/{n}` | One attempt of an item, with its output; see [Waits and retries](#waits-and-retries) |
-| `PATCH /steps/{id}`                                         | Change a step that has not run; only the given fields change                         |
-| `DELETE /steps/{id}`                                        | Remove a step that has not run                                                       |
-| `POST /steps/{id}/complete`                                 | End an agent step: `{ outcome, note?, output? }`                                     |
-| `POST /steps/{id}/amend`                                    | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)       |
-| `GET /events?since=0&limit=100`                             | Events of the token's runbooks, oldest first; see [Events](#events)                  |
-| `POST /mcp`                                                 | MCP (below)                                                                          |
+| Method and path                                             | What it does                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /hosts`                                                | Hosts ticked for the token: `id`, `name`, `address`, `folder`                                |
+| `GET /vms?host=4`                                           | Read only: the token's VM hosts in HAW, or the VMs on one; see [VM steps](#vm-steps)         |
+| `GET /runbooks?status=open&folder=termix`                   | Runbooks with progress; `status` is `open`, `done` or `abandoned`; see [Folders](#folders)   |
+| `POST /runbooks`                                            | Propose a runbook with steps (201)                                                           |
+| `GET /runbooks/{id}`                                        | One runbook: steps, notes, every run and its output, newest first                            |
+| `PATCH /runbooks/{id}`                                      | Change `title`, `summary`, `values` (the whole set), `status`, `owner`, `notify` or `folder` |
+| `POST /runbooks/{id}/steps`                                 | Add `steps`, at the end or at a 1-based `position` (201)                                     |
+| `POST /runbooks/{id}/reorder`                               | `{ "stepIds": [...] }` with every step once, without amendments                              |
+| `GET /runbooks/{id}/values`                                 | Effective values and where each came from                                                    |
+| `GET /runbooks/{id}/runs/{runId}/items/{item}/attempts/{n}` | One attempt of an item, with its output; see [Waits and retries](#waits-and-retries)         |
+| `PATCH /steps/{id}`                                         | Change a step that has not run; only the given fields change                                 |
+| `DELETE /steps/{id}`                                        | Remove a step that has not run                                                               |
+| `POST /steps/{id}/complete`                                 | End an agent step: `{ outcome, note?, output? }`                                             |
+| `POST /steps/{id}/amend`                                    | Amend a step in place: `{ kind, reason, step }`; see [Amendments](#amendments)               |
+| `GET /events?since=0&limit=100`                             | Events of the token's runbooks, oldest first; see [Events](#events)                          |
+| `POST /mcp`                                                 | MCP (below)                                                                                  |
 
 ### A link for the person
 
@@ -153,6 +153,24 @@ Set `owner` on a runbook when you create it (`POST /runbooks`, `create_runbook`)
 | `label` | 80 characters  | Your name as the person sees it                                                              |
 
 All three are optional; `null` clears the owner. The person sees "Agent: <label> · task <task>" under the runbook's title, with the token's name when there is no label. Notifications carry the owner, so a receiver knows which session to wake (see [Notifications](notifications.md)).
+
+### Folders
+
+The person's Runbooks list (1.4.11) has a section per state (Open, Done, Abandoned) and, inside each, a collapsible group per folder, with the runbooks in no folder last. Set `folder` on a runbook when you create it (`POST /runbooks`, `create_runbook`) or later (`PATCH`, `update_runbook`). Use your task's board or project name, such as `home-server`, `gbtvg-coop` or `termix`, so one project's runbooks sit together.
+
+- **One level.** A folder holds runbooks, never folders: a name is trimmed, 1 to 60 characters, with no `/` and no control characters. Anything else is refused with 400 and nothing changes.
+- **One spelling.** A name that is one of your runbooks' folders in other letters gets that folder's spelling: `Home-Server` joins `home-server`. The answer's `folder` is what was stored.
+- **No folder.** `null` (or leaving `folder` out on create) puts the runbook in no folder. A folder exists only while a runbook is in it; there is nothing to make or remove.
+- **Any status, nothing else.** A `PATCH` with only `folder` works on an open, done or abandoned runbook and changes only its folder: not its status, `revision` or `updatedAt`, and it makes no event. With other fields too, those change as they always do. Each move is in Termix's audit log (`runbooks_runbook_folder`), with the token's name.
+- **Reading.** Every runbook in a list or a read has `folder` (`null`: no folder). `GET /runbooks?folder=termix` (MCP: `list_runbooks` with `folder`) lists one folder, any spelling of it; on MCP, `folder: null` lists the runbooks in no folder.
+- **People move them too.** The person can move a runbook to another folder or rename a folder (every runbook in it moves). Read `folder` again before you rely on it.
+
+To file runbooks that exist already, list them and send one `PATCH` per runbook with only `folder`:
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"folder": "home-server"}' "$BASE/runbooks/42"
+```
 
 ### Agent steps
 
@@ -1045,10 +1063,10 @@ While a command runs, its run has `status: "running"` and `running: true`, `stdo
 | ---------------- | ---------------------------------------------------------- |
 | `list_hosts`     | Hosts the token can use                                    |
 | `list_vms`       | The token's VM hosts in HAW, or the VMs on one (read only) |
-| `list_runbooks`  | Runbooks with progress                                     |
+| `list_runbooks`  | Runbooks with progress; `folder` lists one folder          |
 | `get_runbook`    | One runbook with steps, notes, runs and outputs            |
 | `create_runbook` | Propose a runbook with steps                               |
-| `update_runbook` | Change title, summary, values or status                    |
+| `update_runbook` | Change title, summary, values, status, owner or folder     |
 | `add_steps`      | Add steps at the end or at a position                      |
 | `update_step`    | Change a step that has not run                             |
 | `remove_step`    | Remove a step that has not run                             |
