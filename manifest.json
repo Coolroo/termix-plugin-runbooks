@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.4.8",
+  "version": "1.4.10",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -29,6 +29,8 @@
     "Step kinds: each step shows who does it and how, with its own color, icon and label; the colors can be changed",
     "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
     "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it",
+    "Sequences: one Run runs commands, delays, waits and wait events (container, unit, log, http, port, file, job) in order, with no sleep",
+    "Send to terminal fills the Mark done box with the command's output, for the person to check and save",
     "A list in Open, Done and Abandoned sections with folders inside, each collapsible and remembered for each person, and a search over titles"
   ],
   "env": [],
