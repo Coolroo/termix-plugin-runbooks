@@ -221,9 +221,15 @@ export function createCommandStream(
   let state: StreamState = "echo";
   let pending = "";
 
-  // The echo: rows drawn since the last move up, and the cursor's row.
+  // The echo: rows drawn since the last move up, and the cursor's row. The
+  // cursor starts after the noted prompt and a space, as on the screen:
+  // bash 5.3 draws a command of one row again by a CR and a move right past
+  // the prompt, not over it (BUG-024).
   let grid: Row[] = [new Row()];
   let gridRow = 0;
+  if (promptHead !== "") {
+    for (const cell of `${promptHead} `) grid[0].put(cell);
+  }
 
   // The output.
   const complete: string[] = [];

@@ -7,7 +7,7 @@ import {
   startCapture,
   type CaptureRead,
 } from "../../src/frontend/running/terminal-capture";
-import { BASH, PROMPT, type Recording } from "./bash-recordings";
+import { BASH, BASH53, PROMPT, type Recording } from "./bash-recordings";
 import { xtermTab, type XtermTab } from "./xterm-tab";
 
 // The capture on the real terminal library. The reviews of T-249 (BUG-019)
@@ -187,6 +187,33 @@ describe("recorded bash 5.2 (the re-review's probes)", () => {
       "text",
       "truncated",
     ]);
+  });
+});
+
+describe("recorded bash 5.3 (BUG-024, runbook 142 step 37)", () => {
+  const COMMAND = "echo rb1410-capture-ok; uname -s";
+
+  it.each([
+    ["one row", BASH53.wide],
+    ["a row filled exactly", BASH53.exact],
+    ["a wrapped command", BASH53.wrapped],
+  ])("%s: the box holds the output", async (_name, recording) => {
+    const { reads, last } = await play(recording, COMMAND);
+    expect(reads.slice(0, 2)).toEqual([null, null]);
+    expect(last).toMatchObject({
+      text: "rb1410-capture-ok\nLinux",
+      reading: false,
+      drawn: false,
+    });
+  });
+
+  it.each([
+    "echo rb1410-capture-ok",
+    "uname -s",
+    "echo rb1410-capture-ok; uname -sa",
+  ])("another command than the echo (%s): the paste box", async (command) => {
+    const { reads } = await play(BASH53.wide, command);
+    expect(reads.every((read) => read === null)).toBe(true);
   });
 });
 

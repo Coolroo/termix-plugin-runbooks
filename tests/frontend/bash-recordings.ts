@@ -156,3 +156,56 @@ export const BASH: Record<string, Recording> = {
     ],
   },
 };
+
+/**
+ * Raw output of bash 5.3.9 on home-server (BUG-024), recorded over ssh -tt
+ * with TERM=xterm-256color, the same paste and Enter. On Enter, bash 5.3
+ * draws a command of one row again by a CR and a move right past the
+ * prompt (ESC[C for each column); a command that wraps, by a move up and
+ * the whole prompt. The paste and Enter went over `ssh -tt` after `stty cols`;
+ * the command is `echo rb1410-capture-ok; uname -s`.
+ */
+export const BASH53: Record<string, Recording> = {
+  /** 80 columns: one row. */
+  wide: {
+    cols: 80,
+    before: [
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+    ],
+    after: [
+      "\u001b[7mecho rb1410-capture-ok; uname -s\u001b[27m",
+      "\r\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[Cecho rb1410-capture-ok; uname -s\r\n\u001b[?2004l\rrb1410-capture-ok\r\n",
+      "Linux\r\n",
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+      "exit\r\n\u001b[?2004l\rexit\r\n",
+    ],
+  },
+  /** 54 columns: the prompt and the command fill the row exactly. */
+  exact: {
+    cols: 54,
+    before: [
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+    ],
+    after: [
+      "\u001b[7mecho rb1410-capture-ok; uname -s\u001b[27m",
+      "\r\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[C\u001b[Cecho rb1410-capture-ok; uname -s\r\n\u001b[?2004l\rrb1410-capture-ok\r\n",
+      "Linux\r\n",
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+      "exit\r\n\u001b[?2004l\rexit\r\n",
+    ],
+  },
+  /** 40 columns: the command wraps. */
+  wrapped: {
+    cols: 40,
+    before: [
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+    ],
+    after: [
+      "\u001b[7mecho rb1410-capture\u001b[27m\u001b[7m-\u001b[27m\u001b[7mok; uname -s\u001b[27m",
+      "\u001b[A\r\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ echo rb1410-capture-ok; uname -s\r\n\u001b[?2004l\rrb1410-capture-ok\r\n",
+      "Linux\r\n",
+      "\u001b[?2004h\u001b]0;paseo@home-server: ~\u0007\u001b[01;32mpaseo@home-server\u001b[00m:\u001b[01;34m~\u001b[00m$ ",
+      "exit\r\n\u001b[?2004l\rexit\r\n",
+    ],
+  },
+};
