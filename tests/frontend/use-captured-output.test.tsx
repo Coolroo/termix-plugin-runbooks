@@ -79,10 +79,38 @@ describe("the paste box's reading (BUG-019, finding 6)", () => {
     const { result } = renderHook(() => useCapturedOutput(21, true));
     tab.print(`journalctl -f\r\ndone\r\n${PROMPT}`);
     wait(CAPTURE_POLL_MS);
-    expect(result.current.read).toMatchObject({ text: "done", final: true });
+    expect(result.current.read).toMatchObject({ text: "done", reading: false });
     const reads = tab.reads();
     wait(CAPTURE_SLOW_MS * 3);
     expect(tab.reads()).toBe(reads);
+  });
+
+  it("a read with nothing yet counts as the same text (BUG-021)", () => {
+    vi.useFakeTimers();
+    const tab = terminalTab();
+    const { result } = renderHook(() => useCapturedOutput(21, true));
+    // Before the echo: no read, the plain paste box, and slower reads.
+    for (let index = 0; index < CAPTURE_SLOW_AFTER; index++) {
+      wait(CAPTURE_POLL_MS);
+    }
+    expect(result.current.read).toBeNull();
+    const slow = tab.reads();
+    wait(CAPTURE_POLL_MS);
+    expect(tab.reads()).toBe(slow);
+    tab.print("journalctl -f\r\nline 1\r\n");
+    wait(CAPTURE_SLOW_MS);
+    expect(result.current.text).toBe("line 1");
+  });
+
+  it("text typed before any read is the person's: never overwritten", () => {
+    vi.useFakeTimers();
+    const tab = terminalTab();
+    const { result } = renderHook(() => useCapturedOutput(21, true));
+    act(() => result.current.change("pasted by hand"));
+    tab.print("journalctl -f\r\nline 1\r\n");
+    wait(CAPTURE_SLOW_MS);
+    expect(result.current.text).toBe("pasted by hand");
+    expect(result.current.source).toBe("pasted");
   });
 
   it("Mark failed keeps the text only once the box was opened or changed", () => {

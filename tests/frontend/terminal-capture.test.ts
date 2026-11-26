@@ -1,18 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  atNotedPrompt,
   canBePrompt,
   endAllCaptures,
   endCapture,
   endCapturesOf,
   hasCapture,
-  looksFinished,
-  looksLikePrompt,
   MAX_CAPTURES,
-  QUIET_MS,
   RAW_MIN_MS,
   readCapture,
   readerFor,
-  screenOutput,
   startCapture,
   type BufferLine,
 } from "../../src/frontend/running/terminal-capture";
@@ -171,35 +168,27 @@ describe("finding the terminal", () => {
 });
 
 describe("a capture on Linux", () => {
-  it("reads the output after the command, and stops when the prompt is back", () => {
+  it("fills with the output after the command's echo, up to the prompt", () => {
     const terminal = fakeTerminal(["Last login: today", PROMPT]);
     expect(start(terminal, COMMAND)).toBe(true);
     expect(hasCapture(21)).toBe(true);
-    // Typed, before Enter: nothing yet.
+    // Typed, before Enter: nothing yet, the plain paste box.
     terminal.print(COMMAND);
-    expect(readCapture(21)).toMatchObject({
-      text: "",
-      finished: false,
-      startSure: true,
-      from: "stream",
-    });
+    expect(readCapture(21)).toBeNull();
+    terminal.print("\r\n");
+    expect(readCapture(21)).toBeNull();
 
-    terminal.print("\r\nactive\r\n");
-    expect(readCapture(21)).toMatchObject({ text: "active", finished: false });
+    terminal.print("active\r\n");
+    expect(readCapture(21)).toEqual({
+      text: "active",
+      reading: true,
+      passwordPrompt: false,
+      drawn: false,
+      truncated: false,
+    });
 
     terminal.print(PROMPT);
-    const read = readCapture(21)!;
-    expect(read).toEqual({
-      text: "active",
-      finished: true,
-      startSure: true,
-      drawn: false,
-      passwordPrompt: false,
-      from: "stream",
-      truncated: false,
-      final: true,
-    });
-    expect(looksFinished(read)).toBe(true);
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
     // The copy stopped: what the person runs after is never read.
     expect(terminal.listeners.size).toBe(0);
   });
@@ -209,23 +198,34 @@ describe("a capture on Linux", () => {
     start(terminal, COMMAND);
     run(terminal, COMMAND, `active\r\n${PROMPT}`);
     terminal.print("cat /etc/shadow\r\ncat: Permission denied\r\n" + PROMPT);
-    expect(readCapture(21)).toMatchObject({ text: "active", finished: true });
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
   });
 
   it("ends at the noted prompt with a command typed ahead", () => {
     const terminal = fakeTerminal([PROMPT]);
     start(terminal, COMMAND);
     run(terminal, COMMAND, `active\r\n${PROMPT}ls\r\nfile\r\n`);
-    expect(readCapture(21)).toMatchObject({ text: "active", finished: true });
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
+  });
+
+  it("ends at the shell's mark for its next prompt, though cd changed it", () => {
+    const terminal = fakeTerminal([PROMPT]);
+    start(terminal, "cd /etc && ls");
+    run(
+      terminal,
+      "cd /etc && ls",
+      "hosts\r\n\u001b[?2004hwyatt@homepi:/etc$ cat shadow\r\nroot:x\r\n",
+    );
+    expect(readCapture(21)).toMatchObject({ text: "hosts", reading: false });
   });
 
   it("finds the prompt when it arrives in two pieces", () => {
     const terminal = fakeTerminal([PROMPT]);
     start(terminal, COMMAND);
     run(terminal, COMMAND, "active\r\nwyatt@homepi:");
-    expect(readCapture(21)).toMatchObject({ finished: false });
+    expect(readCapture(21)).toMatchObject({ reading: true });
     terminal.print("~$ ");
-    expect(readCapture(21)).toMatchObject({ text: "active", finished: true });
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
   });
 
   it("says when the terminal waits at a password prompt", () => {
@@ -240,7 +240,7 @@ describe("a capture on Linux", () => {
     expect(readCapture(21)).toMatchObject({
       text: "[sudo] password for wyatt:",
       passwordPrompt: true,
-      finished: false,
+      reading: true,
     });
     // The password is not echoed: the next lines are the command's own.
     terminal.password = false;
@@ -248,17 +248,17 @@ describe("a capture on Linux", () => {
     expect(readCapture(21)).toMatchObject({
       text: "[sudo] password for wyatt:",
       passwordPrompt: false,
-      finished: true,
+      reading: false,
     });
   });
 
-  it("skips each line of a command of several lines", () => {
+  it("a command of several lines, run line by line after bash's '> '", () => {
     const terminal = fakeTerminal([PROMPT]);
     start(terminal, "for host in a b; do\n  echo $host\ndone");
     terminal.print("for host in a b; do\r\n>   echo $host\r\n> done");
-    expect(readCapture(21)).toMatchObject({ text: "", finished: false });
+    expect(readCapture(21)).toBeNull();
     terminal.print(`\r\na\r\nb\r\n${PROMPT}`);
-    expect(readCapture(21)).toMatchObject({ text: "a\nb", finished: true });
+    expect(readCapture(21)).toMatchObject({ text: "a\nb", reading: false });
   });
 
   it("reads a progress line and a redrawn command as the terminal shows them", () => {
@@ -272,67 +272,76 @@ describe("a capture on Linux", () => {
     );
     expect(readCapture(21)).toMatchObject({
       text: "Progress: [100%]\nDone",
-      finished: true,
+      reading: false,
     });
   });
 
-  it("warns when the command's line is not the command (the person changed it)", () => {
+  it("the person changed the command: the paste box, and the capture ends", () => {
     const terminal = fakeTerminal([PROMPT]);
     start(terminal, "systemctl restart <unit>");
-    run(terminal, "systemctl restart nginx", `done\r\n${PROMPT}`);
-    const read = readCapture(21)!;
-    expect(read).toMatchObject({
-      text: "done",
-      finished: true,
-      startSure: false,
+    run(terminal, "systemctl restart nginx", "done\r\nmore\r\n");
+    expect(readCapture(21)).toBeNull();
+    terminal.print(`more\r\n${PROMPT}`);
+    expect(readCapture(21)).toBeNull();
+    expect(hasCapture(21)).toBe(false);
+    expect(terminal.listeners.size).toBe(0);
+  });
+
+  it("a cursor move to another row stops the reading, with a note", () => {
+    const terminal = fakeTerminal([PROMPT]);
+    start(terminal, "docker pull nginx");
+    run(
+      terminal,
+      "docker pull nginx",
+      "latest: Pulling from library/nginx\r\nabc: Waiting\r\n\u001b[1Aabc: Done\r\n",
+    );
+    expect(readCapture(21)).toMatchObject({
+      text: "latest: Pulling from library/nginx\nabc: Waiting",
+      reading: false,
+      drawn: true,
     });
-    expect(looksFinished(read)).toBe(false);
+    expect(terminal.listeners.size).toBe(0);
   });
 });
 
-describe("the end of the output (finding 4)", () => {
-  /** Runs the command, then the given prompt comes back. */
-  function endsWith(prompt: string, noted = PROMPT, screen: string[] = []) {
-    vi.useFakeTimers();
-    const terminal = fakeTerminal([...screen, noted]);
-    expect(start(terminal, "do-it")).toBe(true);
-    run(terminal, "do-it", `line 1\r\nline 2\r\n${prompt}`);
-    return terminal;
-  }
-
+describe("the end of the output (finding 4, BUG-021)", () => {
   it.each([
     ["cd: a new directory", "wyatt@homepi:/etc$ "],
     ["su: root", "root@homepi:~# "],
     ["a virtual environment", "(venv) wyatt@homepi:~$ "],
     ["sh", "$ "],
-    ["PowerShell", "PS C:\\Users\\Wyatt> "],
     ["zsh", "homepi% "],
-  ])("a prompt that changed (%s) ends it once quiet", (_name, prompt) => {
-    const terminal = endsWith(prompt);
-    expect(readCapture(21)).toMatchObject({ finished: false });
-    vi.advanceTimersByTime(QUIET_MS);
-    expect(readCapture(21)).toMatchObject({
-      text: "line 1\nline 2",
-      finished: true,
-      final: true,
-    });
-    expect(terminal.listeners.size).toBe(0);
-  });
+  ])(
+    "a prompt that changed (%s), without the shell's mark: the reading goes on",
+    (_name, prompt) => {
+      const terminal = fakeTerminal([PROMPT]);
+      start(terminal, "do-it");
+      run(terminal, "do-it", `line 1\r\nline 2\r\n${prompt}`);
+      expect(readCapture(21)).toMatchObject({
+        text: `line 1\nline 2\n${prompt.trimEnd()}`,
+        reading: true,
+      });
+    },
+  );
 
   it("output that pauses on a line like a prompt goes on", () => {
-    vi.useFakeTimers();
-    const terminal = fakeTerminal([PROMPT]);
+    const terminal = fakeTerminal(["root@homepi:~# "]);
     start(terminal, "cat nginx.conf");
     run(terminal, "cat nginx.conf", "# ");
-    vi.advanceTimersByTime(QUIET_MS / 2);
+    expect(readCapture(21)).toMatchObject({ text: "#", reading: true });
     terminal.print("worker_processes auto;\r\n");
-    vi.advanceTimersByTime(QUIET_MS);
-    expect(readCapture(21)).toMatchObject({ finished: false });
-    terminal.print(PROMPT);
+    terminal.print("root@homepi:~# ");
     expect(readCapture(21)).toMatchObject({
       text: "# worker_processes auto;",
-      finished: true,
+      reading: false,
     });
+  });
+
+  it("a short noted prompt never ends the reading", () => {
+    const terminal = fakeTerminal(["$ "]);
+    start(terminal, "cat notes");
+    run(terminal, "cat notes", "$ is a dollar\r\n$ ");
+    expect(readCapture(21)).toMatchObject({ reading: true });
   });
 
   it("zsh's right-hand prompt: the noted prompt, with another time", () => {
@@ -347,51 +356,32 @@ describe("the end of the output (finding 4)", () => {
     );
     expect(readCapture(21)).toMatchObject({
       text: " 10:42:05 up 3 days",
-      finished: true,
-      startSure: true,
+      reading: false,
     });
   });
 
-  it("starship on two lines: its top line is not output", () => {
+  it("starship on two lines: its top line comes after the shell's mark", () => {
     const terminal = fakeTerminal(["", "~/src on  main", "❯ "]);
     start(terminal, "make test");
     run(
       terminal,
       "make test",
-      "ok 12 tests\r\n\r\n~/src on  main took 2s\r\n❯ ",
+      "ok 12 tests\r\n\u001b[?2004h\r\n~/src on  main took 2s\r\n❯ ",
     );
-    const read = readCapture(21)!;
-    expect(read).toMatchObject({ text: "ok 12 tests", finished: true });
-    expect(looksFinished(read)).toBe(true);
+    expect(readCapture(21)).toMatchObject({
+      text: "ok 12 tests",
+      reading: false,
+    });
   });
 
-  it("powerlevel10k on two lines, with a right-hand prompt", () => {
-    const terminal = fakeTerminal([
-      `╭─ ~/src  main ${" ".repeat(30)}✔ 10:42`,
-      "╰─❯ ",
-    ]);
-    start(terminal, "make test");
-    run(
-      terminal,
-      "make test",
-      `ok\r\n╭─ ~/src  main \u001b[30C✔ 10:43\r\n╰─❯ `,
-    );
-    expect(readCapture(21)).toMatchObject({ text: "ok", finished: true });
-  });
-
-  it("no prompt yet: not finished, and the reading goes on", () => {
-    vi.useFakeTimers();
+  it("no prompt yet: the reading goes on", () => {
     const terminal = fakeTerminal([PROMPT]);
     start(terminal, "journalctl -f");
     run(terminal, "journalctl -f", "Nov 23 nginx[1]: started\r\n");
-    vi.advanceTimersByTime(QUIET_MS * 10);
-    const read = readCapture(21)!;
-    expect(read).toMatchObject({
+    expect(readCapture(21)).toMatchObject({
       text: "Nov 23 nginx[1]: started",
-      finished: false,
-      final: false,
+      reading: true,
     });
-    expect(looksFinished(read)).toBe(false);
     expect(terminal.listeners.size).toBe(1);
   });
 
@@ -415,60 +405,19 @@ describe("the end of the output (finding 4)", () => {
     expect(canBePrompt("❯")).toBe(true);
     expect(canBePrompt(`me ~ % ${" ".repeat(20)}10:42`)).toBe(true);
     expect(canBePrompt("Welcome to Ubuntu")).toBe(false);
-    expect(looksLikePrompt("root@homepi:~# ")).toBe(true);
-    // Printed without the space after the symbol: output, not a prompt.
-    expect(looksLikePrompt("Progress: 100%")).toBe(false);
-    expect(looksLikePrompt("<html>")).toBe(false);
-    expect(looksLikePrompt("total  ")).toBe(false);
+    expect(atNotedPrompt("wyatt@homepi:~$ ls", "wyatt@homepi:~$")).toBe(true);
+    expect(atNotedPrompt("$ ls", "$")).toBe(false);
+    expect(atNotedPrompt("root@homepi:~# ", "wyatt@homepi:~$")).toBe(false);
   });
 });
 
-describe("the screen, only as a fallback", () => {
-  it("reads the screen when the terminal gives no raw output", () => {
+describe("without raw output, the screen is never read", () => {
+  it("starts no capture", () => {
     const terminal = fakeTerminal([PROMPT], false);
-    start(terminal, COMMAND);
+    expect(start(terminal, COMMAND)).toBe(false);
     terminal.lines[0] = PROMPT + COMMAND;
-    terminal.lines.push("active");
-    expect(readCapture(21)).toMatchObject({
-      text: "active",
-      finished: false,
-      from: "screen",
-    });
-    terminal.lines.push(PROMPT);
-    expect(readCapture(21)).toMatchObject({
-      text: "active",
-      finished: true,
-      final: true,
-    });
-  });
-
-  it("needs exactly one line with the command", () => {
-    const lines = [
-      PROMPT + COMMAND,
-      "inactive",
-      PROMPT + COMMAND,
-      "active",
-      PROMPT,
-    ];
-    expect(screenOutput(lines, PROMPT, COMMAND)).toBeNull();
-    expect(screenOutput(lines.slice(2), PROMPT, COMMAND)).toEqual({
-      text: "active",
-      finished: true,
-    });
-    // A longer command that starts the same is another command.
-    expect(
-      screenOutput([`${PROMPT}${COMMAND} --quiet`, "x"], PROMPT, COMMAND),
-    ).toBeNull();
-  });
-
-  it("keeps the last read when the screen's line is gone or not alone", () => {
-    const terminal = fakeTerminal([PROMPT], false);
-    start(terminal, COMMAND);
-    terminal.lines[0] = PROMPT + COMMAND;
-    terminal.lines.push("act");
-    expect(readCapture(21)).toMatchObject({ text: "act", finished: false });
-    terminal.lines.splice(0, 2);
-    expect(readCapture(21)).toMatchObject({ text: "act", finished: false });
+    terminal.lines.push("active", PROMPT);
+    expect(readCapture(21)).toBeNull();
   });
 });
 
@@ -477,52 +426,29 @@ describe("a capture on Windows (cmd.exe, ConPTY)", () => {
   // Runbook 66 steps 10 and 7b, and runbook 82 step 11's Read-Host.
   const WINDOWS_COMMAND =
     "powershell -NoProfile -Command \"$s = Read-Host 'Throwaway word' -AsSecureString; 'length=' + $s.Length\"";
-  /** ConPTY repaints: clear, home, the title, then the text. */
-  const CONPTY =
-    "\r\n\u001b[?25l\u001b[2J\u001b[m\u001b[H" +
-    "\u001b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\u0007\u001b[?25h" +
-    "Throwaway word: \u001b[K********\r\nlength=8\r\n\u001b[K" +
-    `\r\n${CMD}`;
 
-  it("ConPTY moves the cursor, so the screen's one line is read", () => {
-    const terminal = fakeTerminal([
-      "Microsoft Windows [Version 10.0.26100.2605]",
-      "",
-      CMD,
-      "",
-    ]);
+  it("output as lines: the text, up to the noted prompt", () => {
+    const terminal = fakeTerminal(["", CMD]);
     start(terminal, WINDOWS_COMMAND);
-    terminal.print(WINDOWS_COMMAND + CONPTY);
-    terminal.lines.splice(
-      2,
-      2,
-      CMD + WINDOWS_COMMAND,
-      "Throwaway word: ********",
-      "length=8",
-      "",
-      CMD,
+    terminal.print(
+      `${WINDOWS_COMMAND}\r\n\u001b[?25lThrowaway word: \u001b[K********\r\nlength=8\r\n\u001b[K\u001b[?25h\r\n${CMD}`,
     );
-    const read = readCapture(21)!;
-    expect(read).toMatchObject({
+    expect(readCapture(21)).toMatchObject({
       text: "Throwaway word: ********\nlength=8",
-      finished: true,
-      from: "screen",
+      reading: false,
     });
-    expect(looksFinished(read)).toBe(true);
   });
 
-  it("without the screen's line, the output as it arrived, with a warning", () => {
-    const terminal = fakeTerminal([CMD]);
+  it("ConPTY repaints at absolute places: the paste box", () => {
+    const terminal = fakeTerminal(["", CMD]);
     start(terminal, WINDOWS_COMMAND);
-    terminal.print(WINDOWS_COMMAND + CONPTY);
-    terminal.lines = ["Throwaway word: ********", "length=8", CMD];
-    const read = readCapture(21)!;
-    expect(read).toMatchObject({
-      text: "Throwaway word: ********\nlength=8",
-      drawn: true,
-      from: "stream",
-    });
-    expect(looksFinished(read)).toBe(false);
+    terminal.print(
+      `${WINDOWS_COMMAND}\r\n\u001b[?25l\u001b[2J\u001b[m\u001b[H` +
+        "\u001b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\u0007\u001b[?25h" +
+        `Throwaway word: \u001b[K********\r\nlength=8\r\n\r\n${CMD}`,
+    );
+    expect(readCapture(21)).toBeNull();
+    expect(hasCapture(21)).toBe(false);
   });
 });
 
@@ -534,8 +460,9 @@ describe("limits and ends", () => {
     terminal.print("z".repeat(100));
     const read = readCapture(21)!;
     expect(read.truncated).toBe(true);
-    expect(read.final).toBe(true);
+    expect(read.reading).toBe(false);
     expect(read.text).not.toContain("z");
+    expect(read.text.length).toBeLessThanOrEqual(MAX_PASTED_CHARS);
     expect(terminal.listeners.size).toBe(0);
   });
 
@@ -548,8 +475,7 @@ describe("limits and ends", () => {
     expect(terminal.listeners.size).toBe(0);
     expect(readCapture(21)).toMatchObject({
       text: "still going",
-      finished: false,
-      final: true,
+      reading: false,
     });
 
     start(terminal, COMMAND, { runId: 22, timeoutMs: RAW_MIN_MS * 2 });
@@ -568,11 +494,7 @@ describe("limits and ends", () => {
     start(terminal, "uptime", { runId: 22 });
     terminal.print("uptime\r\nup 3 days\r\n");
     expect(terminal.listeners.size).toBe(1);
-    expect(readCapture(21)).toMatchObject({
-      text: "active",
-      finished: false,
-      final: true,
-    });
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
     expect(readCapture(22)).toMatchObject({ text: "up 3 days" });
   });
 
@@ -595,11 +517,7 @@ describe("limits and ends", () => {
     });
     run(terminal, COMMAND, "active\r\n");
     shell = { tabs: { list: [{ id: "home" }] } };
-    expect(readCapture(21)).toMatchObject({
-      text: "active",
-      finished: false,
-      final: true,
-    });
+    expect(readCapture(21)).toMatchObject({ text: "active", reading: false });
     expect(terminal.listeners.size).toBe(0);
   });
 
