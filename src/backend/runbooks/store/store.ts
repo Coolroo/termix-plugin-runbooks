@@ -169,10 +169,12 @@ export async function createStore(db: PluginDatabase) {
     createdByUserId: string;
     owner?: RunbookOwner | null;
     notify?: string[] | null;
+    folder?: string | null;
   }): Promise<number> {
     const at = now();
     return insertId(runbooks, {
       notify: input.notify ? JSON.stringify(input.notify) : null,
+      folder: input.folder ?? null,
       title: input.title,
       summary: input.summary,
       status: "open",
@@ -223,6 +225,42 @@ export async function createStore(db: PluginDatabase) {
       set.notify = patch.notify ? JSON.stringify(patch.notify) : null;
     }
     await (await client()).update(runbooks).set(set).where(eq(runbooks.id, id));
+  }
+
+  /**
+   * Puts runbooks in a folder, or in none (1.4.11). Nothing else changes:
+   * not the revision, not updatedAt, so a move never reorders the list or
+   * makes a person's open page stale, and works on any status.
+   */
+  async function setFolder(ids: number[], folder: string | null) {
+    if (ids.length === 0) return;
+    await (
+      await client()
+    )
+      .update(runbooks)
+      .set({ folder })
+      .where(inArray(runbooks.id, ids));
+  }
+
+  /**
+   * The folders in use, each spelling once, A to Z: of one person's
+   * runbooks (a token's creator), or of all of them.
+   */
+  async function listFolders(ownerUserId?: string): Promise<string[]> {
+    const rows = await (
+      await client()
+    )
+      .selectDistinct({ folder: runbooks.folder })
+      .from(runbooks)
+      .where(
+        allOf([
+          isNotNull(runbooks.folder),
+          ...(ownerUserId ? [eq(runbooks.createdByUserId, ownerUserId)] : []),
+        ]),
+      );
+    return rows
+      .map((row: { folder: string }) => row.folder)
+      .sort((a: string, b: string) => a.localeCompare(b, "en"));
   }
 
   async function listSteps(runbookId: number): Promise<StepRow[]> {
@@ -709,6 +747,8 @@ export async function createStore(db: PluginDatabase) {
     listRunbooks,
     createRunbook,
     touchRunbook,
+    setFolder,
+    listFolders,
     listSteps,
     getStep,
     insertStep,

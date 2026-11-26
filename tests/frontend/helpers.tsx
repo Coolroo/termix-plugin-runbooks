@@ -128,6 +128,7 @@ const SUMMARY: RunbookSummary = {
   createdAt: "2026-11-07T10:00:00.000Z",
   updatedAt: "2026-11-07T10:05:00.000Z",
   revision: 4,
+  folder: null,
   progress: { done: 1, failed: 0, total: 3, notNeeded: 0 },
   amendedPending: 0,
 };
@@ -296,6 +297,7 @@ export function summaryOf(
     createdAt,
     updatedAt,
     revision,
+    folder,
     progress,
     amendedPending,
   } = runbook;
@@ -307,6 +309,7 @@ export function summaryOf(
     createdAt,
     updatedAt,
     revision,
+    folder,
     progress,
     amendedPending,
     nextKind,
@@ -317,13 +320,17 @@ type Reply = Promise<{ data: unknown }>;
 
 /**
  * The plugin's routes, faked: GET /runbooks answers `list` (default: the
- * detail's list fields), GET /colors answers `colors` (default none) and
- * any other GET the runbook. POST answers `post`, or the runbook.
+ * detail's list fields), GET /colors answers `colors` (default none),
+ * GET /list-state `listState` (default none: 1.4.11), GET /folders the
+ * list's folders, and any other GET the runbook. POST answers `post`, or
+ * the runbook; PUT answers what it was given.
  */
 export function fakeApi(options: {
   list?: RunbookListEntry[];
   detail: Runbook | (() => Runbook);
   colors?: unknown;
+  /** What GET /list-state answers (1.4.11). */
+  listState?: unknown;
   post?: (url: string, body?: unknown) => Promise<unknown>;
   /** Answers other GETs, such as a VM step's /steps/:id/vm (1.4.7). */
   get?: (url: string) => unknown;
@@ -340,16 +347,29 @@ export function fakeApi(options: {
           ? (options.list ?? [summaryOf(detail())])
           : url === "/colors"
             ? (options.colors ?? {})
-            : detail()),
+            : url === "/list-state"
+              ? (options.listState ?? {})
+              : url === "/folders"
+                ? folderNames(options.list ?? [summaryOf(detail())])
+                : detail()),
     })),
     post: vi.fn(
       (options.post as (url: string, body?: unknown) => Reply) ??
         (async (): Reply => ({ data: detail() })),
     ),
-    put: vi.fn(),
+    put: vi.fn(async (_url: string, body?: unknown): Reply => ({
+      data: body,
+    })),
     patch: vi.fn(),
     delete: vi.fn(),
   };
 }
 
 export type FakeApi = ReturnType<typeof fakeApi>;
+
+/** The folders of these runbooks, A to Z, as GET /folders sends them. */
+export function folderNames(list: RunbookListEntry[]): string[] {
+  return [
+    ...new Set(list.flatMap((row) => (row.folder ? [row.folder] : []))),
+  ].sort((a, b) => a.localeCompare(b, "en"));
+}

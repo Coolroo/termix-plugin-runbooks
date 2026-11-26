@@ -46,6 +46,9 @@ export const runbooks = defineTable(
     // JSON array of the event types the agent wants delivered (1.4.0).
     // Null: the default list.
     notify: text(),
+    // The folder the list shows it in (1.4.11), one level: at most 60
+    // characters, no "/". Null: No folder.
+    folder: varchar(60),
   },
   {
     indexes: [

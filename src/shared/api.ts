@@ -438,6 +438,8 @@ export interface RunbookSummary {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** The folder the list shows it in (1.4.11); null: No folder. */
+  folder: string | null;
   progress: Progress;
   /** Amendments that have not run yet (1.4.0): the list shows "amended". */
   amendedPending: number;

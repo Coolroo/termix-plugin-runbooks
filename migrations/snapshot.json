@@ -58,6 +58,10 @@
         },
         "notify": {
           "type": "text"
+        },
+        "folder": {
+          "type": "varchar",
+          "length": 60
         }
       },
       "indexes": [

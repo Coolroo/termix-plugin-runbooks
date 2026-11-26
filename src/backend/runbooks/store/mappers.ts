@@ -67,6 +67,7 @@ export function toRunbook(row: Record<string, unknown>): RunbookRow {
       (row.secretsRemovedAt as string | null | undefined) ?? null,
     owner: parseJson<RunbookOwner | null>(row.owner, null),
     notify: parseJson<string[] | null>(row.notify, null),
+    folder: (row.folder as string | null | undefined) ?? null,
   };
 }
 
