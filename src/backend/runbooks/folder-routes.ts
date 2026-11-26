@@ -19,6 +19,7 @@ import {
   LIST_STATE_SETTING,
   listStateProblem,
   reuseSpelling,
+  uniqueFolders,
 } from "../../shared/folders.js";
 
 /** A folder name a rename needs: null (No folder) is not one. */
@@ -38,7 +39,7 @@ export function registerFolderRoutes(router: Router, kit: PersonKit): void {
    *     summary: The folders runbooks are in, A to Z
    *     description: >
    *       A folder exists only while a runbook is in it, so this is every
-   *       folder name on a runbook, each spelling once.
+   *       folder name on a runbook, each folder once in its first spelling.
    *     tags: [Runbooks]
    *     responses:
    *       200: { description: The folder names }
@@ -46,7 +47,7 @@ export function registerFolderRoutes(router: Router, kit: PersonKit): void {
   router.get(
     "/folders",
     ...use,
-    wrap(async () => store.listFolders()),
+    wrap(async () => uniqueFolders(await store.listFolders())),
   );
 
   /**

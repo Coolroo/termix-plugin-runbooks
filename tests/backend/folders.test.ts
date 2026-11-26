@@ -114,6 +114,11 @@ describe("folders (1.4.11): the data", () => {
       folder: "HOME-SERVER",
     });
     expect(bob.folder).toBe("HOME-SERVER");
+    // The list shows them as one folder, in the first spelling.
+    expect((await s.person("GET", "/folders")).body).toEqual([
+      "gbtvg-coop",
+      "home-server",
+    ]);
   });
 
   it("list the folders in use, A to Z, each spelling once", async () => {
