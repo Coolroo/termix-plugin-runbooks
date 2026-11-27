@@ -39,7 +39,7 @@ No. One click finds a connected terminal to the step's host, or opens one and wa
 
 ## Do I have to paste the output of Send to terminal?
 
-Not since 1.4.10. Go back to the runbook after you press Enter in the terminal: the box under the step fills with what the command printed. Check the text before you save it: Runbooks only fills the box, and never says the command finished. If the end is missing (a note says so when the terminal drew over other lines), add it or paste. Change it if you need to, then press **Mark done** or **Mark failed**. **Read again** reads the terminal again, and puts its text back after you changed it. **Mark failed** keeps the text only if you clicked into the box or changed it. If you changed the command in the terminal before Enter, after a page reload, or on another device, the box is empty and you paste, as before.
+Yes. After you press Enter in the terminal, copy what the command printed, go back to the runbook, paste it into the box under the step and press **Mark done** or **Mark failed**. Runbooks 1.4.10 and 1.4.11 tried to fill the box from the terminal by themselves; it did not work on every terminal, so 1.4.12 turned it off until it is fixed.
 
 ## How do I see if a command stalled?
 

@@ -868,14 +868,16 @@ A step that Termix runs has two buttons: **Run** starts the command over a conne
 
 ### Output read from the terminal
 
-Since 1.4.10, Send to terminal reads what the command prints into the **Mark done** box, so the person does not copy it from the terminal (on a phone they cannot). It only fills the box: the person checks the text, can change it, and presses **Mark done** or **Mark failed** as before. The box always says "Check the text before you save it" (or "The terminal waits for a password"); it never says the command finished. **Read again** reads the terminal again.
+**Off since 1.4.12.** It did not fill the box on every terminal (BUG-024), so Send to terminal no longer reads the terminal: the person pastes the output, as before 1.4.10, and new runs have `outputSource` `"pasted"`. Runs from 1.4.10 and 1.4.11 keep the `outputSource` they had. Write a Send to terminal step that tells the person to paste the output. The rest of this section is how the reading worked in 1.4.10 and 1.4.11.
+
+In 1.4.10 and 1.4.11, Send to terminal reads what the command prints into the **Mark done** box, so the person does not copy it from the terminal (on a phone they cannot). It only fills the box: the person checks the text, can change it, and presses **Mark done** or **Mark failed** as before. The box always says "Check the text before you save it" (or "The terminal waits for a password"); it never says the command finished. **Read again** reads the terminal again.
 
 - The text is the run's `pastedOutput`, so checks, `captures`, `secretCaptures` and secret masking read it as they read a paste. The exit code stays empty: the person may enter one.
 - The run's `outputSource` says where it came from: `"captured"` (read from the terminal, kept as read), `"captured-edited"` (read from the terminal, then changed by the person) or `"pasted"` (by the person). It is `null` on a run with no pasted output, on runs from before 1.4.10, and on a step hidden from agents. A step run outside Termix with output has `"pasted"`. It is what the person's page reported, not proof that the text was not typed by hand.
 - The reading lives in the browser that pressed Send to terminal. After a reload, on another device, or with a Termix whose terminal does not offer it (such as plugin API 2), the box is empty and the person pastes, as before.
 - The text starts only after the command's echo: the line the shell ends on Enter must be the prompt noted before the send, with the command. When the person changed the command first, or the echo cannot be followed, nothing is read and the person pastes. It ends at the next prompt (where bash 5.1+, zsh or fish turn line editing on again, or the noted prompt at the start of a line), at a cursor move to another row (`clear`, a progress display, tmux: a note says the end may be missing), at 256 K characters, or after an hour or the step's longer time limit. Commands the person types after it are not in the text. A terminal whose last line is not a prompt (a tmux status line, a message still printing) gets no reading: the person pastes.
 - **Mark failed** sends the read text only if the person opened or changed the box; otherwise the run has no output, as before 1.4.10.
-- Write such a step as before; do not tell the person to paste the output. For a command that only asks for a password, a Run with [Typed input](#typed-input) still keeps more: the exit code and the output as it arrives.
+- For a command that only asks for a password, a Run with [Typed input](#typed-input) still keeps more: the exit code and the output as it arrives.
 
 ### Typed input
 

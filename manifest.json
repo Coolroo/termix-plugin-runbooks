@@ -1,7 +1,7 @@
 {
   "id": "runbooks",
   "name": "Runbooks",
-  "version": "1.4.11",
+  "version": "1.4.12",
   "description": "Runbooks an agent proposes and a person runs, one approved command at a time, with every output kept.",
   "author": {
     "name": "Coolroo"
@@ -30,7 +30,7 @@
     "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
     "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it",
     "Sequences: one Run runs commands, delays, waits and wait events (container, unit, log, http, port, file, job) in order, with no sleep",
-    "Send to terminal fills the Mark done box with the command's output, for the person to check and save",
+    "Send to terminal types the command into an open terminal; the person pastes the output back",
     "A list in Open, Done and Abandoned sections with folders inside, each collapsible and remembered for each person, and a search over titles"
   ],
   "env": [],

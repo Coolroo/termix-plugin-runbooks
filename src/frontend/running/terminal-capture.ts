@@ -3,6 +3,10 @@
  * paste box, so the person checks it there instead of copying it from the
  * terminal (which a phone cannot do).
  *
+ * Off since 1.4.12 (the owner, 2026-11-26): it did not fill the box on the
+ * owner's phone, for a cause not yet found, and Send to terminal starts no
+ * capture. The code and its tests stay for a later fix (BUG-024).
+ *
  * The SSH Terminal plugin keeps a handle on each terminal tab, at
  * `useShell().tabs.list[i].terminalRef.current`, with `readBufferLines`
  * (the screen and scrollback as plain lines, wrapped rows joined),

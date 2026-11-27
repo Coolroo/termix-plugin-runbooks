@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.12
+
+### Changed
+
+- **Send to terminal goes back to the paste box** (BUG-024; the owner, 2026-11-26). The reading of the terminal from 1.4.10 and 1.4.11 still left the **Mark done** box empty on the owner's phone, for a cause not yet found. Send to terminal now only types the command, as before 1.4.10: the person presses Enter, then pastes the output into the box. The toast says so again. Runs from 1.4.10 and 1.4.11 keep their `outputSource`; new runs are `"pasted"`. The reading's code and tests stay for a later fix. The agent API guide again says to tell the person to paste.
+
 ## 1.4.11
 
 ### Fixed

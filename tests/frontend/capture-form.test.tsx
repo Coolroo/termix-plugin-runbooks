@@ -160,164 +160,36 @@ function finish(...lines: string[]) {
   );
 }
 
-const filled = (text: string) =>
-  vi.waitFor(() => expect(box().value).toBe(text), { timeout: 3000 });
-
-describe("Send to terminal fills the paste box", () => {
-  it("says its output comes back here, and fills the box as it prints", async () => {
+describe("Send to terminal leaves the paste box (1.4.12, BUG-024)", () => {
+  it("says to paste, and never reads the terminal, which offers a handle", async () => {
     const success = vi.spyOn(toast, "success");
     await sendIt();
     expect(success).toHaveBeenCalledWith(
-      "Typed into web-1. Press Enter there; its output comes back here for you to check.",
+      "Typed into web-1. Press Enter there, then paste the output here.",
     );
-    // Nothing before the output: the plain paste box.
-    expect(box().placeholder).toBe(locales.run.pastePlaceholder);
-    expect(card().querySelector("[data-capture]")).toBeNull();
+    // No reading started: nothing follows the terminal's output.
+    expect(terminal.listeners.size).toBe(0);
 
-    finish("active");
-    await filled("active");
-    // Filled, and always to check: never "finished" (BUG-021).
-    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-      locales.capture.check,
-    );
-    expect(box().dataset.pasteBox).toBe("captured");
-    expect(within(card()).getByText(locales.capture.from)).toBeTruthy();
-    expect(card().querySelector("[data-capture-warning]")).toBeNull();
-  });
-
-  it("sends the text as read with outputSource captured", async () => {
-    const client = await sendIt();
-    finish("active");
-    await filled("active");
-    fireEvent.click(within(card()).getByText(locales.run.markDone));
-    await vi.waitFor(() =>
-      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
-        pastedOutput: "active",
-        outcome: "done",
-        outputSource: "captured",
-      }),
-    );
-  });
-
-  it("keeps the person's change, stops following, and Read again puts the terminal's text back", async () => {
-    const client = await sendIt();
-    finish("active");
-    await filled("active");
-
-    fireEvent.change(box(), { target: { value: "active (checked)" } });
-    expect(box().dataset.pasteBox).toBe("captured-edited");
-    expect(within(card()).getByText(locales.capture.edited)).toBeTruthy();
-    // More output does not overwrite the change.
-    terminal.lines.push("later line");
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    expect(box().value).toBe("active (checked)");
-
-    fireEvent.click(within(card()).getByText(locales.run.markFailed));
-    await vi.waitFor(() =>
-      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
-        pastedOutput: "active (checked)",
-        outcome: "failed",
-        outputSource: "captured-edited",
-      }),
-    );
-  });
-
-  it("Read again reads the terminal now", async () => {
-    await sendIt();
-    finish("active");
-    await filled("active");
-    fireEvent.change(box(), { target: { value: "" } });
-    fireEvent.click(within(card()).getByText(locales.capture.readAgain));
-    expect(box().value).toBe("active");
-    expect(box().dataset.pasteBox).toBe("captured");
-    expect(within(card()).queryByText(locales.capture.edited)).toBeNull();
-  });
-});
-
-describe("Mark failed sends the read text only once the person saw it (BUG-019)", () => {
-  it("sends no output when the person never opened the box", async () => {
-    const client = await sendIt();
-    finish("active");
-    await filled("active");
-    expect(
-      card().querySelector("[data-capture-failed-hint]")?.textContent,
-    ).toBe(locales.capture.failedEmpty);
-    fireEvent.click(within(card()).getByText(locales.run.markFailed));
-    await vi.waitFor(() =>
-      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
-        pastedOutput: "",
-        outcome: "failed",
-        outputSource: "pasted",
-      }),
-    );
-  });
-
-  it("sends the read text once the person opened the box", async () => {
-    const client = await sendIt();
-    finish("active");
-    await filled("active");
-    fireEvent.focus(box());
-    expect(card().querySelector("[data-capture-failed-hint]")).toBeNull();
-    fireEvent.click(within(card()).getByText(locales.run.markFailed));
-    await vi.waitFor(() =>
-      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
-        pastedOutput: "active",
-        outcome: "failed",
-        outputSource: "captured",
-      }),
-    );
-  });
-
-  it("Mark done sends the read text as before, opened or not", async () => {
-    const client = await sendIt();
-    finish("active");
-    await filled("active");
-    fireEvent.click(within(card()).getByText(locales.run.markDone));
-    await vi.waitFor(() =>
-      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
-        pastedOutput: "active",
-        outcome: "done",
-        outputSource: "captured",
-      }),
-    );
-  });
-});
-
-describe("the reading", () => {
-  it("stops once the prompt is back, and still says to check", async () => {
-    await sendIt();
-    finish("active");
-    await filled("active");
-    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-      locales.capture.check,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    const reads = terminal.handle.isAtPasswordPrompt.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(terminal.handle.isAtPasswordPrompt.mock.calls.length).toBe(reads);
-  });
-
-  it("stops where the terminal draws on other rows, and says so", async () => {
-    await sendIt();
-    terminal.print(`\r\nactive\r\n\u001b[5;1H${PROMPT}`, "active", PROMPT);
-    await filled("active");
-    expect(card().querySelector("[data-capture-state]")?.textContent).toBe(
-      locales.capture.check,
-    );
-    expect(
-      card().querySelector("[data-capture-warning='drawn']")?.textContent,
-    ).toBe(locales.capture.drawn);
-  });
-
-  it("a command the person changed: the plain paste box", async () => {
-    await sendIt();
-    // The person adds to the typed command before Enter.
-    terminal.print(" --quiet");
     finish("active");
     await new Promise((resolve) => setTimeout(resolve, 1100));
     expect(box().value).toBe("");
+    expect(box().placeholder).toBe(locales.run.pastePlaceholder);
     expect(box().dataset.pasteBox).toBe("pasted");
     expect(card().querySelector("[data-capture]")).toBeNull();
+  });
+
+  it("sends what the person pasted, with outputSource pasted", async () => {
+    const client = await sendIt();
+    finish("active");
+    fireEvent.change(box(), { target: { value: "active\n" } });
+    fireEvent.click(within(card()).getByText(locales.run.markDone));
+    await vi.waitFor(() =>
+      expect(client.post).toHaveBeenCalledWith("/runs/21/complete", {
+        pastedOutput: "active\n",
+        outcome: "done",
+        outputSource: "pasted",
+      }),
+    );
   });
 });
 
