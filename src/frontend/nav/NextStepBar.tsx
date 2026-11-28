@@ -40,6 +40,12 @@ export function useBarContext(
 export function NextStepBar({ ctx }: { ctx: BarContext }) {
   const { next, steps, view, wide } = ctx;
   const { done, total } = ctx.runbook.progress;
+  // Steps not needed have ended too; with no step left (the caption says
+  // all done), the line runs to the end, past a failed step.
+  const ended =
+    !next && ctx.runbook.status !== "abandoned"
+      ? total
+      : done + (ctx.runbook.progress.notNeeded ?? 0);
   const share = (part: number) =>
     `${Math.min(100, Math.max(0, total > 0 ? (part / total) * 100 : 0))}%`;
   const count = steps.length;
@@ -56,7 +62,7 @@ export function NextStepBar({ ctx }: { ctx: BarContext }) {
           aria-hidden="true"
           data-bar-progress
           className="absolute -top-px left-0 h-0.5"
-          style={{ width: share(done), background: tone }}
+          style={{ width: share(ended), background: tone }}
         />
       ) : (
         <span
@@ -65,9 +71,10 @@ export function NextStepBar({ ctx }: { ctx: BarContext }) {
           className="relative mx-3 mt-2 block h-1 bg-muted"
         >
           <span
+            data-bar-progress
             className="absolute inset-y-0 left-0"
             style={{
-              width: share(done),
+              width: share(ended),
               background: `color-mix(in oklab, ${tone} 55%, transparent)`,
             }}
           />

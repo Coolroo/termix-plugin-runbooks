@@ -123,6 +123,24 @@ export function listRow(title: string): HTMLElement {
   return row;
 }
 
+/**
+ * Presses Esc in the open `role` dialog once it listens. A dialog moves the
+ * focus in and adds its key listener in one effect, after it shows, so Esc
+ * pressed as soon as it shows can come first on a busy machine (BUG-025:
+ * the first 1.4.13 Release run).
+ */
+export async function pressEscape(
+  role: "dialog" | "alertdialog",
+): Promise<void> {
+  const dialog = await screen.findByRole(role);
+  await vi.waitFor(() => {
+    if (!dialog.contains(document.activeElement)) {
+      throw new Error(`the ${role} has no focus yet`);
+    }
+  });
+  fireEvent.keyDown(window, { key: "Escape" });
+}
+
 /** Opens the list's collapsed sections, as a person does. */
 export function expandSections(): void {
   for (const toggle of document.querySelectorAll(

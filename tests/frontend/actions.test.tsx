@@ -9,6 +9,7 @@ import {
   makeRunbook,
   makeStep,
   openRunbook,
+  pressEscape,
   useRenderedApp,
   type FakeApi,
 } from "./helpers";
@@ -128,7 +129,7 @@ describe("a Run the server refuses", () => {
     );
     await runStep2();
     await screen.findByText(locales.order.title);
-    fireEvent.keyDown(window, { key: "Escape" });
+    await pressEscape("alertdialog");
     await vi.waitFor(() =>
       expect(screen.queryByRole("alertdialog")).toBeNull(),
     );

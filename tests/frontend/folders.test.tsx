@@ -10,6 +10,7 @@ import {
   fakeApi,
   makeRunbook,
   makeSummary,
+  pressEscape,
   useRenderedApp,
   type FakeApi,
 } from "./helpers";
@@ -340,8 +341,7 @@ describe("Move to folder and Rename folder (1.4.10)", () => {
     const posts: Array<[string, unknown]> = [];
     await showList({ client: client(posts) });
     fireEvent.click(document.querySelector('[data-move-folder="1"]')!);
-    await screen.findByRole("dialog");
-    fireEvent.keyDown(window, { key: "Escape" });
+    await pressEscape("dialog");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([]);
   });

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.13
+
+### Fixed
+
+- **The progress line under a runbook goes to the end when no step is left** (BUG-025; the owner, 2026-11-27). The line in the bar, and the strip on a phone, counted only done, skipped and replaced steps, so a runbook with steps not needed (their when rule did not hold) or a failed step stopped short while the bar said all steps were done: runbook 150 stopped at 25 of 32. Steps not needed now count as ended, and with no step left the line runs to the end. An abandoned runbook's line still stops at its ended steps.
+
 ## 1.4.12
 
 ### Changed

@@ -12,7 +12,11 @@ import {
   railWindow,
   stepsInView,
 } from "../../src/frontend/nav/StepNav";
-import type { RunbookStatus, StepStatus } from "../../src/frontend/api-types";
+import type {
+  RunbookStatus,
+  StepCondition,
+  StepStatus,
+} from "../../src/frontend/api-types";
 import {
   fakeApi,
   locales,
@@ -70,6 +74,45 @@ function server(
       revision: 3,
       progress: { done, failed: 0, total, notNeeded: 0 },
       nextStepId: done < total && status === "open" ? done + 1 : null,
+    }),
+    post: async () => ({ data: {} }),
+  });
+}
+
+const NOT_NEEDED: StepCondition = {
+  state: "not-met",
+  rule: "step 1 failed",
+  reason: "step 1 is done",
+  notNeeded: true,
+};
+
+/**
+ * A runbook of `statuses.length` steps; "not-needed" is a pending step
+ * whose rule does not hold. The next step is the first other pending one.
+ */
+function ended(
+  statuses: Array<StepStatus | "not-needed">,
+  status: RunbookStatus = "open",
+) {
+  const steps = statuses.map((state, index) =>
+    state === "not-needed"
+      ? { ...step(index + 1, "pending"), condition: NOT_NEEDED }
+      : step(index + 1, state),
+  );
+  const count = (state: StepStatus | "not-needed") =>
+    statuses.filter((other) => other === state).length;
+  return fakeApi({
+    detail: makeRunbook(steps, {
+      id: 9,
+      title: "Long one",
+      status,
+      progress: {
+        done: count("done"),
+        failed: count("failed"),
+        total: steps.length,
+        notNeeded: count("not-needed"),
+      },
+      nextStepId: steps[statuses.indexOf("pending")]?.id ?? null,
     }),
     post: async () => ({ data: {} }),
   });
@@ -421,6 +464,51 @@ describe("the rail and the bar", () => {
     expect(bar().querySelector("[data-bar-caption]")!.textContent).toBe(
       "Runbook Abandoned",
     );
+  });
+
+  const line = () =>
+    (bar().querySelector("[data-bar-progress]") as HTMLElement).style.width;
+
+  it.each([
+    ["line", 900],
+    ["strip", 400],
+  ])(
+    "runs the progress %s to the end when no step is left",
+    async (_, width) => {
+      // Runbook 150: 25 done, 1 failed, 6 not needed, marked done.
+      layout(width);
+      Element.prototype.scrollIntoView = vi.fn();
+      await open(
+        ended(
+          [
+            ...Array<StepStatus>(25).fill("done"),
+            "failed",
+            ...Array<"not-needed">(6).fill("not-needed"),
+          ],
+          "done",
+        ),
+      );
+      expect(bar().getAttribute("data-next-bar")).toBe("none");
+      expect(line()).toBe("100%");
+    },
+  );
+
+  it("counts the steps not needed as ended while steps are left", async () => {
+    layout(900);
+    Element.prototype.scrollIntoView = vi.fn();
+    await open(
+      ended(["done", "done", "not-needed", "done", "not-needed", "pending"]),
+    );
+    expect(bar().getAttribute("data-next-bar")).toBe("6");
+    expect(bar().querySelector("[data-bar-caption]")!.textContent).toBe(
+      "Next · step 6 of 6 · 3 done",
+    );
+    expect(Number.parseFloat(line())).toBeCloseTo((5 / 6) * 100);
+  });
+
+  it("stops the line at the ended steps of an abandoned runbook", async () => {
+    await open(server(5, 2, "abandoned"));
+    expect(line()).toBe("40%");
   });
 });
 

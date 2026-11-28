@@ -10,6 +10,7 @@ import {
   makeRunbook,
   makeStep,
   openRunbook,
+  pressEscape,
   useRenderedApp,
 } from "./helpers";
 import type { Runbook } from "../../src/frontend/api-types";
@@ -144,7 +145,7 @@ describe("wait timers in the UI", () => {
     const client = server(90_000);
     await open(client, false);
     fireEvent.click(within(card(2)).getByText(locales.step.run));
-    let dialog = await screen.findByRole("alertdialog");
+    const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(dialog.querySelector("[data-early-cancel]")!);
     await vi.waitFor(() =>
       expect(screen.queryByRole("alertdialog")).toBeNull(),
@@ -154,8 +155,7 @@ describe("wait timers in the UI", () => {
       .closest("button")!;
     await vi.waitFor(() => expect(send.disabled).toBe(false));
     fireEvent.click(send);
-    dialog = await screen.findByRole("alertdialog");
-    fireEvent.keyDown(window, { key: "Escape" });
+    await pressEscape("alertdialog");
     await vi.waitFor(() =>
       expect(screen.queryByRole("alertdialog")).toBeNull(),
     );
