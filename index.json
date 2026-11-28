@@ -4,7 +4,7 @@
   "name": "Coolroo Plugins",
   "apiVersion": 1,
   "publicKey": "ugy5pNjobUFpYKk3hLVBBeYiKvfEwYvVxUmjD2YbA+E=",
-  "updatedAt": "2026-11-26T22:36:03.000Z",
+  "updatedAt": "2026-11-28T03:15:01.000Z",
   "plugins": [
     {
       "id": "runbooks",
@@ -33,12 +33,37 @@
         "A bar that goes to the next step (or press N) and a rail of the steps near you, for long runbooks",
         "VM steps: one button starts, shuts down, restarts or shows a VM through HAW VM Manager, as the person who presses it",
         "Sequences: one Run runs commands, delays, waits and wait events (container, unit, log, http, port, file, job) in order, with no sleep",
-        "Send to terminal fills the Mark done box with the command's output, for the person to check and save",
+        "Send to terminal types the command into an open terminal; the person pastes the output back",
         "A list in Open, Done and Abandoned sections with folders inside, each collapsible and remembered for each person, and a search over titles"
       ],
       "docs": "https://github.com/Coolroo/termix-plugin-runbooks/tree/main/docs",
       "versions": [],
       "gated": [
+        {
+          "version": "1.4.13",
+          "api": "1",
+          "url": "https://github.com/Coolroo/termix-plugin-runbooks/releases/download/v1.4.13/runbooks-1.4.13.tmxplug",
+          "sha256": "0037c1eedc4a98163f1cf1a8c0ae0ca44333013f6285e32a2a61be058a7929a0",
+          "signature": "XeAtrJlly4E4AbBf+a9QmJUVdi6Mf19jZCvNE1hx/zP7hJmX6eAlIMSEjD/zwQIO+T77jrsKEKMGvtGc7CE9Bg==",
+          "size": 1254712,
+          "capabilities": [
+            "db:own",
+            "network:serve",
+            "ui:surface",
+            "hosts:read",
+            "ssh:connect",
+            "credentials:use",
+            "network:outbound",
+            "secrets:own"
+          ],
+          "engine": {
+            "api": "^1.13",
+            "termix": ">=26.11.0"
+          },
+          "releaseNotesUrl": "https://github.com/Coolroo/termix-plugin-runbooks/releases/tag/v1.4.13",
+          "notes": "### Fixed\n\n- **The progress line under a runbook goes to the end when no step is left** (BUG-025; the owner, 2026-11-27). The line in the bar, and the strip on a phone, counted only done, skipped and replaced steps, so a runbook with steps not needed (their when rule did not hold) or a failed step stopped short while the bar said all steps were done: runbook 150 stopped at 25 of 32. Steps not needed now count as ended, and with no step left the line runs to the end. An abandoned runbook's line still stops at its ended steps.",
+          "publishedAt": "2026-11-28T03:15:01Z"
+        },
         {
           "version": "1.4.11",
           "api": "1",
